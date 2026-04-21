@@ -1,22 +1,20 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ==============================================================================
-# AI-CODER.SH v4.8 | Dual-GPU Pool (32GB) | Alias: 'claude'
-# Final "Zero-Space" Path Resolution for WSL2 & Docker Desktop
-#
+# AI-CODER-OC.SH | OpenCode Variant | Alias: 'oc'
 # Architecture: Hub & Spoke (Docker)
 # - Hub: Shared 'ai-hub-engine' and 'ai-hub-proxy' containers.
 # - Spoke: Project-specific 'coder-<project-id>' workbench container.
 #
 # Usage:
-#   claude spawn              - Execute command in active workbench
-#   claude --status           - Show GPU and engine status dashboard
-#   claude --clean            - Stop and remove all containers
-#   claude --setup-path       - Create shell alias for this script
+#   oc                        - Launch OpenCode in active workbench
+#   oc --status               - Show GPU and engine status dashboard
+#   oc --clean                - Stop and remove all containers
+#   oc --setup-path           - Create shell alias for this script
 # ==============================================================================
 set -euo pipefail
 
 # --- [ GLOBAL CONFIGURATION ] -------------------------------------------------
-ALIAS_NAME="claude"
+ALIAS_NAME="oc"
 DOCKER_BIN="C:\Program Files\Docker\Docker\Docker Desktop.exe"
 MODEL_STORAGE_DIR="$HOME/ai-models"
 GLOBAL_ENGINE_NAME="ai-hub-engine"
@@ -50,20 +48,20 @@ TIER_16GB_MIN="${TIER_16GB_MIN:-15}"
 TIER_24GB_MIN="${TIER_24GB_MIN:-24}"
 TIER_32GB_MIN="${TIER_32GB_MIN:-31}"
 
-# Multi-Agent Allocation (Optimized for 32GB)
-MAX_SLOTS=1             
-CTX_PER_SLOT=65536      
-IMAGE_NAME="claude-engineer-v4-8"
+# Multi-Agent Allocation
+MAX_SLOTS=1
+CTX_PER_SLOT=65536
+IMAGE_NAME="opencode-engineer-v1"
 
 # --- [ ENVIRONMENT & SHELL ] --------------------------------------------------
 export MSYS_NO_PATHCONV=1
 PROJECT_ID=$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
-LOCAL_STACK_DIR="$(pwd)/.claude-stack"
+LOCAL_STACK_DIR="$(pwd)/.oc-stack"
 mkdir -p "$MODEL_STORAGE_DIR" "$LOCAL_STACK_DIR"
 
 # Visuals & Colors
 readonly NC='\033[0m'; readonly BOLD='\033[1m'; readonly GREEN='\033[0;32m'; readonly RED='\033[0;31m'; readonly CYAN='\033[0;36m'; readonly YELLOW='\033[1;33m'
-readonly ICON_OK=" ${GREEN}✔${NC} "; readonly ICON_GEAR=" ${CYAN}⚙${NC} "; readonly ICON_WAIT=" ${CYAN}◈${NC} "
+readonly ICON_OK=" ${GREEN}[OK]${NC} "; readonly ICON_GEAR=" ${CYAN}[**]${NC} "; readonly ICON_WAIT=" ${CYAN}[..]${NC} "
 
 IS_WSL=$(grep -qi Microsoft /proc/version 2>/dev/null && echo "true" || echo "false")
 IS_GITBASH=$(expr "$(uname -s)" : '.*MINGW.*' >/dev/null 2>&1 && echo "true" || echo "false")
@@ -73,7 +71,7 @@ else
     SMI="nvidia-smi"
 fi
 
-# Normalize path for host filesystem
+# Normalize path for host filesystem (handles WSL2 paths)
 to_host_path() {
     local abs_path; abs_path=$(realpath "$1")
     if [ "$IS_WSL" == "true" ]; then
@@ -83,7 +81,6 @@ to_host_path() {
     fi
 }
 
-# Execute command with optional display
 run_cmd() { "$@"; }
 
 # --- [ CORE LOGIC ] -----------------------------------------------------------
@@ -93,34 +90,32 @@ check_docker() {
         echo -e "${ICON_GEAR} Starting Docker Desktop..."
         if [ "$IS_WSL" == "true" ]; then
             powershell.exe -Command "Start-Process '$DOCKER_BIN'" >/dev/null 2>&1 || {
-                echo -e "${RED}✘ Failed to start Docker${NC}"; return 1
+                echo -e "${RED}[X] Failed to start Docker${NC}"; return 1
             }
         else
-            start "" "$DOCKER_BIN" || { echo -e "${RED}✘ Failed to start Docker${NC}"; return 1; }
+            start "" "$DOCKER_BIN" || { echo -e "${RED}[X] Failed to start Docker${NC}"; return 1; }
         fi
-        
+
         local wait_count=0
-        echo -ne "${CYAN}◈ Waiting for Daemon...${NC} "
-        until docker info >/dev/null 2>&1; do 
+        echo -ne "${CYAN}[..] Waiting for Daemon...${NC} "
+        until docker info >/dev/null 2>&1; do
             wait_count=$((wait_count + 1))
             if [ "$wait_count" -gt 60 ]; then
                 echo -e " ${RED}TIMEOUT${NC}"; return 1
             fi
-            echo -ne "◈"; sleep 5
+            echo -ne "."; sleep 5
         done
         echo -e " ${GREEN}ONLINE${NC}"
     fi
 }
 
 download_model() {
-    # If the target model is already present, skip download.
     if [ -n "${MODEL_FILE:-}" ] && [ -f "$MODEL_STORAGE_DIR/$MODEL_FILE" ]; then
         return 0
     fi
 
-    # Check for wget or curl
     if ! command -v wget >/dev/null 2>&1 && ! command -v curl >/dev/null 2>&1; then
-        echo -e "${RED}✘ Neither wget nor curl found. Cannot download model.${NC}"
+        echo -e "${RED}[X] Neither wget nor curl found. Cannot download model.${NC}"
         return 1
     fi
 
@@ -145,178 +140,118 @@ download_model() {
     fi
 
     case "$MODEL_FILE" in
-        "$GEMMA_32GB_FILE")
-            model_url="$GEMMA_32GB_URL"
-            model_hint="Gemma-4 31B Q5_K_M (32GB tier)"
-            ;;
-        "$GEMMA_24GB_FILE")
-            model_url="$GEMMA_24GB_URL"
-            model_hint="Gemma-4 26B A4B Q5_K_M (24GB tier)"
-            ;;
-        "$GEMMA_16GB_FILE")
-            model_url="$GEMMA_16GB_URL"
-            model_hint="Gemma-4 26B A4B UD-IQ4_XS (16GB tier)"
-            ;;
-        "$GEMMA_12GB_FILE")
-            model_url="$GEMMA_12GB_URL"
-            model_hint="Gemma-4 E4B Q8_0 (12GB tier)"
-            ;;
-        "$GEMMA_8GB_FILE")
-            model_url="$GEMMA_8GB_URL"
-            model_hint="Gemma-4 E2B Q4_K_M (8GB tier)"
-            ;;
-        *)
-            echo -e "${RED}✘ Unsupported target model: $MODEL_FILE${NC}"
-            return 1
-            ;;
+        "$GEMMA_32GB_FILE") model_url="$GEMMA_32GB_URL"; model_hint="Gemma-4 31B Q5_K_M (32GB tier)" ;;
+        "$GEMMA_24GB_FILE") model_url="$GEMMA_24GB_URL"; model_hint="Gemma-4 26B A4B Q5_K_M (24GB tier)" ;;
+        "$GEMMA_16GB_FILE") model_url="$GEMMA_16GB_URL"; model_hint="Gemma-4 26B A4B UD-IQ4_XS (16GB tier)" ;;
+        "$GEMMA_12GB_FILE") model_url="$GEMMA_12GB_URL"; model_hint="Gemma-4 E4B Q8_0 (12GB tier)" ;;
+        "$GEMMA_8GB_FILE")  model_url="$GEMMA_8GB_URL";  model_hint="Gemma-4 E2B Q4_K_M (8GB tier)" ;;
+        *) echo -e "${RED}[X] Unsupported target model: $MODEL_FILE${NC}"; return 1 ;;
     esac
 
     model_path="$MODEL_STORAGE_DIR/$MODEL_FILE"
 
     if [ -z "$model_url" ]; then
-        echo -e "${RED}✘ Missing download URL for $MODEL_FILE${NC}"
-        echo -e "${CYAN}Set one of these environment variables before running:${NC}"
-        echo "  export GEMMA_32GB_URL='https://.../gemma-4-31B-it-Q5_K_M.gguf'"
-        echo "  export GEMMA_24GB_URL='https://.../google_gemma-4-26B-A4B-it-Q5_K_M.gguf'"
-        echo "  export GEMMA_12GB_URL='https://.../gemma-4-E4B-it-Q8_0.gguf'"
-        echo "  export GEMMA_8GB_URL='https://.../gemma-4-E2B-it-Q4_K_M.gguf'"
+        echo -e "${RED}[X] Missing download URL for $MODEL_FILE${NC}"
         return 1
     fi
 
     echo -e "${ICON_GEAR} Downloading ${model_hint}..."
     echo -e "${CYAN}Downloading to: $model_path${NC}"
-    if [ -n "${DOWNLOAD_PROXY:-}" ]; then
-        echo -e "${CYAN}Using proxy: $DOWNLOAD_PROXY${NC}"
-    fi
+    [ -n "${DOWNLOAD_PROXY:-}" ] && echo -e "${CYAN}Using proxy: $DOWNLOAD_PROXY${NC}"
 
-    # curl.exe is the Windows System32 curl — it uses WinInet and handles the corporate
-    # SSL inspection proxy correctly with --ssl-no-revoke.
+    # curl.exe (Windows System32) uses WinInet - handles corporate SSL inspection proxy
+    # correctly with --ssl-no-revoke, and bypasses WSL2 network isolation.
     local win_curl
     win_curl=$(command -v curl.exe 2>/dev/null)
 
     if [ -n "${DOWNLOAD_PROXY:-}" ] && [ -n "$win_curl" ]; then
-        # Corporate proxy: curl.exe with --ssl-no-revoke handles SSL inspection certificates
-        local win_path
-        win_path=$(wslpath -w "$model_path")
+        local win_path; win_path=$(wslpath -w "$model_path")
         "$win_curl" -L --proxy "$DOWNLOAD_PROXY" --ssl-no-revoke --no-progress-meter --show-error -o "$win_path" "$model_url" &
         local dl_pid=$!
         while kill -0 "$dl_pid" 2>/dev/null; do
-            local sz
-            sz=$(stat -c%s "$model_path" 2>/dev/null || echo 0)
+            local sz; sz=$(stat -c%s "$model_path" 2>/dev/null || echo 0)
             printf "\r  Downloaded: %-12s" "$(numfmt --to=iec-i --suffix=B "$sz")"
             sleep 2
         done
         printf "\n"
-        wait "$dl_pid" || { echo -e "${RED}\u2718 Download failed${NC}"; return 1; }
+        wait "$dl_pid" || { echo -e "${RED}[X] Download failed${NC}"; return 1; }
     elif [ -n "${DOWNLOAD_PROXY:-}" ] && command -v curl >/dev/null 2>&1; then
-        # Fallback: WSL curl with proxy
         curl -L --proxy "$DOWNLOAD_PROXY" --progress-bar --show-error -o "$model_path" "$model_url" || {
-            echo -e "${RED}\u2718 Download failed${NC}"; return 1
+            echo -e "${RED}[X] Download failed${NC}"; return 1
         }
     elif [ -n "$win_curl" ]; then
-        # No proxy: use curl.exe (Windows network stack)
-        local win_path
-        win_path=$(wslpath -w "$model_path")
+        local win_path; win_path=$(wslpath -w "$model_path")
         "$win_curl" -L --no-progress-meter --show-error -o "$win_path" "$model_url" &
         local dl_pid=$!
         while kill -0 "$dl_pid" 2>/dev/null; do
-            local sz
-            sz=$(stat -c%s "$model_path" 2>/dev/null || echo 0)
+            local sz; sz=$(stat -c%s "$model_path" 2>/dev/null || echo 0)
             printf "\r  Downloaded: %-12s" "$(numfmt --to=iec-i --suffix=B "$sz")"
             sleep 2
         done
         printf "\n"
-        wait "$dl_pid" || { echo -e "${RED}\u2718 Download failed${NC}"; return 1; }
+        wait "$dl_pid" || { echo -e "${RED}[X] Download failed${NC}"; return 1; }
     elif command -v curl >/dev/null 2>&1; then
         curl -L --progress-bar --show-error -o "$model_path" "$model_url" || {
-            echo -e "${RED}\u2718 Download failed${NC}"; return 1
+            echo -e "${RED}[X] Download failed${NC}"; return 1
         }
     elif command -v wget >/dev/null 2>&1; then
         local wget_proxy_args=()
-        if [ -n "${DOWNLOAD_PROXY:-}" ]; then
-            wget_proxy_args=(-e "use_proxy=yes" -e "http_proxy=$DOWNLOAD_PROXY" -e "https_proxy=$DOWNLOAD_PROXY")
-        fi
+        [ -n "${DOWNLOAD_PROXY:-}" ] && wget_proxy_args=(-e "use_proxy=yes" -e "http_proxy=$DOWNLOAD_PROXY" -e "https_proxy=$DOWNLOAD_PROXY")
         wget --no-verbose --show-progress --progress=dot:giga "${wget_proxy_args[@]}" -O "$model_path" "$model_url" || {
-            echo -e "${RED}\u2718 Download failed${NC}"; return 1
+            echo -e "${RED}[X] Download failed${NC}"; return 1
         }
     fi
 
-    echo -e "${GREEN}✔ Model downloaded successfully${NC}"
+    echo -e "${GREEN}[OK] Model downloaded successfully${NC}"
     return 0
 }
 
 detect_model() {
     local vram_list; vram_list=$($SMI --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null) || {
-        echo -e "${RED}✘ nvidia-smi failed${NC}"; return 1
+        echo -e "${RED}[X] nvidia-smi failed${NC}"; return 1
     }
-    
+
     local total_vram=0
-    for v in $vram_list; do 
-        case "$v" in
-            *[!0-9]*) continue ;;  # Skip non-numeric
-            *) total_vram=$((total_vram + v)) ;;
-        esac
+    for v in $vram_list; do
+        case "$v" in *[!0-9]*) continue ;; *) total_vram=$((total_vram + v)) ;; esac
     done
     VRAM_GB=$((total_vram / 1024))
-    
+
     echo -e "${ICON_GEAR} Hardware Audit: Detected ${BOLD}${VRAM_GB}GB Total VRAM${NC}"
-    
-    if [ "$VRAM_GB" -ge "$TIER_32GB_MIN" ]; then
-        MODEL_FILE="$GEMMA_32GB_FILE"
-        MODEL_TIER="32GB-tier"
-    elif [ "$VRAM_GB" -ge "$TIER_24GB_MIN" ]; then
-        MODEL_FILE="$GEMMA_24GB_FILE"
-        MODEL_TIER="24GB-tier"
-    elif [ "$VRAM_GB" -ge "$TIER_16GB_MIN" ]; then
-        MODEL_FILE="$GEMMA_16GB_FILE"
-        MODEL_TIER="16GB-tier"
-    elif [ "$VRAM_GB" -ge "$TIER_12GB_MIN" ]; then
-        MODEL_FILE="$GEMMA_12GB_FILE"
-        MODEL_TIER="12GB-tier"
-    elif [ "$VRAM_GB" -ge "$TIER_8GB_MIN" ]; then
-        MODEL_FILE="$GEMMA_8GB_FILE"
-        MODEL_TIER="8GB-tier"
-    else
-        MODEL_FILE="$GEMMA_8GB_FILE"
-        MODEL_TIER="<${TIER_8GB_MIN}GB (fallback to 8GB tier model)"
+
+    if   [ "$VRAM_GB" -ge "$TIER_32GB_MIN" ]; then MODEL_FILE="$GEMMA_32GB_FILE"; MODEL_TIER="32GB-tier"
+    elif [ "$VRAM_GB" -ge "$TIER_24GB_MIN" ]; then MODEL_FILE="$GEMMA_24GB_FILE"; MODEL_TIER="24GB-tier"
+    elif [ "$VRAM_GB" -ge "$TIER_16GB_MIN" ]; then MODEL_FILE="$GEMMA_16GB_FILE"; MODEL_TIER="16GB-tier"
+    elif [ "$VRAM_GB" -ge "$TIER_12GB_MIN" ]; then MODEL_FILE="$GEMMA_12GB_FILE"; MODEL_TIER="12GB-tier"
+    elif [ "$VRAM_GB" -ge "$TIER_8GB_MIN"  ]; then MODEL_FILE="$GEMMA_8GB_FILE";  MODEL_TIER="8GB-tier"
+    else MODEL_FILE="$GEMMA_8GB_FILE"; MODEL_TIER="<${TIER_8GB_MIN}GB (fallback to 8GB tier model)"
     fi
+
     echo -e "${ICON_GEAR} Model Tier: ${BOLD}${MODEL_TIER}${NC}"
     echo -e "${ICON_GEAR} Tier Cutoffs: 8GB>=${TIER_8GB_MIN}, 12GB>=${TIER_12GB_MIN}, 16GB>=${TIER_16GB_MIN}, 24GB>=${TIER_24GB_MIN}, 32GB>=${TIER_32GB_MIN}"
     echo -e "${ICON_GEAR} Tier Model: ${CYAN}${MODEL_FILE}${NC}"
-    
-    # Check if target model exists
+
     if [ -f "$MODEL_STORAGE_DIR/$MODEL_FILE" ]; then
-        echo -e "${ICON_OK} Target Model: ${CYAN}${MODEL_FILE}${NC}"
-        return 0
+        echo -e "${ICON_OK}Target Model: ${CYAN}${MODEL_FILE}${NC}"; return 0
     fi
-    
-    # Target doesn't exist, look for local Gemma GGUF models
-    echo -e "${YELLOW}⚠ Target model not found: $MODEL_FILE${NC}"
+
+    echo -e "${YELLOW}[!] Target model not found: $MODEL_FILE${NC}"
     echo -e "${CYAN}Scanning for available Gemma GGUF models...${NC}"
 
     local found_model
     found_model=$(find "$MODEL_STORAGE_DIR" -maxdepth 1 -type f -name "*.gguf" 2>/dev/null | grep -Ei 'gemma' | head -1)
-    
+
     if [ -n "$found_model" ]; then
         MODEL_FILE=$(basename "$found_model")
-        echo -e "${GREEN}✔ Using available model: ${CYAN}${MODEL_FILE}${NC}"
-        return 0
+        echo -e "${GREEN}[OK] Using available model: ${CYAN}${MODEL_FILE}${NC}"; return 0
     fi
 
-    if [ "$STRICT_GEMMA_ONLY" = "true" ]; then
-        echo -e "${RED}✘ No Gemma models found in $MODEL_STORAGE_DIR${NC}"
-        return 1
-    fi
-    
-    # No models found at all
-    echo -e "${RED}✘ No GGUF models found in $MODEL_STORAGE_DIR${NC}"
+    echo -e "${RED}[X] No Gemma models found in $MODEL_STORAGE_DIR${NC}"
     return 1
 }
 
 BASE_IMAGE="node:20-bullseye-slim"
 
-# Pull a Docker image from WSL2 (not the Docker daemon VM) so shell proxy env vars work.
-# Uses 'crane' — a standalone registry client Go binary.
 pull_base_image_via_proxy() {
     local image="$1" proxy="$2"
     local crane_bin crane_tmp=""
@@ -326,14 +261,13 @@ pull_base_image_via_proxy() {
         echo -e "${CYAN}  Downloading crane (registry pull tool) via proxy...${NC}"
         crane_tmp=$(mktemp -d)
         if ! curl --proxy "$proxy" -fsSL "$crane_url" | tar xz -C "$crane_tmp" crane; then
-            echo -e "${RED}  ✘ Failed to download crane — check proxy and GitHub access${NC}"
+            echo -e "${RED}  [X] Failed to download crane - check proxy and GitHub access${NC}"
             rm -rf "$crane_tmp"; return 1
         fi
         crane_bin="$crane_tmp/crane"
     fi
     echo -e "${CYAN}  Pulling $image from registry via proxy (WSL2, not daemon VM)...${NC}"
-    local image_tar
-    image_tar=$(mktemp --suffix=.tar)
+    local image_tar; image_tar=$(mktemp --suffix=.tar)
     if HTTPS_PROXY="$proxy" HTTP_PROXY="$proxy" "$crane_bin" pull "$image" "$image_tar"; then
         echo -e "${CYAN}  Loading image into Docker...${NC}"
         docker load < "$image_tar"
@@ -341,7 +275,7 @@ pull_base_image_via_proxy() {
         rm -f "$image_tar"; [ -n "$crane_tmp" ] && rm -rf "$crane_tmp"
         return $rc
     else
-        echo -e "${RED}  ✘ crane pull failed${NC}"
+        echo -e "${RED}  [X] crane pull failed${NC}"
         rm -f "$image_tar"; [ -n "$crane_tmp" ] && rm -rf "$crane_tmp"
         return 1
     fi
@@ -349,19 +283,15 @@ pull_base_image_via_proxy() {
 
 build_image() {
     image_check=$(docker images -q "$IMAGE_NAME" 2>/dev/null)
-    if [ -n "$image_check" ]; then
-        return 0
-    fi
+    if [ -n "$image_check" ]; then return 0; fi
 
-    echo -e "${ICON_GEAR} Building Coder Image..."
+    echo -e "${ICON_GEAR} Building OpenCode Image..."
 
-    # The Docker Desktop daemon VM cannot reach the corporate proxy, so pull the base
-    # image from WSL2 directly (using crane), then build with --pull=never.
     if ! docker image inspect "$BASE_IMAGE" >/dev/null 2>&1; then
         if [ -n "${DOWNLOAD_PROXY:-}" ]; then
             pull_base_image_via_proxy "$BASE_IMAGE" "$DOWNLOAD_PROXY" || return 1
         else
-            docker pull "$BASE_IMAGE" || { echo -e "${RED}✘ Base image pull failed${NC}"; return 1; }
+            docker pull "$BASE_IMAGE" || { echo -e "${RED}[X] Base image pull failed${NC}"; return 1; }
         fi
     fi
 
@@ -377,35 +307,41 @@ build_image() {
         npm_proxy_cmds="RUN npm config set proxy $build_proxy && npm config set https-proxy $build_proxy && npm config set strict-ssl false"
     fi
 
-    cat > "$LOCAL_STACK_DIR/Dockerfile" <<DOCKERFILE
+    cat > "$LOCAL_STACK_DIR/Dockerfile.oc" <<DOCKERFILE
 FROM node:20-bullseye-slim
 ARG PROXY_URL
-ENV http_proxy=\${PROXY_URL} https_proxy=\${PROXY_URL} HTTP_PROXY=\${PROXY_URL} HTTPS_PROXY=\${PROXY_URL} \\
+ENV http_proxy=\${PROXY_URL} https_proxy=\${PROXY_URL} HTTP_PROXY=\${PROXY_URL} HTTPS_PROXY=\${PROXY_URL} \
     no_proxy=localhost,127.0.0.1 NO_PROXY=localhost,127.0.0.1
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y \\
-    openscad tree android-tools-adb ripgrep curl git \\
+RUN apt-get update && apt-get install -y \
+    tree ripgrep curl git \
     --no-install-recommends && rm -rf /var/lib/apt/lists/*
 ${npm_proxy_cmds}
-RUN npm install -g @anthropic-ai/claude-code --quiet
+RUN npm install -g opencode-ai
+RUN opencode --version
 WORKDIR /workspace
 DOCKERFILE
 
-    docker build -t "$IMAGE_NAME" "${proxy_args[@]}" -f "$LOCAL_STACK_DIR/Dockerfile" "$LOCAL_STACK_DIR" || {
-        echo -e "${RED}✘ Docker build failed${NC}"; return 1
+    docker build -t "$IMAGE_NAME" "${proxy_args[@]}" -f "$LOCAL_STACK_DIR/Dockerfile.oc" "$LOCAL_STACK_DIR" || {
+        echo -e "${RED}[X] Docker build failed${NC}"; return 1
     }
 }
 
 start_hub_engine() {
     echo -e "${ICON_GEAR} Initializing Global GPU Hub..."
 
-    # Remove any pre-existing engine/proxy containers (could be crashed from a previous
-    # failed run and competing with a new model download via --restart always).
+    # Remove any pre-existing engine/proxy containers (could be crashed/competing with download)
     docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
     docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
 
-        # Write a concrete LiteLLM config file; env-only config can be missed depending on image version.
-        cat > "$LOCAL_STACK_DIR/litellm_config.yaml" <<EOF
+    for img in "$LLAMA_IMAGE" "$LITELLM_IMAGE"; do
+        if ! docker image inspect "$img" >/dev/null 2>&1; then
+            echo -e "${CYAN}  Pulling $img ...${NC}"
+            docker pull "$img" || { echo -e "${RED}[X] Failed to pull $img${NC}"; return 1; }
+        fi
+    done
+
+    cat > "$LOCAL_STACK_DIR/litellm_config.yaml" <<EOF
 model_list:
   - model_name: gemma-local
     litellm_params:
@@ -419,70 +355,72 @@ litellm_settings:
   request_timeout: 600
   drop_params: true
   num_retries: 0
-  use_chat_completions_url_for_anthropic_messages: true
-  model_alias_map:
-    claude-haiku-4-5-20251001: gemma-local
-    claude-3-5-haiku-20241022: gemma-local
-    claude-3-5-sonnet-20241022: gemma-local
-    claude-3-7-sonnet-20250219: gemma-local
-    claude-opus-4-5: gemma-local
-    claude-sonnet-4-5: gemma-local
-    claude-haiku-4-5: gemma-local
 EOF
-
-    # Pull engine/proxy images if not cached so errors surface here rather than silently.
-    for img in "$LLAMA_IMAGE" "$LITELLM_IMAGE"; do
-        if ! docker image inspect "$img" >/dev/null 2>&1; then
-            echo -e "${CYAN}  Pulling $img ...${NC}"
-            docker pull "$img" || { echo -e "${RED}✘ Failed to pull $img${NC}"; return 1; }
-        fi
-    done
 
     docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$HUB_NETWORK" --gpus all --restart on-failure:3 \
         -v "$(to_host_path "$MODEL_STORAGE_DIR"):/models" \
         "$LLAMA_IMAGE" \
         -m "/models/$MODEL_FILE" --host 0.0.0.0 --port 8080 \
         --parallel "$MAX_SLOTS" -ngl 99 -c "$CTX_PER_SLOT" --flash-attn on
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}✘ Failed to start engine container${NC}"; return 1
-    fi
+    if [ $? -ne 0 ]; then echo -e "${RED}[X] Failed to start engine container${NC}"; return 1; fi
 
     docker run -d --name "$GLOBAL_PROXY_NAME" --network "$HUB_NETWORK" -p 4000:4000 --restart always \
         -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
         -e "no_proxy=localhost,127.0.0.1,$GLOBAL_ENGINE_NAME" \
         -v "$(to_host_path "$LOCAL_STACK_DIR/litellm_config.yaml"):/app/config.yaml:ro" \
         "$LITELLM_IMAGE" --config /app/config.yaml
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}✘ Failed to start proxy container${NC}"; return 1
-    fi
+    if [ $? -ne 0 ]; then echo -e "${RED}[X] Failed to start proxy container${NC}"; return 1; fi
+}
+
+write_opencode_config() {
+    local config_dir="$LOCAL_STACK_DIR/opencode-config"
+    mkdir -p "$config_dir"
+    cat > "$config_dir/opencode.json" <<EOF
+{
+  "\$schema": "https://opencode.ai/config.json",
+  "autoupdate": false,
+  "share": "disabled",
+  "permission": {
+    "write": "deny"
+  },
+  "model": "local/gemma-local",
+  "provider": {
+    "local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Local Gemma (llama.cpp)",
+      "options": {
+        "baseURL": "http://$GLOBAL_PROXY_NAME:4000/v1",
+        "apiKey": "sk-local-bypass"
+      },
+      "models": {
+        "gemma-local": {
+          "name": "Gemma 4 Local",
+          "contextLength": 65536
+        }
+      }
+    }
+  }
+}
+EOF
 }
 
 start_workbench() {
     echo -e "${ICON_GEAR} Mapping Spoke for [$PROJECT_ID]..."
+    write_opencode_config
     docker run -d --name "$WORKBENCH" --network "$HUB_NETWORK" --privileged \
         -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
         -e "no_proxy=localhost,127.0.0.1,$GLOBAL_PROXY_NAME,$GLOBAL_ENGINE_NAME" \
         -v "$(to_host_path "$(pwd)"):/workspace" \
         -v "$(to_host_path "$HOME/.npm-cache"):/root/.npm" \
-        -v "$(to_host_path "$HOME/.claude-config"):/root/.config/claude-code" \
-    -e ANTHROPIC_BASE_URL="http://$GLOBAL_PROXY_NAME:4000" \
-        -e ANTHROPIC_API_KEY="sk-local-bypass" \
+        -v "$(to_host_path "$LOCAL_STACK_DIR/opencode-config"):/root/.config/opencode" \
         "$IMAGE_NAME" /bin/bash -c "trap 'true' EXIT; while true; do sleep 3600; done"
 }
 
 ensure_workbench_running() {
-    # Already running
-    if [ -n "$(docker ps -q -f name=^/${WORKBENCH}$ 2>/dev/null)" ]; then
-        return 0
-    fi
-
-    # Exists but stopped -> start it
+    if [ -n "$(docker ps -q -f name=^/${WORKBENCH}$ 2>/dev/null)" ]; then return 0; fi
     if [ -n "$(docker ps -aq -f name=^/${WORKBENCH}$ 2>/dev/null)" ]; then
-        docker start "$WORKBENCH" >/dev/null 2>&1 || return 1
-        return 0
+        docker start "$WORKBENCH" >/dev/null 2>&1 || return 1; return 0
     fi
-
-    # Missing -> create it
     start_workbench
 }
 
@@ -496,49 +434,29 @@ handle_command() {
 Usage: $(basename "$0") [COMMAND]
 
 Commands:
-  spawn              Execute command in active workbench
   --status           Show GPU and engine status dashboard
   --setup-path       Create shell alias for this script
   --clean            Stop and remove all containers
   --help             Show this message
 HELP
-            exit 0
-            ;;
+            exit 0 ;;
         --status)
-            exec "$(dirname "$(realpath "$0")")/ai-status.sh"
-            ;;
-        spawn)
-            container="${WORKBENCH_PREFIX}-${PROJECT_ID}"
-            cmd_exec="docker exec -it -u node -e CLAUDE_CODE_SIMPLE=1 $container claude --bare --model gemma-local --dangerously-skip-permissions"
-            if [ "$IS_GITBASH" = "true" ]; then
-                winpty $cmd_exec
-            else
-                eval $cmd_exec
-            fi
-            exit 0
-            ;;
+            exec "$(dirname "$(realpath "$0")")/ai-status.sh" ;;
         --clean)
             echo -e "${CYAN}Tearing down Hub & Project Spokes...${NC}"
             docker stop $GLOBAL_ENGINE_NAME $GLOBAL_PROXY_NAME $(docker ps -q --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
-            docker rm $GLOBAL_ENGINE_NAME $GLOBAL_PROXY_NAME $(docker ps -aq --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
-            exit 0
-            ;;
+            docker rm   $GLOBAL_ENGINE_NAME $GLOBAL_PROXY_NAME $(docker ps -aq --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
+            exit 0 ;;
         --setup-path)
             rc_file="$HOME/.bashrc"
             [ "$SHELL" != "${SHELL%zsh}" ] && rc_file="$HOME/.zshrc"
             sed -i.bak "/alias $ALIAS_NAME=/d" "$rc_file"
             echo "alias $ALIAS_NAME='$(realpath "$0")'" >> "$rc_file"
             echo -e "${ICON_OK} Alias '${ALIAS_NAME}' set. Run: source $rc_file"
-            exit 0
-            ;;
-        "")
-            # Continue to initialization
-            ;;
+            exit 0 ;;
+        "") ;;
         *)
-            echo -e "${RED}Unknown command: $1${NC}"
-            echo "Run: $0 --help"
-            exit 1
-            ;;
+            echo -e "${RED}Unknown command: $1${NC}"; echo "Run: $0 --help"; exit 1 ;;
     esac
 }
 
@@ -546,51 +464,38 @@ HELP
 
 # --- [ IGNITION ] -------------------------------------------------------------
 
-check_docker || { echo -e "${RED}✘ Docker initialization failed${NC}"; exit 1; }
-# First pass establishes VRAM tier and current local model state.
+check_docker || { echo -e "${RED}[X] Docker initialization failed${NC}"; exit 1; }
 detect_model || true
-
-# Always evaluate download policy after VRAM is known.
-download_model || { echo -e "${RED}✘ Model download failed${NC}"; exit 1; }
-
-# Final pass selects the model to launch.
-detect_model || { echo -e "${RED}✘ Model detection failed${NC}"; exit 1; }
-build_image || { echo -e "${RED}✘ Image build failed${NC}"; exit 1; }
+download_model || { echo -e "${RED}[X] Model download failed${NC}"; exit 1; }
+detect_model || { echo -e "${RED}[X] Model detection failed${NC}"; exit 1; }
+build_image || { echo -e "${RED}[X] Image build failed${NC}"; exit 1; }
 
 WORKBENCH="${WORKBENCH_PREFIX}-${PROJECT_ID}"
-
 docker network create "$HUB_NETWORK" 2>/dev/null || true
 
 if [ -z "$(docker ps -q -f name=^/${GLOBAL_ENGINE_NAME}$ 2>/dev/null)" ]; then
-    # Also remove any stopped/crashed containers before restarting
     docker rm "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
-    start_hub_engine || { echo -e "${RED}✘ Hub startup failed${NC}"; exit 1; }
+    start_hub_engine || { echo -e "${RED}[X] Hub startup failed${NC}"; exit 1; }
 fi
 
-ensure_workbench_running || { echo -e "${RED}✘ Workbench startup failed${NC}"; exit 1; }
+ensure_workbench_running || { echo -e "${RED}[X] Workbench startup failed${NC}"; exit 1; }
 
-echo -ne "${CYAN}◈ Syncing VRAM Slots:${NC} "
+echo -ne "${CYAN}[..] Syncing VRAM Slots:${NC} "
 retry_count=0
 max_retries=90
-
-# Wait for engine and proxy to be responsive
 engine_ready=false
 proxy_ready=false
+
 while [ "$retry_count" -lt "$max_retries" ]; do
     if docker exec "$GLOBAL_ENGINE_NAME" curl -s -m 2 http://localhost:8080/v1/models 2>/dev/null | grep -q '"id"'; then
         engine_ready=true
     fi
-
     if curl -s -m 2 http://localhost:4000/v1/models 2>/dev/null | grep -q '"gemma-local"'; then
         proxy_ready=true
     fi
-
-    if [ "$engine_ready" = "true" ] && [ "$proxy_ready" = "true" ]; then
-        break
-    fi
-
+    if [ "$engine_ready" = "true" ] && [ "$proxy_ready" = "true" ]; then break; fi
     retry_count=$((retry_count + 1))
-    echo -ne "◈"
+    echo -ne "."
     sleep 2
 done
 
@@ -598,11 +503,10 @@ if [ "$engine_ready" = "true" ] && [ "$proxy_ready" = "true" ]; then
     echo -e " ${GREEN}READY${NC}"
 else
     echo -e " ${RED}TIMEOUT${NC}"
-    echo -e "${RED}✘ Engine/Proxy failed to initialize after $((retry_count * 2)) seconds${NC}"
+    echo -e "${RED}[X] Engine/Proxy failed to initialize after $((retry_count * 2)) seconds${NC}"
     echo -e "${CYAN}Diagnostics:${NC}"
-    
-    # Try to get engine container logs
-    if docker ps -aq -f name="$GLOBAL_ENGINE_NAME" >/dev/null 2>&1 && [ -n "$(docker ps -aq -f name="$GLOBAL_ENGINE_NAME")" ]; then
+
+    if [ -n "$(docker ps -aq -f name="$GLOBAL_ENGINE_NAME")" ]; then
         if [ -n "$(docker ps -q -f name="$GLOBAL_ENGINE_NAME")" ]; then
             echo "  Engine container is running. Last 30 logs:"
         else
@@ -610,28 +514,26 @@ else
         fi
         docker logs "$GLOBAL_ENGINE_NAME" 2>&1 | tail -30 | sed 's/^/    /'
     else
-        echo "  ${RED}✘ Engine container not found${NC}"
+        echo "  ${RED}[X] Engine container not found${NC}"
     fi
-    
-    # Check model file
+
     echo -e "${CYAN}  Model location: $MODEL_STORAGE_DIR/$MODEL_FILE${NC}"
     if [ -f "$MODEL_STORAGE_DIR/$MODEL_FILE" ]; then
-        echo -e "${GREEN}  ✔ Model file exists${NC}"
+        echo -e "${GREEN}  [OK] Model file exists${NC}"
     else
-        echo -e "${RED}  ✘ Model file missing${NC}"
+        echo -e "${RED}  [X] Model file missing${NC}"
     fi
 
     if [ "$proxy_ready" != "true" ]; then
         echo "  Proxy container logs (last 30):"
         docker logs "$GLOBAL_PROXY_NAME" 2>&1 | tail -30 | sed 's/^/    /'
     fi
-    
     exit 1
 fi
 
 echo -e "${ICON_GEAR} Attaching to workbench..."
 if [ "$IS_GITBASH" = "true" ]; then
-    winpty docker exec -it -u node -e CLAUDE_CODE_SIMPLE=1 "$WORKBENCH" claude --bare --model gemma-local --dangerously-skip-permissions
+    winpty docker exec -it "$WORKBENCH" opencode
 else
-    docker exec -it -u node -e CLAUDE_CODE_SIMPLE=1 "$WORKBENCH" claude --bare --model gemma-local --dangerously-skip-permissions
+    docker exec -it "$WORKBENCH" opencode
 fi
