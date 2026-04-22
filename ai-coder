@@ -133,3 +133,15 @@ fi
 
 echo -e "${ICON_GEAR} Attaching to workbench..."
 execute_tool
+
+# --- [ POST-EXIT CLEANUP ] ----------------------------------------------------
+echo -e "${CYAN}◈ Stopping workbench [$WORKBENCH]...${NC}"
+docker stop "$WORKBENCH" 2>/dev/null || true
+docker rm   "$WORKBENCH" 2>/dev/null || true
+
+remaining_spokes=$(docker ps -q --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null | wc -l)
+if [ "$remaining_spokes" -eq 0 ]; then
+    stop_hub
+else
+    echo -e "${CYAN}◈ ${remaining_spokes} spoke(s) still running — Hub remains active.${NC}"
+fi

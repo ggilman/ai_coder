@@ -351,6 +351,19 @@ execute_tool() {
 
 # --- [ COMMANDS ] -------------------------------------------------------------
 
+stop_hub() {
+    echo -e "${CYAN}◈ Shutting down Hub...${NC}"
+    docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
+    docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
+    echo -e "${ICON_OK} Hub stopped."
+}
+
+teardown() {
+    echo -e "${CYAN}Tearing down Hub & Project Spokes...${NC}"
+    docker stop $GLOBAL_ENGINE_NAME $GLOBAL_PROXY_NAME $(docker ps -q --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
+    docker rm   $GLOBAL_ENGINE_NAME $GLOBAL_PROXY_NAME $(docker ps -aq --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
+}
+
 handle_command() {
     cmd="${1:-}"
     case "$cmd" in
@@ -372,9 +385,7 @@ HELP
             exec "$(dirname "$(realpath "$0")")/ai-status.sh"
             ;;
         --clean)
-            echo -e "${CYAN}Tearing down Hub & Project Spokes...${NC}"
-            docker stop $GLOBAL_ENGINE_NAME $GLOBAL_PROXY_NAME $(docker ps -q --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
-            docker rm $GLOBAL_ENGINE_NAME $GLOBAL_PROXY_NAME $(docker ps -aq --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
+            teardown
             exit 0
             ;;
         --setup-path)
