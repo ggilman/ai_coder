@@ -1,0 +1,135 @@
+#!/bin/bash
+# ==============================================================================
+# AI-CODER | Unified Launcher for Claude & OpenCode
+# ==============================================================================
+set -euo pipefail
+
+ALIAS_NAME="ai"
+PREF_FILE="$HOME/.ai-coder-pref"
+
+# Load Core Library
+CORE_SCRIPT="$(dirname "$(realpath "$0")")/ai-coder-core.sh"
+if [ ! -f "$CORE_SCRIPT" ]; then
+    echo -e "${RED}Error: Core library not found at $CORE_SCRIPT${NC}"
+    exit 1
+fi
+source "$CORE_SCRIPT"
+
+# --- [ PREFERENCE MANAGEMENT ] ------------------------------------------------
+
+show_menu() {
+    echo -e "\n${CYAN}Welcome to AI-Coder. Please select your preferred tool:${NC}"
+    echo "1) Claude"
+    echo "2) OpenCode"
+    echo "q) Quit"
+    echo -n "Selection: "
+    read -r choice
+    case "$choice" in
+        1) echo "claude" > "$PREF_FILE"; echo "Claude selected." ;;
+        2) echo "opencode" > "$PREF_FILE"; echo "OpenCode selected." ;;
+        q) exit 0 ;;
+        *) echo -e "${RED}Invalid selection.${NC}"; show_menu ;;
+    esac
+}
+
+# --- [ MAIN ENTRY ] -----------------------------------------------------------
+
+# Handle --menu flag
+if [[ "${1:-}" == "--menu" ]]; then
+    show_menu
+    shift # remove --menu from arguments
+fi
+
+# Handle first-run or missing preference
+if [ ! -f "$PREF_FILE" ] || [ -z "$(cat "$PREF_FILE")" ]; then
+    show_menu
+fi
+
+TOOL_PREF=$(cat "$PREF_FILE")
+
+# Define child script based on preference
+case "$TOOL_PREF" in
+    claude)
+        CHILD_SCRIPT="$(dirname "$(realpath "$0")")/ai-coder-claude.sh"
+        LOCAL_STACK_DIR="$(pwd)/.claude-stack"
+        ;;
+    opencode)
+        CHILD_SCRIPT="$(dirname "$(realpath "$0")")/ai-coder-opencode.sh"
+        LOCAL_STACK_DIR="$(pwd)/.oc-stack"
+        ;;
+    *)
+        echo -e "${RED}Error: Invalid tool preference in $PREF_FILE${NC}"
+        exit 1
+        ;;
+esac
+
+# Load Child Overrides
+if [ ! -f "$CHILD_SCRIPT" ]; then
+    echo -e "${RED}Error: Child script not found at $CHILD_SCRIPT${NC}"
+    exit 1
+fi
+source "$CHILD_SCRIPT"
+
+# Ensure local stack dir exists (needed before core logic starts using it)
+mkdir -p "$MODEL_STORAGE_DIR" "$LOCAL_STACK_DIR"
+
+# Set WORKBENCH variable
+WORKBENCH="${WORKBENCH_PREFIX}-${PROJECT_ID}"
+
+# Process commands
+if [ "$#" -gt 0 ]; then
+    handle_command "$@"
+fi
+
+# --- [ IGNITION ] -------------------------------------------------------------
+
+check_docker || { echo -e "${RED}✘ Docker initialization failed${NC}"; exit 1; }
+detect_model || true
+download_model || { echo -e "${RED}✘ Model download failed${NC}"; exit 1; }
+detect_model || { echo -e "${RED}✘ Model detection failed${NC}"; exit 1; }
+build_image || { echo -e "${RED}✘ Image build failed${NC}"; exit 1; }
+
+docker network create "$HUB_NETWORK" 2>/dev/null || true
+
+if [ -z "$(docker ps -q -f name=^/${GLOBAL_ENGINE_NAME}$ 2>/dev/null)" ]; then
+    docker rm "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
+    start_hub_engine || { echo -e "${RED}✘ Hub startup failed${NC}"; exit 1; }
+fi
+
+ensure_workbench_running || { echo -e "${RED}✘ Workbench startup failed${NC}"; exit 1; }
+
+echo -ne "${CYAN}◈ Syncing VRAM Slots:${NC} "
+retry_count=0
+max_retries=90
+engine_ready=false
+proxy_ready=false
+
+while [ "$retry_count" -lt "$max_retries" ]; do
+    if docker exec "$GLOBAL_ENGINE_NAME" curl -s -m 2 http://localhost:8080/v1/models 2>/dev/null | grep -q '"id"'; then
+        engine_ready=true
+    fi
+
+    if curl -s -m 2 http://localhost:4000/v1/models 2>/dev/null | grep -q '"gemma-local"'; then
+        proxy_ready=true
+    fi
+
+    if [ "$engine_ready" = "true" ] && [ "$proxy_ready" = "true" ]; then break; fi
+    retry_count=$((retry_count + 1))
+    echo -ne "◈"
+    sleep 2
+done
+
+if [ "$engine_ready" = "true" ] && [ "$proxy_ready" = "true" ]; then
+    echo -e " ${GREEN}READY${NC}"
+else
+    echo -e " ${RED}TIMEOUT${NC}"
+    echo -e "${RED}✘ Engine/Proxy failed to initialize after $((retry_count * 2)) seconds${NC}"
+    # Basic diagnostics
+    if [ -n "$(docker ps -aq -f name="$GLOBAL_ENGINE_NAME")" ]; then
+        docker logs "$GLOBAL_ENGINE_NAME" 2>&1 | tail -20 | sed 's/^/    /'
+    fi
+    exit 1
+fi
+
+echo -e "${ICON_GEAR} Attaching to workbench..."
+execute_tool
