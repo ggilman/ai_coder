@@ -58,9 +58,9 @@ get_gpu_stats() {
         --format=csv,noheader,nounits 2>/dev/null
 }
 
-# Checks engine health via curl
+# Checks engine slot status via curl (empty string on failure)
 get_engine_health() {
-    timeout "$HEALTH_TIMEOUT" docker exec "$ENGINE_NAME" curl -s http://localhost:8080/health 2>/dev/null || echo "{}"
+    timeout "$HEALTH_TIMEOUT" docker exec "$ENGINE_NAME" curl -s http://localhost:8080/slots 2>/dev/null || echo ""
 }
 
 # Draws the dashboard header
@@ -152,12 +152,12 @@ main() {
         draw_separator
 
         # Display engine health
-        if health=$(get_engine_health); then
-            proc_slots=$(echo "$health" | grep -o '"slots_processing":[[:space:]]*[0-9]*' | grep -o '[0-9]*$' || echo 0)
-            idle_slots=$(echo "$health" | grep -o '"slots_idle":[[:space:]]*[0-9]*' | grep -o '[0-9]*$' || echo 0)
-            total_slots=$((proc_slots + idle_slots))
+        slots_raw=$(get_engine_health)
+        if [ -n "$slots_raw" ]; then
+            total_slots=$(echo "$slots_raw" | { grep -o '"id"' || true; } | wc -l | xargs)
+            active_slots=$(echo "$slots_raw" | { grep -o '"is_processing":true' || true; } | wc -l | xargs)
 
-            health_text="$BOLD ENGINE HUB: [$proc_slots/$total_slots Slots Active]$NC"
+            health_text="${BOLD}ENGINE HUB: ${GREEN}● Online${NC}${BOLD} | ${total_slots} slot(s) | ${active_slots} active${NC}"
             health_len=$(get_visible_length "$health_text")
             health_pad=$((70 - health_len))
             [ "$health_pad" -lt 0 ] && health_pad=0
@@ -165,13 +165,12 @@ main() {
             printf "%b║%b%b%*s%b║%b\n" \
                 "$CYAN" "$NC" "$health_text" "$health_pad" "" "$CYAN" "$NC"
         else
-            err_msg="✘ Engine health check failed"
-            err_text="${RED}${err_msg}${NC}"
-            err_len=$(get_visible_length "$err_text")
-            err_pad=$((70 - err_len))
-            [ "$err_pad" -lt 0 ] && err_pad=0
-            printf "%b║%b %b%*s%b║%b\n" \
-                "$CYAN" "$NC" "$err_text" "$err_pad" "" "$CYAN" "$NC"
+            health_text="${BOLD}ENGINE HUB: ${RED}● Offline${NC}"
+            health_len=$(get_visible_length "$health_text")
+            health_pad=$((70 - health_len))
+            [ "$health_pad" -lt 0 ] && health_pad=0
+            printf "%b║%b%b%*s%b║%b\n" \
+                "$CYAN" "$NC" "$health_text" "$health_pad" "" "$CYAN" "$NC"
         fi
 
         draw_footer
