@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# AI-STATUS.SH v4.8 | GPU & Engine Dashboard
+# AI-STATUS.SH v1.0 | GPU & Engine Dashboard
 # Monitors GPU utilization, VRAM, and AI Hub engine health.
 # Usage: ./ai-status.sh
 # ==============================================================================
@@ -69,7 +69,7 @@ draw_header() {
     printf "%b╔%s╗%b\n" "$CYAN" "$SEPARATOR_LINE" "$NC"
 
     # Content line
-    local content_text="$BOLD$WHITE$BG_BLUE  AI HUB COMMAND CENTER  $NC $DIM v4.8$NC"
+    local content_text="$BOLD$WHITE$BG_BLUE  AI HUB COMMAND CENTER  $NC $DIM v1.0$NC"
     local content_len=$(get_visible_length "$content_text")
     local pad=$((70 - content_len))
     [ "$pad" -lt 0 ] && pad=0
