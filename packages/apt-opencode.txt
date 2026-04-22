@@ -1,0 +1,6 @@
+# ============================================================
+# apt-opencode.txt — extra packages for the OpenCode workbench only
+# One package per line. Lines starting with # are ignored.
+# ============================================================
+
+# Add OpenCode-specific packages here

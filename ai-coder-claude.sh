@@ -49,49 +49,57 @@ build_image() {
     local proxy_args=()
     local npm_proxy_cmds=""
     if [ -n "${DOWNLOAD_PROXY:-}" ]; then
-        local build_proxy="$DOWNLOAD_PROXY"
-        local _proxy_host; _proxy_host=$(echo "$DOWNLOAD_PROXY" | sed 's|.*://||;s|:.*||')
-        local _proxy_ip; _proxy_ip=$(getent hosts "$_proxy_host" 2>/dev/null | awk '{print $1}' | head -1)
-        [ -n "$_proxy_ip" ] && build_proxy=$(echo "$DOWNLOAD_PROXY" | sed "s/$_proxy_host/$_proxy_ip/")
+        local build_proxy; build_proxy=$(resolve_proxy_to_ip "$DOWNLOAD_PROXY")
+        local npm_proxy; npm_proxy=$(echo "$build_proxy" | sed 's|^https://|http://|')
         proxy_args=(--build-arg "PROXY_URL=$build_proxy")
-        npm_proxy_cmds="RUN npm config set proxy $build_proxy && npm config set https-proxy $build_proxy && npm config set strict-ssl false"
+        npm_proxy_cmds="RUN npm config set proxy $npm_proxy && npm config set https-proxy $npm_proxy && npm config set strict-ssl false"
     fi
+
+    local apt_pkgs; apt_pkgs="$(read_package_list "$SCRIPT_DIR/packages/apt-common.txt") $(read_package_list "$SCRIPT_DIR/packages/apt-claude.txt")"
 
     cat > "$LOCAL_STACK_DIR/Dockerfile" <<DOCKERFILE
 FROM node:20-bullseye-slim
 ARG PROXY_URL
+ENV DEBIAN_FRONTEND=noninteractive
+RUN if [ -n "\${PROXY_URL}" ]; then \\
+      apt_proxy=\$(echo "\${PROXY_URL}" | sed 's|^https://|http://|') && \\
+      sed -i 's|http://|https://|g' /etc/apt/sources.list && \\
+      printf 'Acquire::https::Proxy "%s";\\nAcquire::https::Verify-Peer "false";\\nAcquire::https::Verify-Host "false";\\n' "\${apt_proxy}" > /etc/apt/apt.conf.d/01proxy; \\
+    fi
+RUN apt-get update && apt-get install -y \\
+    ${apt_pkgs} \\
+    --no-install-recommends && rm -rf /var/lib/apt/lists/*
 ENV http_proxy=\${PROXY_URL} https_proxy=\${PROXY_URL} HTTP_PROXY=\${PROXY_URL} HTTPS_PROXY=\${PROXY_URL} \\
     no_proxy=localhost,127.0.0.1 NO_PROXY=localhost,127.0.0.1
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y \\
-    openscad tree android-tools-adb ripgrep curl git \\
-    --no-install-recommends && rm -rf /var/lib/apt/lists/*
 ${npm_proxy_cmds}
 RUN npm install -g @anthropic-ai/claude-code --quiet
 WORKDIR /workspace
 DOCKERFILE
 
-    docker build -t "$IMAGE_NAME" "${proxy_args[@]}" -f "$LOCAL_STACK_DIR/Dockerfile" "$LOCAL_STACK_DIR" || {
+    docker build -t "$IMAGE_NAME" "${proxy_args[@]}" -f "$(to_host_path "$LOCAL_STACK_DIR")/Dockerfile" "$(to_host_path "$LOCAL_STACK_DIR")" || {
         echo -e "${RED}✘ Docker build failed${NC}"; return 1
     }
 }
 
 start_workbench() {
     echo -e "${ICON_GEAR} Mapping Spoke for [$PROJECT_ID]..."
+    # Pre-create host-side files so Docker mounts them as files, not directories
+    [ -f "$HOME/.claude-config.json" ] || echo '{}' > "$HOME/.claude-config.json"
     docker run -d --name "$WORKBENCH" --network "$HUB_NETWORK" --privileged \
         -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
         -e "no_proxy=localhost,127.0.0.1,$GLOBAL_PROXY_NAME,$GLOBAL_ENGINE_NAME" \
         -v "$(to_host_path "$(pwd)"):/workspace" \
         -v "$(to_host_path "$HOME/.npm-cache"):/root/.npm" \
-        -v "$(to_host_path "$HOME/.claude-config"):/root/.config/claude-code" \
-        -e ANTHROPIC_BASE_URL="http://$GLOBAL_PROXY_NAME:4000" \
+        -v "$(to_host_path "$HOME/.claude-config"):/root/.claude" \
+        -v "$(to_host_path "$HOME/.claude-config.json"):/root/.claude.json" \
+        -e ANTHROPIC_BASE_URL="http://$GLOBAL_ENGINE_NAME:8080" \
         -e ANTHROPIC_API_KEY="sk-local-bypass" \
         "$IMAGE_NAME" /bin/bash -c "trap 'true' EXIT; while true; do sleep 3600; done"
 }
 
 execute_tool() {
     local container="${WORKBENCH_PREFIX}-${PROJECT_ID}"
-    local cmd_exec="docker exec -it -u node -e CLAUDE_CODE_SIMPLE=1 $container claude --bare --model gemma-local --dangerously-skip-permissions"
+    local cmd_exec="docker exec -it -e CLAUDE_CODE_SIMPLE=1 $container claude --bare"
     if [ "$IS_GITBASH" = "true" ]; then
         winpty $cmd_exec
     else

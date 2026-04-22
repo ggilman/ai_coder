@@ -1,0 +1,43 @@
+# ============================================================
+# apt-common.txt — packages installed in ALL workbench images
+# One package per line. Lines starting with # are ignored.
+# ============================================================
+
+# Version control & search
+git
+ripgrep
+tree
+
+# Network utilities
+curl
+wget
+netcat-openbsd
+iputils-ping
+
+# Python
+python3
+python3-pip
+python3-venv
+python3-dev
+
+# Build tools (needed for pip packages with native extensions)
+gcc
+g++
+make
+cmake
+
+# Data & files
+jq
+sqlite3
+unzip
+zip
+
+# Media & documents
+ffmpeg
+imagemagick
+poppler-utils
+
+# Process & debug
+procps
+lsof
+strace

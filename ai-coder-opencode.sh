@@ -22,30 +22,35 @@ build_image() {
     local proxy_args=()
     local npm_proxy_cmds=""
     if [ -n "${DOWNLOAD_PROXY:-}" ]; then
-        local build_proxy="$DOWNLOAD_PROXY"
-        local _proxy_host; _proxy_host=$(echo "$DOWNLOAD_PROXY" | sed 's|.*://||;s|:.*||')
-        local _proxy_ip; _proxy_ip=$(getent hosts "$_proxy_host" 2>/dev/null | awk '{print $1}' | head -1)
-        [ -n "$_proxy_ip" ] && build_proxy=$(echo "$DOWNLOAD_PROXY" | sed "s/$_proxy_host/$_proxy_ip/")
+        local build_proxy; build_proxy=$(resolve_proxy_to_ip "$DOWNLOAD_PROXY")
+        local npm_proxy; npm_proxy=$(echo "$build_proxy" | sed 's|^https://|http://|')
         proxy_args=(--build-arg "PROXY_URL=$build_proxy")
-        npm_proxy_cmds="RUN npm config set proxy $build_proxy && npm config set https-proxy $build_proxy && npm config set strict-ssl false"
+        npm_proxy_cmds="RUN npm config set proxy $npm_proxy && npm config set https-proxy $npm_proxy && npm config set strict-ssl false"
     fi
+
+    local apt_pkgs; apt_pkgs="$(read_package_list "$SCRIPT_DIR/packages/apt-common.txt") $(read_package_list "$SCRIPT_DIR/packages/apt-opencode.txt")"
 
     cat > "$LOCAL_STACK_DIR/Dockerfile.oc" <<DOCKERFILE
 FROM node:20-bullseye-slim
 ARG PROXY_URL
+ENV DEBIAN_FRONTEND=noninteractive
+RUN if [ -n "\${PROXY_URL}" ]; then \
+      apt_proxy=\$(echo "\${PROXY_URL}" | sed 's|^https://|http://|') && \
+      sed -i 's|http://|https://|g' /etc/apt/sources.list && \
+      printf 'Acquire::https::Proxy "%s";\nAcquire::https::Verify-Peer "false";\nAcquire::https::Verify-Host "false";\n' "\${apt_proxy}" > /etc/apt/apt.conf.d/01proxy; \
+    fi
+RUN apt-get update && apt-get install -y \
+    ${apt_pkgs} \
+    --no-install-recommends && rm -rf /var/lib/apt/lists/*
 ENV http_proxy=\${PROXY_URL} https_proxy=\${PROXY_URL} HTTP_PROXY=\${PROXY_URL} HTTPS_PROXY=\${PROXY_URL} \
     no_proxy=localhost,127.0.0.1 NO_PROXY=localhost,127.0.0.1
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y \
-    tree ripgrep curl git \
-    --no-install-recommends && rm -rf /var/lib/apt/lists/*
 ${npm_proxy_cmds}
 RUN npm install -g opencode-ai
 RUN opencode --version
 WORKDIR /workspace
 DOCKERFILE
 
-    docker build -t "$IMAGE_NAME" "${proxy_args[@]}" -f "$LOCAL_STACK_DIR/Dockerfile.oc" "$LOCAL_STACK_DIR" || {
+    docker build -t "$IMAGE_NAME" "${proxy_args[@]}" -f "$(to_host_path "$LOCAL_STACK_DIR")/Dockerfile.oc" "$(to_host_path "$LOCAL_STACK_DIR")" || {
         echo -e "${RED}✘ Docker build failed${NC}"; return 1
     }
 }

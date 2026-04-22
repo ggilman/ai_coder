@@ -15,6 +15,21 @@ if [ ! -f "$CORE_SCRIPT" ]; then
 fi
 source "$CORE_SCRIPT"
 
+# Handle --setup-path before preference check (no tool selection needed)
+if [[ "${1:-}" == "--setup-path" ]]; then
+    rc_file="$HOME/.bashrc"
+    if [ "$IS_GITBASH" = "true" ]; then
+        rc_file="$HOME/.bash_profile"
+    elif [ "$SHELL" != "${SHELL%zsh}" ]; then
+        rc_file="$HOME/.zshrc"
+    fi
+    touch "$rc_file"
+    sed -i.bak "/alias $ALIAS_NAME=/d" "$rc_file"
+    echo "alias $ALIAS_NAME='$(realpath "$0")'" >> "$rc_file"
+    echo -e "${ICON_OK} Alias '${ALIAS_NAME}' added to $rc_file. Run: source $rc_file"
+    exit 0
+fi
+
 # --- [ PREFERENCE MANAGEMENT ] ------------------------------------------------
 
 show_menu() {
@@ -85,7 +100,13 @@ fi
 
 check_docker || { echo -e "${RED}✘ Docker initialization failed${NC}"; exit 1; }
 detect_model || true
-download_model || { echo -e "${RED}✘ Model download failed${NC}"; exit 1; }
+download_model || {
+    echo -e "${RED}✘ Model download failed${NC}"
+    echo -e "${YELLOW}  If you are on a corporate or proxy network, ensure DOWNLOAD_PROXY is set:${NC}"
+    echo -e "${CYAN}    export DOWNLOAD_PROXY=\"http://proxy.corp.com:8080\"${NC}"
+    echo -e "${CYAN}  Add it to ~/.bash_profile (Git Bash) or ~/.bashrc (WSL) to persist it.${NC}"
+    exit 1
+}
 detect_model || { echo -e "${RED}✘ Model detection failed${NC}"; exit 1; }
 build_image || { echo -e "${RED}✘ Image build failed${NC}"; exit 1; }
 

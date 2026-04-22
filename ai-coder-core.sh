@@ -5,8 +5,8 @@
 set -euo pipefail
 
 # --- [ GLOBAL CONFIGURATION ] -------------------------------------------------
+SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 DOCKER_BIN="C:\Program Files\Docker\Docker\Docker Desktop.exe"
-MODEL_STORAGE_DIR="$HOME/ai-models"
 GLOBAL_ENGINE_NAME="ai-hub-engine"
 GLOBAL_PROXY_NAME="ai-hub-proxy"
 HUB_NETWORK="ai-engineering-net"
@@ -50,6 +50,20 @@ readonly ICON_OK=" ${GREEN}✔${NC} "; readonly ICON_GEAR=" ${CYAN}⚙${NC} "; r
 
 IS_WSL=$(grep -qi Microsoft /proc/version 2>/dev/null && echo "true" || echo "false")
 IS_GITBASH=$(expr "$(uname -s)" : '.*MINGW.*' >/dev/null 2>&1 && echo "true" || echo "false")
+
+# Model storage: resolve to Windows home so Git Bash and WSL share the same folder.
+# Git Bash $HOME is already the Windows home (/c/Users/...).
+# In WSL, query the Windows USERPROFILE via cmd.exe and convert with wslpath.
+if [ "$IS_WSL" = "true" ]; then
+    _win_home=$(cmd.exe /c "echo %USERPROFILE%" 2>/dev/null | tr -d '\r\n')
+    if [ -n "$_win_home" ]; then
+        MODEL_STORAGE_DIR="$(wslpath "$_win_home")/ai-models"
+    else
+        MODEL_STORAGE_DIR="${MODEL_STORAGE_DIR:-$HOME/ai-models}"
+    fi
+else
+    MODEL_STORAGE_DIR="${MODEL_STORAGE_DIR:-$HOME/ai-models}"
+fi
 if [ "$IS_GITBASH" = "true" ]; then
     SMI="nvidia-smi.exe"
 else
@@ -58,10 +72,37 @@ fi
 
 to_host_path() {
     local abs_path; abs_path=$(realpath "$1")
-    if [ "$IS_WSL" == "true" ]; then
+    if [ "$IS_WSL" = "true" ]; then
         echo "$abs_path"
+    elif [ "$IS_GITBASH" = "true" ]; then
+        cygpath -m "$abs_path"
     else
         echo "$abs_path" | sed 's/^\/\([a-z]\)\//\/\/\1\//'
+    fi
+}
+
+# Read a package list file: one package per line, # comments stripped.
+read_package_list() {
+    local file="$1"
+    [ -f "$file" ] && grep -v '^\s*#' "$file" | grep -v '^\s*$' | tr '\n' ' ' || echo ""
+}
+
+# Resolve proxy hostname to IP so Docker build containers can reach it.
+# getent is Linux-only; fall back to nslookup (available in Git Bash + WSL).
+resolve_proxy_to_ip() {
+    local proxy_url="$1"
+    local host; host=$(echo "$proxy_url" | sed 's|.*://||;s|:.*||')
+    local ip=""
+    if command -v getent >/dev/null 2>&1; then
+        ip=$(getent hosts "$host" 2>/dev/null | awk '{print $1}' | head -1)
+    fi
+    if [ -z "$ip" ] && command -v nslookup >/dev/null 2>&1; then
+        ip=$(nslookup "$host" 2>/dev/null | tr -d '\r' | awk '/^Address:/{ip=$2} END{print ip}' | head -1)
+    fi
+    if [ -n "$ip" ]; then
+        echo "$proxy_url" | sed "s|$host|$ip|"
+    else
+        echo "$proxy_url"
     fi
 }
 
@@ -140,10 +181,30 @@ download_model() {
     echo -e "${CYAN}Downloading to: $model_path${NC}"
     [ -n "${DOWNLOAD_PROXY:-}" ] && echo -e "${CYAN}Using proxy: $DOWNLOAD_PROXY${NC}"
 
-    local win_curl
-    win_curl=$(command -v curl.exe 2>/dev/null)
+    # curl.exe via WSL interop (uses wslpath) — WSL only, not Git Bash
+    local win_curl=""
+    [ "$IS_WSL" = "true" ] && win_curl=$(command -v curl.exe 2>/dev/null)
 
-    if [ -n "${DOWNLOAD_PROXY:-}" ] && [ -n "$win_curl" ]; then
+    # Git Bash: use PowerShell Invoke-WebRequest which uses WinHTTP + Windows cert store,
+    # bypassing SChannel TLS handshake failures with SSL-intercepting corporate proxies.
+    # PowerShell 5.1 ServicePointManager does not support https:// proxy URIs — coerce to http://.
+    if [ "$IS_GITBASH" = "true" ] && command -v powershell.exe >/dev/null 2>&1; then
+        local win_out; win_out=$(cygpath -w "$model_path")
+        local ps_cmd="\$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '${model_url}' -OutFile '${win_out}' -UseBasicParsing"
+        if [ -n "${DOWNLOAD_PROXY:-}" ]; then
+            local http_proxy; http_proxy=$(echo "$DOWNLOAD_PROXY" | sed 's|^https://|http://|')
+            ps_cmd+=" -Proxy '${http_proxy}'"
+        fi
+        powershell.exe -NoProfile -NonInteractive -Command "$ps_cmd" &
+        local dl_pid=$!
+        while kill -0 "$dl_pid" 2>/dev/null; do
+            local sz; sz=$(stat -c%s "$model_path" 2>/dev/null || echo 0)
+            printf "\r  Downloaded: %-12s" "$(numfmt --to=iec-i --suffix=B "$sz")"
+            sleep 2
+        done
+        printf "\n"
+        wait "$dl_pid" || { echo -e "${RED}✘ Download failed${NC}"; return 1; }
+    elif [ -n "${DOWNLOAD_PROXY:-}" ] && [ -n "$win_curl" ]; then
         local win_path; win_path=$(wslpath -w "$model_path")
         "$win_curl" -L --proxy "$DOWNLOAD_PROXY" --ssl-no-revoke --no-progress-meter --show-error -o "$win_path" "$model_url" &
         local dl_pid=$!
@@ -242,6 +303,17 @@ detect_model() {
 
 pull_base_image_via_proxy() {
     local image="$1" proxy="$2"
+
+    # Git Bash: Docker Desktop is a native Windows app using the Windows cert store.
+    # It handles proxy natively — just set env vars and docker pull works directly.
+    if [ "$IS_GITBASH" = "true" ]; then
+        echo -e "${CYAN}  Pulling $image via Docker Desktop (Windows proxy)...${NC}"
+        HTTPS_PROXY="$proxy" HTTP_PROXY="$proxy" docker pull "$image" || {
+            echo -e "${RED}  ✘ Base image pull failed${NC}"; return 1
+        }
+        return 0
+    fi
+
     local crane_bin crane_tmp=""
     crane_bin=$(command -v crane 2>/dev/null)
     if [ -z "$crane_bin" ]; then
@@ -376,6 +448,7 @@ Commands:
   --status           Show GPU and engine status dashboard
   --setup-path       Create shell alias for this script
   --clean            Stop and remove all containers
+  --rebuild          Remove the workbench image to force a full rebuild
   --menu             Reset tool preference and show menu
   --help             Show this message
 HELP
@@ -384,6 +457,15 @@ HELP
         --status)
             exec "$(dirname "$(realpath "$0")")/ai-status.sh"
             ;;
+        --rebuild)
+            if [ -n "${IMAGE_NAME:-}" ]; then
+                echo -e "${CYAN}◈ Removing image [$IMAGE_NAME]...${NC}"
+                docker rmi "$IMAGE_NAME" 2>/dev/null && echo -e "${GREEN}✔ Image removed. It will be rebuilt on next run.${NC}" || echo -e "${YELLOW}  Image not found — nothing to remove.${NC}"
+            else
+                echo -e "${RED}✘ IMAGE_NAME not set — source a child script first.${NC}"
+            fi
+            exit 0
+            ;;
         --clean)
             teardown
             exit 0
@@ -391,10 +473,15 @@ HELP
         --setup-path)
             # ALIAS_NAME is set by launcher
             rc_file="$HOME/.bashrc"
-            [ "$SHELL" != "${SHELL%zsh}" ] && rc_file="$HOME/.zshrc"
+            if [ "$IS_GITBASH" = "true" ]; then
+                rc_file="$HOME/.bash_profile"
+            elif [ "$SHELL" != "${SHELL%zsh}" ]; then
+                rc_file="$HOME/.zshrc"
+            fi
+            touch "$rc_file"
             sed -i.bak "/alias $ALIAS_NAME=/d" "$rc_file"
             echo "alias $ALIAS_NAME='$(realpath "$0")'" >> "$rc_file"
-            echo -e "${ICON_OK} Alias '${ALIAS_NAME}' set. Run: source $rc_file"
+            echo -e "${ICON_OK} Alias '${ALIAS_NAME}' added to $rc_file. Run: source $rc_file"
             exit 0
             ;;
         "")

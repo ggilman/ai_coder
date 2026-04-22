@@ -1,0 +1,10 @@
+# ============================================================
+# apt-claude.txt — extra packages for the Claude workbench only
+# One package per line. Lines starting with # are ignored.
+# ============================================================
+
+# 3D modelling (used by claude-code for CAD tasks)
+openscad
+
+# Android debug bridge
+android-tools-adb
