@@ -15,6 +15,7 @@ GLOBAL_PROXY_NAME="ai-hub-proxy"
 HUB_NETWORK="ai-engineering-net"
 HUB_ISOLATED_NET="ai-engineering-isolated"
 NETWORK_INTERNAL=false
+NEEDS_LITELLM_PROXY=false
 WORKBENCH_PREFIX="coder"
 LITELLM_IMAGE="ghcr.io/berriai/litellm:main-latest"
 LLAMA_IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
@@ -527,17 +528,16 @@ run_workbench() {
 
 start_hub_engine() {
     echo -e "${ICON_GEAR} Initializing Global GPU Hub..."
-    docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
-    docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
-    
-    # Use a hook for the config content
-    mkdir -p "$HOME/.ai-coder"
-    local config_content; config_content=$(get_litellm_config)
-    cat > "$HOME/.ai-coder/litellm_config.yaml" <<EOF
-$config_content
-EOF
+    docker stop "$GLOBAL_ENGINE_NAME" 2>/dev/null || true
+    docker rm   "$GLOBAL_ENGINE_NAME" 2>/dev/null || true
+    if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
+        docker stop "$GLOBAL_PROXY_NAME" 2>/dev/null || true
+        docker rm   "$GLOBAL_PROXY_NAME" 2>/dev/null || true
+    fi
 
-    for img in "$LLAMA_IMAGE" "$LITELLM_IMAGE"; do
+    local images_to_pull=("$LLAMA_IMAGE")
+    [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ] && images_to_pull+=("$LITELLM_IMAGE")
+    for img in "${images_to_pull[@]}"; do
         if ! docker image inspect "$img" >/dev/null 2>&1; then
             echo -e "${CYAN}  Pulling $img ...${NC}"
             docker pull "$img" || { echo -e "${RED}✘ Failed to pull $img${NC}"; return 1; }
@@ -553,21 +553,29 @@ EOF
         --repeat-penalty 1.1 --repeat-last-n 128
     if [ $? -ne 0 ]; then echo -e "${RED}✘ Failed to start engine container${NC}"; return 1; fi
 
-    docker run -d --name "$GLOBAL_PROXY_NAME" --network "$HUB_NETWORK" -p 4000:4000 --restart always \
-        -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
-        -e "no_proxy=localhost,127.0.0.1,$GLOBAL_ENGINE_NAME" \
-        -v "$(to_host_path "$HOME/.ai-coder/litellm_config.yaml"):/app/config.yaml:ro" \
-        "$LITELLM_IMAGE" --config /app/config.yaml
-    if [ $? -ne 0 ]; then echo -e "${RED}✘ Failed to start proxy container${NC}"; return 1; fi
+    if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
+        mkdir -p "$HOME/.ai-coder"
+        local config_content; config_content=$(get_litellm_config)
+        cat > "$HOME/.ai-coder/litellm_config.yaml" <<EOF
+$config_content
+EOF
+        docker run -d --name "$GLOBAL_PROXY_NAME" --network "$HUB_NETWORK" -p 4000:4000 --restart always \
+            -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
+            -e "no_proxy=localhost,127.0.0.1,$GLOBAL_ENGINE_NAME" \
+            -v "$(to_host_path "$HOME/.ai-coder/litellm_config.yaml"):/app/config.yaml:ro" \
+            "$LITELLM_IMAGE" --config /app/config.yaml
+        if [ $? -ne 0 ]; then echo -e "${RED}✘ Failed to start proxy container${NC}"; return 1; fi
+    fi
 
-    # When isolation is active, bridge both the engine and proxy onto the
-    # isolated network so workbench containers can reach them while remaining
-    # cut off from the internet.
+    # When isolation is active, bridge the engine (and proxy if running) onto
+    # the isolated network so workbench containers can reach them.
     if [ "${NETWORK_INTERNAL:-false}" = "true" ]; then
         docker network connect "$HUB_ISOLATED_NET" "$GLOBAL_ENGINE_NAME" || \
             { echo -e "${RED}✘ Failed to connect engine to isolated network${NC}"; return 1; }
-        docker network connect "$HUB_ISOLATED_NET" "$GLOBAL_PROXY_NAME" || \
-            { echo -e "${RED}✘ Failed to connect proxy to isolated network${NC}"; return 1; }
+        if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
+            docker network connect "$HUB_ISOLATED_NET" "$GLOBAL_PROXY_NAME" || \
+                { echo -e "${RED}✘ Failed to connect proxy to isolated network${NC}"; return 1; }
+        fi
     fi
 }
 
@@ -629,8 +637,10 @@ stop_hub() {
 
 teardown() {
     echo -e "${CYAN}Tearing down Hub & Project Spokes...${NC}"
-    docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" $(docker ps -q --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
-    docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" $(docker ps -aq --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
+    docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" \
+        $(docker ps -q --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
+    docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" \
+        $(docker ps -aq --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
     docker network rm "$HUB_NETWORK" "$HUB_ISOLATED_NET" 2>/dev/null || true
 }
 

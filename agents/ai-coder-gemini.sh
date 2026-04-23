@@ -5,6 +5,7 @@
 
 IMAGE_NAME="gemini-engineer-v4"
 TOOL_NAME="Gemini"
+NEEDS_LITELLM_PROXY=true
 
 build_image() {
     echo -e "${ICON_GEAR} Building Gemini CLI Image..."
