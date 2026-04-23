@@ -469,7 +469,7 @@ ensure_workbench_running() {
 
 get_litellm_config() {
     echo "model_list:
-  - model_name: gemma-local
+  - model_name: \"*\"
     litellm_params:
       model: openai/local
       api_base: http://$GLOBAL_ENGINE_NAME:8080/v1

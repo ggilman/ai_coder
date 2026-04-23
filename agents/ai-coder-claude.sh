@@ -8,7 +8,7 @@ IMAGE_NAME="claude-engineer-v4-8"
 get_litellm_config() {
     cat <<EOF
 model_list:
-  - model_name: gemma-local
+  - model_name: "*"
     litellm_params:
       model: openai/local
       api_base: http://$GLOBAL_ENGINE_NAME:8080/v1
@@ -21,14 +21,6 @@ litellm_settings:
   drop_params: true
   num_retries: 0
   use_chat_completions_url_for_anthropic_messages: true
-  model_alias_map:
-    claude-haiku-4-5-20251001: gemma-local
-    claude-3-5-haiku-20241022: gemma-local
-    claude-3-5-sonnet-20241022: gemma-local
-    claude-3-7-sonnet-20250219: gemma-local
-    claude-opus-4-5: gemma-local
-    claude-sonnet-4-5: gemma-local
-    claude-haiku-4-5: gemma-local
 EOF
 }
 
