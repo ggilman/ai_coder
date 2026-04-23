@@ -8,7 +8,7 @@ ALIAS_NAME="ai"
 PREF_FILE="$HOME/.ai-coder-pref"
 
 # Load Core Library
-CORE_SCRIPT="$(dirname "$(realpath "$0")")/ai-coder-core.sh"
+CORE_SCRIPT="$(dirname "$(realpath "$0")")/libs/ai-coder-core.sh"
 if [ ! -f "$CORE_SCRIPT" ]; then
     echo -e "${RED}Error: Core library not found at $CORE_SCRIPT${NC}"
     exit 1
