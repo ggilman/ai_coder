@@ -90,8 +90,9 @@ draw_footer() {
 # --- [ MAIN LOOP ] -----------------------------------------------------------
 
 main() {
+    clear
     while true; do
-        clear
+        printf "\033[H"
         draw_header
         
         # Display GPU stats
@@ -174,6 +175,7 @@ main() {
         fi
 
         draw_footer
+        printf "\033[J"
 
         sleep "$UPDATE_INTERVAL"
     done
