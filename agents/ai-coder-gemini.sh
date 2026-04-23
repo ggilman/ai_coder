@@ -6,27 +6,39 @@
 IMAGE_NAME="gemini-engineer-v4"
 
 get_litellm_config() {
+    local params="model: openai/local
+      api_base: http://$GLOBAL_ENGINE_NAME:8080/v1
+      api_key: sk-1234
+      timeout: 600
+      stream_timeout: 600"
     cat <<EOF
 model_list:
   - model_name: gemma-local
     litellm_params:
-      model: openai/local
-      api_base: http://$GLOBAL_ENGINE_NAME:8080/v1
-      api_key: sk-1234
-      timeout: 600
-      stream_timeout: 600
+      $params
+  - model_name: gemini-2.5-flash-lite
+    litellm_params:
+      $params
+  - model_name: gemini-2.5-flash
+    litellm_params:
+      $params
+  - model_name: gemini-2.5-pro
+    litellm_params:
+      $params
+  - model_name: gemini-2.0-flash
+    litellm_params:
+      $params
+  - model_name: gemini-1.5-pro
+    litellm_params:
+      $params
+  - model_name: gemini-1.5-flash
+    litellm_params:
+      $params
 
 litellm_settings:
   request_timeout: 600
   drop_params: true
   num_retries: 0
-  model_alias_map:
-    gemini-2.0-flash: gemma-local
-    gemini-2.5-flash: gemma-local
-    gemini-2.5-flash-lite: gemma-local
-    gemini-2.5-pro: gemma-local
-    gemini-1.5-pro: gemma-local
-    gemini-1.5-flash: gemma-local
 EOF
 }
 
