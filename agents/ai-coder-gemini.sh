@@ -3,7 +3,7 @@
 # AI-CODER-GEMINI.SH | Gemini CLI Variant Overrides
 # ==============================================================================
 
-IMAGE_NAME="gemini-engineer-v3"
+IMAGE_NAME="gemini-engineer-v4"
 
 get_litellm_config() {
     cat <<EOF
@@ -52,7 +52,7 @@ build_image() {
         npm_proxy_cmds="RUN npm config set proxy $npm_proxy && npm config set https-proxy $npm_proxy && npm config set strict-ssl false"
     fi
 
-    local apt_pkgs; apt_pkgs="$(read_package_list "$SCRIPT_DIR/packages/apt-common.txt") $(read_package_list "$SCRIPT_DIR/packages/apt-gemini.txt")"
+    local apt_pkgs; apt_pkgs="$(read_package_list "$PACKAGES_DIR/apt-common.txt") $(read_package_list "$PACKAGES_DIR/apt-gemini.txt")"
 
     cat > "$LOCAL_STACK_DIR/Dockerfile.gemini" <<DOCKERFILE
 FROM node:20-bullseye-slim

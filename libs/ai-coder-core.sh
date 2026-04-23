@@ -6,6 +6,7 @@ set -euo pipefail
 
 # --- [ GLOBAL CONFIGURATION ] -------------------------------------------------
 SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
+PACKAGES_DIR="$(dirname "$SCRIPT_DIR")/packages"
 DOCKER_BIN="C:\Program Files\Docker\Docker\Docker Desktop.exe"
 GLOBAL_ENGINE_NAME="ai-hub-engine"
 GLOBAL_PROXY_NAME="ai-hub-proxy"
