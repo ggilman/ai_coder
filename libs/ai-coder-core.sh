@@ -560,9 +560,12 @@ EOF
         "$LITELLM_IMAGE" --config /app/config.yaml
     if [ $? -ne 0 ]; then echo -e "${RED}✘ Failed to start proxy container${NC}"; return 1; fi
 
-    # When isolation is active, bridge the proxy onto the isolated network so
-    # the workbench can reach it while remaining cut off from the internet.
+    # When isolation is active, bridge both the engine and proxy onto the
+    # isolated network so workbench containers can reach them while remaining
+    # cut off from the internet.
     if [ "${NETWORK_INTERNAL:-false}" = "true" ]; then
+        docker network connect "$HUB_ISOLATED_NET" "$GLOBAL_ENGINE_NAME" || \
+            { echo -e "${RED}✘ Failed to connect engine to isolated network${NC}"; return 1; }
         docker network connect "$HUB_ISOLATED_NET" "$GLOBAL_PROXY_NAME" || \
             { echo -e "${RED}✘ Failed to connect proxy to isolated network${NC}"; return 1; }
     fi
