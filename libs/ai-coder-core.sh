@@ -263,6 +263,7 @@ select_model_for_vram() {
 }
 
 # Show a file-size progress ticker for a background download PID, then wait for it.
+# Cleans up a partial file if the download fails.
 _await_download() {
     local dl_pid="$1" file_path="$2"
     while kill -0 "$dl_pid" 2>/dev/null; do
@@ -271,7 +272,10 @@ _await_download() {
         sleep 2
     done
     printf "\n"
-    wait "$dl_pid"
+    if ! wait "$dl_pid"; then
+        rm -f "$file_path"
+        return 1
+    fi
 }
 
 # Returns Dockerfile RUN commands to configure npm proxy, or empty string if no proxy.
@@ -622,8 +626,8 @@ stop_hub() {
 
 teardown() {
     echo -e "${CYAN}Tearing down Hub & Project Spokes...${NC}"
-    docker stop $GLOBAL_ENGINE_NAME $GLOBAL_PROXY_NAME $(docker ps -q --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
-    docker rm   $GLOBAL_ENGINE_NAME $GLOBAL_PROXY_NAME $(docker ps -aq --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
+    docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" $(docker ps -q --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
+    docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" $(docker ps -aq --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
     docker network rm "$HUB_NETWORK" "$HUB_ISOLATED_NET" 2>/dev/null || true
 }
 

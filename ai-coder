@@ -46,25 +46,26 @@ show_menu() {
     done
     IFS=$'\n' pairs=($(printf '%s\n' "${pairs[@]}" | sort)); unset IFS
 
-    echo -e "\n${CYAN}Welcome to AI-Coder. Please select your preferred tool:${NC}"
-    local i=1
-    for pair in "${pairs[@]}"; do
-        echo "$i) ${pair%%:*}"
-        (( i++ ))
-    done
-    echo "q) Quit"
-    echo -n "Selection: "
-    read -r choice
-    if [[ "$choice" == "q" ]]; then exit 0; fi
-    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#pairs[@]} )); then
-        local key="${pairs[$((choice-1))]#*:}"
-        local name="${pairs[$((choice-1))]%%:*}"
-        echo "$key" > "$PREF_FILE"
-        echo "$name selected."
-    else
+    while true; do
+        echo -e "\n${CYAN}Welcome to AI-Coder. Please select your preferred tool:${NC}"
+        local i=1
+        for pair in "${pairs[@]}"; do
+            echo "$i) ${pair%%:*}"
+            (( i++ ))
+        done
+        echo "q) Quit"
+        echo -n "Selection: "
+        read -r choice
+        if [[ "$choice" == "q" ]]; then exit 0; fi
+        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#pairs[@]} )); then
+            local key="${pairs[$((choice-1))]#*:}"
+            local name="${pairs[$((choice-1))]%%:*}"
+            echo "$key" > "$PREF_FILE"
+            echo "$name selected."
+            return
+        fi
         echo -e "${RED}Invalid selection.${NC}"
-        show_menu
-    fi
+    done
 }
 
 # --- [ MAIN ENTRY ] -----------------------------------------------------------
@@ -92,11 +93,6 @@ if [ ! -f "$CHILD_SCRIPT" ]; then
 fi
 LOCAL_STACK_DIR="$(pwd)/.ai-coder/${TOOL_PREF}"
 
-# Load Child Overrides
-if [ ! -f "$CHILD_SCRIPT" ]; then
-    echo -e "${RED}Error: Child script not found at $CHILD_SCRIPT${NC}"
-    exit 1
-fi
 source "$CHILD_SCRIPT"
 
 # Ensure local stack dir exists (needed before core logic starts using it)
