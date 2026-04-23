@@ -61,5 +61,5 @@ start_workbench() {
 }
 
 execute_tool() {
-    exec_in_container "${WORKBENCH_PREFIX}-${PROJECT_ID}" opencode --max-turns 20
+    exec_in_container "${WORKBENCH_PREFIX}-${PROJECT_ID}" opencode
 }

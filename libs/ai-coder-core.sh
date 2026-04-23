@@ -553,7 +553,8 @@ EOF
         "$LLAMA_IMAGE" \
         -m "/models/$MODEL_FILE" --host 0.0.0.0 --port 8080 \
         --parallel "$MAX_SLOTS" -ngl 99 -c "$CTX_PER_SLOT" --flash-attn on \
-        -ctk q8_0 -ctv q8_0
+        -ctk q8_0 -ctv q8_0 \
+        --repeat-penalty 1.1 --repeat-last-n 128
     if [ $? -ne 0 ]; then echo -e "${RED}✘ Failed to start engine container${NC}"; return 1; fi
 
     docker run -d --name "$GLOBAL_PROXY_NAME" --network "$HUB_NETWORK" -p 4000:4000 --restart always \
