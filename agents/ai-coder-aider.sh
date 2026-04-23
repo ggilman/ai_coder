@@ -21,7 +21,13 @@ RUN /opt/aider/bin/aider --version"
 
 configure_workbench() {
     mkdir -p "$HOME/.aider-config"
-    # Only write config on first run so user customisations persist
+    # Always write gitconfig so the container has git identity via GIT_CONFIG_GLOBAL
+    cat > "$HOME/.aider-config/.gitconfig" <<EOF
+[user]
+    name = $GIT_USER_NAME
+    email = $GIT_USER_EMAIL
+EOF
+    # Only write aider config on first run so user customisations persist
     if [ ! -f "$HOME/.aider-config/.aider.conf.yml" ]; then
         cat > "$HOME/.aider-config/.aider.conf.yml" <<EOF
 openai-api-base: http://$GLOBAL_PROXY_NAME:4000/v1
@@ -30,6 +36,7 @@ model: openai/local
 no-auto-commits: false
 check-update: false
 show-model-warnings: false
+show-release-notes: false
 gitignore: true
 input-history-file: /root/.aider-config/.aider.input.history
 EOF
@@ -38,20 +45,16 @@ EOF
 
 start_workbench() {
     echo -e "${ICON_GEAR} Mapping Spoke for [$PROJECT_ID]..."
-    ensure_git_identity
-    apply_git_identity
     run_workbench \
         -v "$(to_host_path "$HOME/.aider-config"):/root/.aider-config" \
         -e OPENAI_API_BASE="http://$GLOBAL_PROXY_NAME:4000/v1" \
         -e OPENAI_API_KEY="sk-local-bypass" \
-        -e GIT_AUTHOR_NAME="$GIT_USER_NAME" \
-        -e GIT_AUTHOR_EMAIL="$GIT_USER_EMAIL" \
-        -e GIT_COMMITTER_NAME="$GIT_USER_NAME" \
-        -e GIT_COMMITTER_EMAIL="$GIT_USER_EMAIL"
+        -e GIT_CONFIG_GLOBAL=/root/.aider-config/.gitconfig
 }
 
 execute_tool() {
     exec_in_container \
         -e TERM=xterm-256color -e COLORTERM=truecolor \
+        -e GIT_CONFIG_GLOBAL=/root/.aider-config/.gitconfig \
         "${WORKBENCH_PREFIX}-${PROJECT_ID}" /opt/aider/bin/aider --no-check-update --config /root/.aider-config/.aider.conf.yml
 }

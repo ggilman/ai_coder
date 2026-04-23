@@ -131,11 +131,11 @@ if [ -z "$(docker ps -q -f name=^/${GLOBAL_ENGINE_NAME}$ 2>/dev/null)" ]; then
     start_hub_engine || { echo -e "${RED}✘ Hub startup failed${NC}"; exit 1; }
 fi
 
-ensure_workbench_running || { echo -e "${RED}✘ Workbench startup failed${NC}"; exit 1; }
-configure_workbench
-
 ensure_git_identity
 apply_git_identity
+configure_workbench
+
+ensure_workbench_running || { echo -e "${RED}✘ Workbench startup failed${NC}"; exit 1; }
 
 echo -ne "${CYAN}◈ Syncing VRAM Slots:${NC} "
 retry_count=0
