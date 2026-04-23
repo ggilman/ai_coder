@@ -16,7 +16,7 @@ build_image() {
     local apt_pkgs; apt_pkgs="$(read_package_list "$PACKAGES_DIR/apt-common.txt") $(read_package_list "$PACKAGES_DIR/apt-aider.txt")"
     build_standard_image "Dockerfile.aider" "$apt_pkgs" "$pm_proxy_cmds" \
         "RUN pip3 install aider-chat
-RUN aider --version"
+RUN python3 -m aider --version"
 }
 
 configure_workbench() {
@@ -44,5 +44,5 @@ start_workbench() {
 execute_tool() {
     exec_in_container \
         -e TERM=xterm-256color -e COLORTERM=truecolor \
-        "${WORKBENCH_PREFIX}-${PROJECT_ID}" aider --config /root/.aider-config/.aider.conf.yml
+        \"${WORKBENCH_PREFIX}-${PROJECT_ID}\" python3 -m aider --config /root/.aider-config/.aider.conf.yml
 }
