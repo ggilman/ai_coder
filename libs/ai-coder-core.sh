@@ -239,6 +239,37 @@ check_docker() {
     fi
 }
 
+# Sets MODEL_FILE and MODEL_TIER based on the supplied VRAM amount in GB.
+select_model_for_vram() {
+    local vram="${1:-0}"
+    if   [ "$vram" -ge "$TIER_32GB_MIN" ]; then MODEL_FILE="$GEMMA_32GB_FILE"; MODEL_TIER="32GB-tier"
+    elif [ "$vram" -ge "$TIER_24GB_MIN" ]; then MODEL_FILE="$GEMMA_24GB_FILE"; MODEL_TIER="24GB-tier"
+    elif [ "$vram" -ge "$TIER_16GB_MIN" ]; then MODEL_FILE="$GEMMA_16GB_FILE"; MODEL_TIER="16GB-tier"
+    elif [ "$vram" -ge "$TIER_12GB_MIN" ]; then MODEL_FILE="$GEMMA_12GB_FILE"; MODEL_TIER="12GB-tier"
+    else                                          MODEL_FILE="$GEMMA_8GB_FILE";  MODEL_TIER="8GB-tier"
+    fi
+}
+
+# Show a file-size progress ticker for a background download PID, then wait for it.
+_await_download() {
+    local dl_pid="$1" file_path="$2"
+    while kill -0 "$dl_pid" 2>/dev/null; do
+        local sz; sz=$(stat -c%s "$file_path" 2>/dev/null || echo 0)
+        printf "\r  Downloaded: %-12s" "$(numfmt --to=iec-i --suffix=B "$sz")"
+        sleep 2
+    done
+    printf "\n"
+    wait "$dl_pid"
+}
+
+# Returns Dockerfile RUN commands to configure npm proxy, or empty string if no proxy.
+make_npm_proxy_cmds() {
+    [ -z "${DOWNLOAD_PROXY:-}" ] && return
+    local build_proxy; build_proxy=$(resolve_proxy_to_ip "$DOWNLOAD_PROXY")
+    local npm_proxy; npm_proxy=$(echo "$build_proxy" | sed 's|^https://|http://|')
+    echo "RUN npm config set proxy $npm_proxy && npm config set https-proxy $npm_proxy && npm config set strict-ssl false"
+}
+
 download_model() {
     if [ -n "${MODEL_FILE:-}" ] && [ -f "$MODEL_STORAGE_DIR/$MODEL_FILE" ]; then
         return 0
@@ -254,19 +285,7 @@ download_model() {
     local model_hint
 
     if [ -z "${MODEL_FILE:-}" ]; then
-        if [ "${VRAM_GB:-0}" -ge "$TIER_32GB_MIN" ]; then
-            MODEL_FILE="$GEMMA_32GB_FILE"
-        elif [ "${VRAM_GB:-0}" -ge "$TIER_24GB_MIN" ]; then
-            MODEL_FILE="$GEMMA_24GB_FILE"
-        elif [ "${VRAM_GB:-0}" -ge "$TIER_16GB_MIN" ]; then
-            MODEL_FILE="$GEMMA_16GB_FILE"
-        elif [ "${VRAM_GB:-0}" -ge "$TIER_12GB_MIN" ]; then
-            MODEL_FILE="$GEMMA_12GB_FILE"
-        elif [ "${VRAM_GB:-0}" -ge "$TIER_8GB_MIN" ]; then
-            MODEL_FILE="$GEMMA_8GB_FILE"
-        else
-            MODEL_FILE="$GEMMA_8GB_FILE"
-        fi
+        select_model_for_vram "${VRAM_GB:-0}"
     fi
 
     case "$MODEL_FILE" in
@@ -303,25 +322,11 @@ download_model() {
             ps_cmd+=" -Proxy '${http_proxy}'"
         fi
         powershell.exe -NoProfile -NonInteractive -Command "$ps_cmd" &
-        local dl_pid=$!
-        while kill -0 "$dl_pid" 2>/dev/null; do
-            local sz; sz=$(stat -c%s "$model_path" 2>/dev/null || echo 0)
-            printf "\r  Downloaded: %-12s" "$(numfmt --to=iec-i --suffix=B "$sz")"
-            sleep 2
-        done
-        printf "\n"
-        wait "$dl_pid" || { echo -e "${RED}✘ Download failed${NC}"; return 1; }
+        _await_download $! "$model_path" || { echo -e "${RED}✘ Download failed${NC}"; return 1; }
     elif [ -n "${DOWNLOAD_PROXY:-}" ] && [ -n "$win_curl" ]; then
         local win_path; win_path=$(wslpath -w "$model_path")
         "$win_curl" -L --proxy "$DOWNLOAD_PROXY" --ssl-no-revoke --no-progress-meter --show-error -o "$win_path" "$model_url" &
-        local dl_pid=$!
-        while kill -0 "$dl_pid" 2>/dev/null; do
-            local sz; sz=$(stat -c%s "$model_path" 2>/dev/null || echo 0)
-            printf "\r  Downloaded: %-12s" "$(numfmt --to=iec-i --suffix=B "$sz")"
-            sleep 2
-        done
-        printf "\n"
-        wait "$dl_pid" || { echo -e "${RED}✘ Download failed${NC}"; return 1; }
+        _await_download $! "$model_path" || { echo -e "${RED}✘ Download failed${NC}"; return 1; }
     elif [ -n "${DOWNLOAD_PROXY:-}" ] && command -v curl >/dev/null 2>&1; then
         curl -L --proxy "$DOWNLOAD_PROXY" --progress-bar --show-error -o "$model_path" "$model_url" || {
             echo -e "${RED}✘ Download failed${NC}"; return 1
@@ -329,14 +334,7 @@ download_model() {
     elif [ -n "$win_curl" ]; then
         local win_path; win_path=$(wslpath -w "$model_path")
         "$win_curl" -L --no-progress-meter --show-error -o "$win_path" "$model_url" &
-        local dl_pid=$!
-        while kill -0 "$dl_pid" 2>/dev/null; do
-            local sz; sz=$(stat -c%s "$model_path" 2>/dev/null || echo 0)
-            printf "\r  Downloaded: %-12s" "$(numfmt --to=iec-i --suffix=B "$sz")"
-            sleep 2
-        done
-        printf "\n"
-        wait "$dl_pid" || { echo -e "${RED}✘ Download failed${NC}"; return 1; }
+        _await_download $! "$model_path" || { echo -e "${RED}✘ Download failed${NC}"; return 1; }
     elif command -v curl >/dev/null 2>&1; then
         curl -L --progress-bar --show-error -o "$model_path" "$model_url" || {
             echo -e "${RED}✘ Download failed${NC}"; return 1
@@ -366,25 +364,7 @@ detect_model() {
     
     echo -e "${ICON_GEAR} Hardware Audit: Detected ${BOLD}${VRAM_GB}GB Total VRAM${NC}"
     
-    if [ "$VRAM_GB" -ge "$TIER_32GB_MIN" ]; then
-        MODEL_FILE="$GEMMA_32GB_FILE"
-        MODEL_TIER="32GB-tier"
-    elif [ "$VRAM_GB" -ge "$TIER_24GB_MIN" ]; then
-        MODEL_FILE="$GEMMA_24GB_FILE"
-        MODEL_TIER="24GB-tier"
-    elif [ "$VRAM_GB" -ge "$TIER_16GB_MIN" ]; then
-        MODEL_FILE="$GEMMA_16GB_FILE"
-        MODEL_TIER="16GB-tier"
-    elif [ "$VRAM_GB" -ge "$TIER_12GB_MIN" ]; then
-        MODEL_FILE="$GEMMA_12GB_FILE"
-        MODEL_TIER="12GB-tier"
-    elif [ "$VRAM_GB" -ge "$TIER_8GB_MIN" ]; then
-        MODEL_FILE="$GEMMA_8GB_FILE"
-        MODEL_TIER="8GB-tier"
-    else
-        MODEL_FILE="$GEMMA_8GB_FILE"
-        MODEL_TIER="<${TIER_8GB_MIN}GB (fallback to 8GB tier model)"
-    fi
+    select_model_for_vram "$VRAM_GB"
     echo -e "${ICON_GEAR} Model Tier: ${BOLD}${MODEL_TIER}${NC}"
     echo -e "${ICON_GEAR} Tier Model: ${CYAN}${MODEL_FILE}${NC}"
     

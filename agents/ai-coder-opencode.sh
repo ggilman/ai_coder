@@ -8,12 +8,7 @@ TOOL_NAME="OpenCode"
 
 build_image() {
     echo -e "${ICON_GEAR} Building OpenCode Image..."
-    local pm_proxy_cmds=""
-    if [ -n "${DOWNLOAD_PROXY:-}" ]; then
-        local build_proxy; build_proxy=$(resolve_proxy_to_ip "$DOWNLOAD_PROXY")
-        local npm_proxy; npm_proxy=$(echo "$build_proxy" | sed 's|^https://|http://|')
-        pm_proxy_cmds="RUN npm config set proxy $npm_proxy && npm config set https-proxy $npm_proxy && npm config set strict-ssl false"
-    fi
+    local pm_proxy_cmds; pm_proxy_cmds=$(make_npm_proxy_cmds)
     local apt_pkgs; apt_pkgs="$(read_package_list "$PACKAGES_DIR/apt-common.txt") $(read_package_list "$PACKAGES_DIR/apt-opencode.txt")"
     build_standard_image "Dockerfile.oc" "$apt_pkgs" "$pm_proxy_cmds" \
         "RUN npm install -g opencode-ai
