@@ -30,7 +30,7 @@ EOF
     # Only write aider config on first run so user customisations persist
     if [ ! -f "$HOME/.aider-config/.aider.conf.yml" ]; then
         cat > "$HOME/.aider-config/.aider.conf.yml" <<EOF
-openai-api-base: http://$GLOBAL_PROXY_NAME:4000/v1
+openai-api-base: http://$GLOBAL_ENGINE_NAME:8080/v1
 openai-api-key: sk-local-bypass
 model: openai/local
 no-auto-commits: false
@@ -48,7 +48,7 @@ start_workbench() {
     run_workbench \
         -v "$(to_host_path "$HOME/.aider-config"):/root/.aider-config" \
         -v "$(to_host_path "$HOME/.aider-config/.gitconfig"):/root/.gitconfig:ro" \
-        -e OPENAI_API_BASE="http://$GLOBAL_PROXY_NAME:4000/v1" \
+        -e OPENAI_API_BASE="http://$GLOBAL_ENGINE_NAME:8080/v1" \
         -e OPENAI_API_KEY="sk-local-bypass"
 }
 
