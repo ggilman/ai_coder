@@ -23,6 +23,7 @@ litellm_settings:
   drop_params: true
   num_retries: 0
   use_chat_completions_url_for_anthropic_messages: true
+  tools_format: openai
 EOF
 }
 
