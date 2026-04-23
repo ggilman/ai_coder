@@ -32,7 +32,7 @@ configure_workbench() {
       "npm": "@ai-sdk/openai-compatible",
       "name": "Local Gemma (llama.cpp)",
       "options": {
-        "baseURL": "http://$GLOBAL_PROXY_NAME:4000/v1",
+        "baseURL": "http://$GLOBAL_ENGINE_NAME:8080/v1",
         "apiKey": "sk-local-bypass"
       },
       "models": {
