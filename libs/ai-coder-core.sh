@@ -471,7 +471,8 @@ DOCKERFILE
 exec_in_container() {
     # Usage: exec_in_container [extra docker exec flags...] <container> <cmd> [args...]
     # Handles winpty on Git Bash automatically.
-    local cmd_exec="docker exec -it $*"
+    # Explicitly set PATH so npm/pip global bins are found regardless of shell init.
+    local cmd_exec="docker exec -it -e PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin $*"
     if [ "$IS_GITBASH" = "true" ]; then
         winpty $cmd_exec
     else
