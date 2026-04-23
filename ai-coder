@@ -37,6 +37,7 @@ show_menu() {
     echo "1) Claude"
     echo "2) OpenCode"
     echo "3) Gemini"
+    echo "4) Aider"
     echo "q) Quit"
     echo -n "Selection: "
     read -r choice
@@ -44,6 +45,7 @@ show_menu() {
         1) echo "claude" > "$PREF_FILE"; echo "Claude selected." ;;
         2) echo "opencode" > "$PREF_FILE"; echo "OpenCode selected." ;;
         3) echo "gemini" > "$PREF_FILE"; echo "Gemini selected." ;;
+        4) echo "aider" > "$PREF_FILE"; echo "Aider selected." ;;
         q) exit 0 ;;
         *) echo -e "${RED}Invalid selection.${NC}"; show_menu ;;
     esac
@@ -77,6 +79,10 @@ case "$TOOL_PREF" in
     gemini)
         CHILD_SCRIPT="$(dirname "$(realpath "$0")")/agents/ai-coder-gemini.sh"
         LOCAL_STACK_DIR="$(pwd)/.gemini-stack"
+        ;;
+    aider)
+        CHILD_SCRIPT="$(dirname "$(realpath "$0")")/agents/ai-coder-aider.sh"
+        LOCAL_STACK_DIR="$(pwd)/.aider-stack"
         ;;
     *)
         echo -e "${RED}Error: Invalid tool preference in $PREF_FILE${NC}"
