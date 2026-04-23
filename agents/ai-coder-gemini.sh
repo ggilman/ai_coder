@@ -3,7 +3,7 @@
 # AI-CODER-GEMINI.SH | Gemini CLI Variant Overrides
 # ==============================================================================
 
-IMAGE_NAME="gemini-engineer-v1"
+IMAGE_NAME="gemini-engineer-v2"
 
 get_litellm_config() {
     cat <<EOF
@@ -109,13 +109,7 @@ start_workbench() {
 
 execute_tool() {
     local container="${WORKBENCH_PREFIX}-${PROJECT_ID}"
-    # Gemini CLI is pointed at our LiteLLM proxy via GEMINI_API_BASE.
-    # LiteLLM exposes an OpenAI-compatible endpoint; the model alias map routes
-    # any Gemini model name to gemma-local running on the local llama.cpp engine.
-    local cmd_exec="docker exec -it \
-        -e GEMINI_API_BASE=http://${GLOBAL_PROXY_NAME}:4000 \
-        -e GOOGLE_API_BASE=http://${GLOBAL_PROXY_NAME}:4000 \
-        $container gemini"
+    local cmd_exec="docker exec -it -e GEMINI_API_BASE=http://${GLOBAL_PROXY_NAME}:4000 -e GOOGLE_API_BASE=http://${GLOBAL_PROXY_NAME}:4000 $container gemini"
     if [ "$IS_GITBASH" = "true" ]; then
         winpty $cmd_exec
     else
