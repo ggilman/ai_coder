@@ -47,14 +47,13 @@ start_workbench() {
     echo -e "${ICON_GEAR} Mapping Spoke for [$PROJECT_ID]..."
     run_workbench \
         -v "$(to_host_path "$HOME/.aider-config"):/root/.aider-config" \
+        -v "$(to_host_path "$HOME/.aider-config/.gitconfig"):/root/.gitconfig:ro" \
         -e OPENAI_API_BASE="http://$GLOBAL_PROXY_NAME:4000/v1" \
-        -e OPENAI_API_KEY="sk-local-bypass" \
-        -e GIT_CONFIG_GLOBAL=/root/.aider-config/.gitconfig
+        -e OPENAI_API_KEY="sk-local-bypass"
 }
 
 execute_tool() {
     exec_in_container \
         -e TERM=xterm-256color -e COLORTERM=truecolor \
-        -e GIT_CONFIG_GLOBAL=/root/.aider-config/.gitconfig \
         "${WORKBENCH_PREFIX}-${PROJECT_ID}" /opt/aider/bin/aider --no-check-update --config /root/.aider-config/.aider.conf.yml
 }
