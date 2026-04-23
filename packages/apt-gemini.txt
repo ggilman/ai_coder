@@ -1,0 +1,6 @@
+# ============================================================
+# apt-gemini.txt — extra packages for the Gemini CLI workbench only
+# One package per line. Lines starting with # are ignored.
+# ============================================================
+
+# Add Gemini-specific packages here
