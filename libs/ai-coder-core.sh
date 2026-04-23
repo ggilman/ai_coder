@@ -85,7 +85,7 @@ to_host_path() {
 # Read a package list file: one package per line, # comments stripped.
 read_package_list() {
     local file="$1"
-    [ -f "$file" ] && grep -v '^\s*#' "$file" | grep -v '^\s*$' | tr '\n' ' ' || echo ""
+    [ -f "$file" ] && grep -v '^\s*#' "$file" | grep -v '^\s*$' | tr -d '\r' | tr '\n' ' ' || echo ""
 }
 
 # Resolve proxy hostname to IP so Docker build containers can reach it.
