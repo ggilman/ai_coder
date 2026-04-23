@@ -11,6 +11,8 @@ DOCKER_BIN="C:\Program Files\Docker\Docker\Docker Desktop.exe"
 GLOBAL_ENGINE_NAME="ai-hub-engine"
 GLOBAL_PROXY_NAME="ai-hub-proxy"
 HUB_NETWORK="ai-engineering-net"
+HUB_ISOLATED_NET="ai-engineering-isolated"
+NETWORK_INTERNAL=false
 WORKBENCH_PREFIX="coder"
 LITELLM_IMAGE="ghcr.io/berriai/litellm:main-latest"
 LLAMA_IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
@@ -141,6 +143,34 @@ ensure_git_identity() {
 
     GIT_USER_EMAIL="$git_email"
     GIT_USER_NAME="$git_name"
+}
+
+# --- [ NETWORK CONFIG ] -------------------------------------------------------
+
+NETWORK_CONFIG_FILE="$(pwd)/.ai-coder-netconfig"
+
+# Load or prompt for network isolation preference, then store it for future runs.
+# Sets NETWORK_INTERNAL in the calling environment.
+ensure_network_config() {
+    local isolated_net=""
+
+    # Load from persisted file
+    if [ -f "$NETWORK_CONFIG_FILE" ]; then
+        isolated_net=$(grep '^isolated=' "$NETWORK_CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
+    fi
+
+    # Prompt if not yet set
+    if [ -z "$isolated_net" ]; then
+        echo -ne "${CYAN}◈ Internal network only — block all internet access from containers? [y/N]: ${NC}"
+        read -r _ans
+        case "${_ans,,}" in
+            y|yes) isolated_net="yes" ;;
+            *)     isolated_net="no"  ;;
+        esac
+        printf 'isolated=%s\n' "$isolated_net" > "$NETWORK_CONFIG_FILE"
+    fi
+
+    [ "$isolated_net" = "yes" ] && NETWORK_INTERNAL=true || true
 }
 
 # Write identity into the local repo's .git/config (host-side).
@@ -490,7 +520,9 @@ run_workbench() {
         if [ "$arg" = "--" ]; then past_sep=true; continue; fi
         if $past_sep; then entrypoint="$arg"; else extra_flags+=("$arg"); fi
     done
-    docker run -d --name "$WORKBENCH" --network "$HUB_NETWORK" --privileged \
+    local wb_network="$HUB_NETWORK"
+    [ "${NETWORK_INTERNAL:-false}" = "true" ] && wb_network="$HUB_ISOLATED_NET"
+    docker run -d --name "$WORKBENCH" --network "$wb_network" --privileged \
         -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
         -e "no_proxy=localhost,127.0.0.1,$GLOBAL_PROXY_NAME,$GLOBAL_ENGINE_NAME" \
         -v "$(to_host_path "$(pwd)"):/workspace" \
@@ -530,6 +562,13 @@ EOF
         -v "$(to_host_path "$LOCAL_STACK_DIR/litellm_config.yaml"):/app/config.yaml:ro" \
         "$LITELLM_IMAGE" --config /app/config.yaml
     if [ $? -ne 0 ]; then echo -e "${RED}✘ Failed to start proxy container${NC}"; return 1; fi
+
+    # When isolation is active, bridge the proxy onto the isolated network so
+    # the workbench can reach it while remaining cut off from the internet.
+    if [ "${NETWORK_INTERNAL:-false}" = "true" ]; then
+        docker network connect "$HUB_ISOLATED_NET" "$GLOBAL_PROXY_NAME" || \
+            { echo -e "${RED}✘ Failed to connect proxy to isolated network${NC}"; return 1; }
+    fi
 }
 
 ensure_workbench_running() {
@@ -592,6 +631,7 @@ teardown() {
     echo -e "${CYAN}Tearing down Hub & Project Spokes...${NC}"
     docker stop $GLOBAL_ENGINE_NAME $GLOBAL_PROXY_NAME $(docker ps -q --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
     docker rm   $GLOBAL_ENGINE_NAME $GLOBAL_PROXY_NAME $(docker ps -aq --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
+    docker network rm "$HUB_NETWORK" "$HUB_ISOLATED_NET" 2>/dev/null || true
 }
 
 handle_command() {

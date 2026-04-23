@@ -124,14 +124,18 @@ download_model || {
 detect_model || { echo -e "${RED}✘ Model detection failed${NC}"; exit 1; }
 build_image || { echo -e "${RED}✘ Image build failed${NC}"; exit 1; }
 
+ensure_git_identity
+ensure_network_config
 docker network create "$HUB_NETWORK" 2>/dev/null || true
+if [ "${NETWORK_INTERNAL:-false}" = "true" ]; then
+    docker network create --internal "$HUB_ISOLATED_NET" 2>/dev/null || true
+fi
 
 if [ -z "$(docker ps -q -f name=^/${GLOBAL_ENGINE_NAME}$ 2>/dev/null)" ]; then
     docker rm "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
     start_hub_engine || { echo -e "${RED}✘ Hub startup failed${NC}"; exit 1; }
 fi
 
-ensure_git_identity
 apply_git_identity
 configure_workbench
 
