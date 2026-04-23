@@ -27,9 +27,10 @@ configure_workbench() {
     name = $GIT_USER_NAME
     email = $GIT_USER_EMAIL
 EOF
-    # Only write aider config on first run so user customisations persist
-    if [ ! -f "$HOME/.aider-config/.aider.conf.yml" ]; then
-        cat > "$HOME/.aider-config/.aider.conf.yml" <<EOF
+    # Always write the aider config so the API base URL stays current.
+    # User customisations (model, flags) can be made in the file after first run
+    # but the connection settings must match the current infrastructure.
+    cat > "$HOME/.aider-config/.aider.conf.yml" <<EOF
 openai-api-base: http://$GLOBAL_ENGINE_NAME:8080/v1
 openai-api-key: sk-local-bypass
 model: openai/local
@@ -40,7 +41,6 @@ show-release-notes: false
 gitignore: true
 input-history-file: /root/.aider-config/.aider.input.history
 EOF
-    fi
 }
 
 start_workbench() {
