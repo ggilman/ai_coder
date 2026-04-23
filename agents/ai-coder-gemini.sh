@@ -80,16 +80,19 @@ DOCKERFILE
 }
 
 configure_workbench() {
-    local config_dir="$LOCAL_STACK_DIR/gemini-config"
-    mkdir -p "$config_dir"
-    # Gemini CLI reads ~/.gemini/settings.json for provider/model overrides.
-    # Point it at our LiteLLM proxy which maps Gemini model names to gemma-local.
-    cat > "$config_dir/settings.json" <<EOF
+    # Store gemini config in the host home dir so auth tokens and session state
+    # persist across projects and container restarts, matching Claude's pattern.
+    mkdir -p "$HOME/.gemini-config"
+    # Only write settings.json on first run — never overwrite, so that any auth
+    # tokens or state Gemini CLI writes back are preserved on subsequent runs.
+    if [ ! -f "$HOME/.gemini-config/settings.json" ]; then
+        cat > "$HOME/.gemini-config/settings.json" <<EOF
 {
   "selectedAuthType": "gemini-api-key",
   "theme": "Default"
 }
 EOF
+    fi
 }
 
 start_workbench() {
@@ -100,7 +103,7 @@ start_workbench() {
         -e "no_proxy=localhost,127.0.0.1,$GLOBAL_PROXY_NAME,$GLOBAL_ENGINE_NAME" \
         -v "$(to_host_path "$(pwd)"):/workspace" \
         -v "$(to_host_path "$HOME/.npm-cache"):/root/.npm" \
-        -v "$(to_host_path "$LOCAL_STACK_DIR/gemini-config"):/root/.gemini" \
+        -v "$(to_host_path "$HOME/.gemini-config"):/root/.gemini" \
         -e GEMINI_API_KEY="sk-local-bypass" \
         -e GOOGLE_GENERATIVE_AI_API_KEY="sk-local-bypass" \
         -e GEMINI_SANDBOX="false" \
