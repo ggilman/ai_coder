@@ -40,7 +40,6 @@ start_workbench() {
     echo -e "${ICON_GEAR} Mapping Spoke for [$PROJECT_ID]..."
     ensure_git_identity
     apply_git_identity
-    configure_workbench
     run_workbench \
         -v "$(to_host_path "$HOME/.aider-config"):/root/.aider-config" \
         -e OPENAI_API_BASE="http://$GLOBAL_PROXY_NAME:4000/v1" \

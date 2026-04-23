@@ -132,6 +132,7 @@ if [ -z "$(docker ps -q -f name=^/${GLOBAL_ENGINE_NAME}$ 2>/dev/null)" ]; then
 fi
 
 ensure_workbench_running || { echo -e "${RED}✘ Workbench startup failed${NC}"; exit 1; }
+configure_workbench
 
 ensure_git_identity
 apply_git_identity
