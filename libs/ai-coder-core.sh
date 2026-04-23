@@ -453,7 +453,7 @@ RUN if [ -n "\${PROXY_URL}" ]; then \
     fi
 RUN apt-get update && apt-get install -y \
     ${apt_pkgs} \
-    --no-install-recommends && rm -rf /var/lib/apt/lists/*
+    --no-install-recommends --fix-missing && rm -rf /var/lib/apt/lists/*
 ENV http_proxy=\${PROXY_URL} https_proxy=\${PROXY_URL} HTTP_PROXY=\${PROXY_URL} HTTPS_PROXY=\${PROXY_URL} \
     no_proxy=localhost,127.0.0.1 NO_PROXY=localhost,127.0.0.1
 ${pm_proxy_cmds}
