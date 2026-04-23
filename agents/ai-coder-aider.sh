@@ -29,9 +29,6 @@ openai-api-key: sk-local-bypass
 model: openai/local
 no-auto-commits: false
 check-update: false
-no-auto-lint: true
-no-auto-test: true
-map-tokens: 0
 EOF
     fi
 }
