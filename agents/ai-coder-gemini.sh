@@ -108,6 +108,7 @@ start_workbench() {
         -e GEMINI_API_KEY="sk-local-bypass" \
         -e GOOGLE_GENERATIVE_AI_API_KEY="sk-local-bypass" \
         -e GEMINI_SANDBOX="false" \
+        -e GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:4000" \
         "$IMAGE_NAME" /bin/bash -c "socat TCP-LISTEN:4000,fork,reuseaddr TCP:${GLOBAL_PROXY_NAME}:4000 & trap 'true' EXIT; while true; do sleep 3600; done"
 }
 
