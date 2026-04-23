@@ -109,6 +109,19 @@ resolve_proxy_to_ip() {
 # --- [ CORE LOGIC ] -----------------------------------------------------------
 
 check_docker() {
+    # Verify the docker binary is reachable from this shell before anything else.
+    # On some machines Docker is installed but its CLI is not on the PATH when
+    # running from Git Bash (e.g. missing entry in /etc/paths or a broken
+    # Desktop integration), which causes every subsequent docker call to fail
+    # with "command not found" in a confusing way.
+    if ! command -v docker >/dev/null 2>&1; then
+        echo -e "${RED}✘ Docker CLI not found in PATH.${NC}"
+        echo -e "${YELLOW}  Docker may be installed but is not accessible from this shell.${NC}"
+        echo -e "${CYAN}  Try reopening Git Bash after a fresh Docker Desktop install,${NC}"
+        echo -e "${CYAN}  or run from PowerShell / WSL where Docker is reachable.${NC}"
+        return 1
+    fi
+
     if ! docker info >/dev/null 2>&1; then
         echo -e "${ICON_GEAR} Starting Docker Desktop..."
         if [ "$IS_WSL" == "true" ]; then
@@ -129,6 +142,20 @@ check_docker() {
             echo -ne "◈"; sleep 5
         done
         echo -e " ${GREEN}ONLINE${NC}"
+    fi
+
+    # Daemon is up — run a basic command to confirm the CLI actually works in
+    # this shell context.  On certain Windows machines `docker info` succeeds
+    # (it uses a simpler pipe path) while other commands like `docker ps` fail
+    # due to permission or socket issues specific to the Git Bash environment.
+    if ! docker ps >/dev/null 2>&1; then
+        echo -e "${RED}✘ Docker daemon is running but commands fail from this shell.${NC}"
+        echo -e "${YELLOW}  This is a known issue on some Windows machines with Git Bash.${NC}"
+        echo -e "${CYAN}  Possible fixes:${NC}"
+        echo -e "${CYAN}    • Add your user to the 'docker-users' group and log out/in${NC}"
+        echo -e "${CYAN}    • Run Docker Desktop as Administrator once to repair permissions${NC}"
+        echo -e "${CYAN}    • Use PowerShell or WSL instead of Git Bash${NC}"
+        return 1
     fi
 }
 
