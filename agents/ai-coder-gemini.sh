@@ -23,6 +23,7 @@ litellm_settings:
   model_alias_map:
     gemini-2.0-flash: gemma-local
     gemini-2.5-flash: gemma-local
+    gemini-2.5-flash-lite: gemma-local
     gemini-2.5-pro: gemma-local
     gemini-1.5-pro: gemma-local
     gemini-1.5-flash: gemma-local
