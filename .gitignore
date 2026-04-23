@@ -1,2 +1,5 @@
 test_*
 .claude-stack/
+.vs/
+ai_coder.zip
+
