@@ -518,9 +518,11 @@ run_workbench() {
     done
     local wb_network="$HUB_NETWORK"
     [ "${NETWORK_INTERNAL:-false}" = "true" ] && wb_network="$HUB_ISOLATED_NET"
+    local no_proxy_hosts="localhost,127.0.0.1,$GLOBAL_ENGINE_NAME"
+    [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ] && no_proxy_hosts="$no_proxy_hosts,$GLOBAL_PROXY_NAME"
     docker run -d --name "$WORKBENCH" --network "$wb_network" --privileged \
         -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
-        -e "no_proxy=localhost,127.0.0.1,$GLOBAL_PROXY_NAME,$GLOBAL_ENGINE_NAME" \
+        -e "no_proxy=$no_proxy_hosts" \
         -v "$(to_host_path "$(pwd)"):/workspace" \
         "${extra_flags[@]}" \
         "$IMAGE_NAME" /bin/bash -c "$entrypoint"

@@ -130,6 +130,15 @@ fi
 if [ -z "$(docker ps -q -f name=^/${GLOBAL_ENGINE_NAME}$ 2>/dev/null)" ]; then
     docker rm "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
     start_hub_engine || { echo -e "${RED}✘ Hub startup failed${NC}"; exit 1; }
+elif [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ] && \
+     [ -z "$(docker ps -q -f name=^/${GLOBAL_PROXY_NAME}$ 2>/dev/null)" ]; then
+    # Engine is already up but proxy is missing (e.g. switched from a non-proxy
+    # agent). Start just the proxy portion via start_hub_engine which is
+    # idempotent for the engine (it will fail to recreate it but the proxy run
+    # is what matters). Simpler: call start_hub_engine which stops+removes both
+    # then restarts. Accept the brief engine restart cost.
+    docker rm "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
+    start_hub_engine || { echo -e "${RED}✘ Hub startup failed${NC}"; exit 1; }
 fi
 
 apply_git_identity
