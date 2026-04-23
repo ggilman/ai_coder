@@ -30,6 +30,8 @@ model: openai/local
 no-auto-commits: false
 check-update: false
 show-model-warnings: false
+gitignore: true
+input-history-file: /root/.aider-config/.aider.input.history
 EOF
     fi
 }
