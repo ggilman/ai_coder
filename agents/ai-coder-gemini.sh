@@ -109,7 +109,7 @@ start_workbench() {
 
 execute_tool() {
     local container="${WORKBENCH_PREFIX}-${PROJECT_ID}"
-    local cmd_exec="docker exec -it -e TERM=xterm-256color -e GEMINI_API_BASE=http://${GLOBAL_PROXY_NAME}:4000 -e GOOGLE_API_BASE=http://${GLOBAL_PROXY_NAME}:4000 $container gemini"
+    local cmd_exec="docker exec -it -e TERM=xterm-256color -e COLORTERM=truecolor -e GEMINI_API_BASE=http://${GLOBAL_PROXY_NAME}:4000 -e GOOGLE_API_BASE=http://${GLOBAL_PROXY_NAME}:4000 $container gemini"
     if [ "$IS_GITBASH" = "true" ]; then
         winpty $cmd_exec
     else
