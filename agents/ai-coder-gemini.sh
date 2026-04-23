@@ -3,7 +3,7 @@
 # AI-CODER-GEMINI.SH | Gemini CLI Variant Overrides
 # ==============================================================================
 
-IMAGE_NAME="gemini-engineer-v2"
+IMAGE_NAME="gemini-engineer-v3"
 
 get_litellm_config() {
     cat <<EOF
@@ -112,12 +112,12 @@ start_workbench() {
         -e GEMINI_API_KEY="sk-local-bypass" \
         -e GOOGLE_GENERATIVE_AI_API_KEY="sk-local-bypass" \
         -e GEMINI_SANDBOX="false" \
-        "$IMAGE_NAME" /bin/bash -c "trap 'true' EXIT; while true; do sleep 3600; done"
+        "$IMAGE_NAME" /bin/bash -c "socat TCP-LISTEN:4000,fork,reuseaddr TCP:${GLOBAL_PROXY_NAME}:4000 & trap 'true' EXIT; while true; do sleep 3600; done"
 }
 
 execute_tool() {
     local container="${WORKBENCH_PREFIX}-${PROJECT_ID}"
-    local cmd_exec="docker exec -it -e TERM=xterm-256color -e COLORTERM=truecolor -e GEMINI_API_BASE=http://${GLOBAL_PROXY_NAME}:4000 -e GOOGLE_API_BASE=http://${GLOBAL_PROXY_NAME}:4000 $container gemini"
+    local cmd_exec="docker exec -it -e TERM=xterm-256color -e COLORTERM=truecolor -e GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:4000 $container gemini"
     if [ "$IS_GITBASH" = "true" ]; then
         winpty $cmd_exec
     else

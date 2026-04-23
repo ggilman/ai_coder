@@ -3,4 +3,7 @@
 # One package per line. Lines starting with # are ignored.
 # ============================================================
 
-# Add Gemini-specific packages here
+# socat: used to forward localhost:4000 -> ai-hub-proxy:4000 inside the
+# workbench container so GOOGLE_GEMINI_BASE_URL can use http://127.0.0.1
+# (Gemini CLI only accepts HTTP for localhost; container hostnames require HTTPS)
+socat
