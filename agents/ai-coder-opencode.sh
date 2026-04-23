@@ -54,7 +54,6 @@ EOF
 
 start_workbench() {
     echo -e "${ICON_GEAR} Mapping Spoke for [$PROJECT_ID]..."
-    configure_workbench
     run_workbench \
         -v "$(to_host_path "$HOME/.npm-cache"):/root/.npm" \
         -v "$(to_host_path "$LOCAL_STACK_DIR/opencode-config"):/root/.config/opencode"

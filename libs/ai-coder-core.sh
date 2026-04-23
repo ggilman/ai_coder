@@ -147,16 +147,15 @@ ensure_git_identity() {
 
 # --- [ NETWORK CONFIG ] -------------------------------------------------------
 
-NETWORK_CONFIG_FILE="$(pwd)/.ai-coder/netconfig"
-
 # Load or prompt for network isolation preference, then store it for future runs.
 # Sets NETWORK_INTERNAL in the calling environment.
 ensure_network_config() {
     local isolated_net=""
+    local network_config_file="$(pwd)/.ai-coder/netconfig"
 
     # Load from persisted file
-    if [ -f "$NETWORK_CONFIG_FILE" ]; then
-        isolated_net=$(grep '^isolated=' "$NETWORK_CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
+    if [ -f "$network_config_file" ]; then
+        isolated_net=$(grep '^isolated=' "$network_config_file" 2>/dev/null | cut -d= -f2-)
     fi
 
     # Prompt if not yet set
@@ -167,7 +166,7 @@ ensure_network_config() {
             y|yes) isolated_net="yes" ;;
             *)     isolated_net="no"  ;;
         esac
-        printf 'isolated=%s\n' "$isolated_net" > "$NETWORK_CONFIG_FILE"
+        printf 'isolated=%s\n' "$isolated_net" > "$network_config_file"
     fi
 
     [ "$isolated_net" = "yes" ] && NETWORK_INTERNAL=true || true
@@ -536,8 +535,9 @@ start_hub_engine() {
     docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
     
     # Use a hook for the config content
+    mkdir -p "$HOME/.ai-coder"
     local config_content; config_content=$(get_litellm_config)
-    cat > "$LOCAL_STACK_DIR/litellm_config.yaml" <<EOF
+    cat > "$HOME/.ai-coder/litellm_config.yaml" <<EOF
 $config_content
 EOF
 
@@ -560,7 +560,7 @@ EOF
     docker run -d --name "$GLOBAL_PROXY_NAME" --network "$HUB_NETWORK" -p 4000:4000 --restart always \
         -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
         -e "no_proxy=localhost,127.0.0.1,$GLOBAL_ENGINE_NAME" \
-        -v "$(to_host_path "$LOCAL_STACK_DIR/litellm_config.yaml"):/app/config.yaml:ro" \
+        -v "$(to_host_path "$HOME/.ai-coder/litellm_config.yaml"):/app/config.yaml:ro" \
         "$LITELLM_IMAGE" --config /app/config.yaml
     if [ $? -ne 0 ]; then echo -e "${RED}✘ Failed to start proxy container${NC}"; return 1; fi
 
