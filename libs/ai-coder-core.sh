@@ -147,7 +147,7 @@ ensure_git_identity() {
 
 # --- [ NETWORK CONFIG ] -------------------------------------------------------
 
-NETWORK_CONFIG_FILE="$(pwd)/.ai-coder-netconfig"
+NETWORK_CONFIG_FILE="$(pwd)/.ai-coder/netconfig"
 
 # Load or prompt for network isolation preference, then store it for future runs.
 # Sets NETWORK_INTERNAL in the calling environment.
