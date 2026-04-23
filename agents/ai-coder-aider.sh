@@ -29,17 +29,24 @@ openai-api-key: sk-local-bypass
 model: openai/local
 no-auto-commits: false
 check-update: false
+show-model-warnings: false
 EOF
     fi
 }
 
 start_workbench() {
     echo -e "${ICON_GEAR} Mapping Spoke for [$PROJECT_ID]..."
+    ensure_git_identity
+    apply_git_identity
     configure_workbench
     run_workbench \
         -v "$(to_host_path "$HOME/.aider-config"):/root/.aider-config" \
         -e OPENAI_API_BASE="http://$GLOBAL_PROXY_NAME:4000/v1" \
-        -e OPENAI_API_KEY="sk-local-bypass"
+        -e OPENAI_API_KEY="sk-local-bypass" \
+        -e GIT_AUTHOR_NAME="$GIT_USER_NAME" \
+        -e GIT_AUTHOR_EMAIL="$GIT_USER_EMAIL" \
+        -e GIT_COMMITTER_NAME="$GIT_USER_NAME" \
+        -e GIT_COMMITTER_EMAIL="$GIT_USER_EMAIL"
 }
 
 execute_tool() {
