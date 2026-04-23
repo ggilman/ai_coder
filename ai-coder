@@ -65,11 +65,11 @@ TOOL_PREF=$(cat "$PREF_FILE")
 # Define child script based on preference
 case "$TOOL_PREF" in
     claude)
-        CHILD_SCRIPT="$(dirname "$(realpath "$0")")/ai-coder-claude.sh"
+        CHILD_SCRIPT="$(dirname "$(realpath "$0")")/agents/ai-coder-claude.sh"
         LOCAL_STACK_DIR="$(pwd)/.claude-stack"
         ;;
     opencode)
-        CHILD_SCRIPT="$(dirname "$(realpath "$0")")/ai-coder-opencode.sh"
+        CHILD_SCRIPT="$(dirname "$(realpath "$0")")/agents/ai-coder-opencode.sh"
         LOCAL_STACK_DIR="$(pwd)/.oc-stack"
         ;;
     *)

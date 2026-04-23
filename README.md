@@ -15,8 +15,8 @@ The environment uses a **Hub & Spoke** model:
 | --- | --- |
 | `ai-coder` | Unified launcher — entry point for both Claude and OpenCode |
 | `ai-coder-core.sh` | Shared infrastructure library (sourced by `ai-coder`) |
-| `ai-coder-claude.sh` | Claude-specific overrides (sourced automatically when Claude is selected) |
-| `ai-coder-opencode.sh` | OpenCode-specific overrides (sourced automatically when OpenCode is selected) |
+| `agents/ai-coder-claude.sh` | Claude-specific overrides (sourced automatically when Claude is selected) |
+| `agents/ai-coder-opencode.sh` | OpenCode-specific overrides (sourced automatically when OpenCode is selected) |
 | `ai-status.sh` | System health dashboard |
 
 ## Available Tools
