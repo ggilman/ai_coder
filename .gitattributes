@@ -1,0 +1,7 @@
+# Force LF line endings for shell scripts so they run correctly from WSL and Git Bash.
+# Without this, git on Windows converts LF→CRLF and bash errors with
+# "syntax error near unexpected token" on every line with a subshell.
+*.sh        text eol=lf
+ai-coder    text eol=lf
+ai-coder-*  text eol=lf
+ai-status   text eol=lf
