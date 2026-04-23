@@ -13,28 +13,7 @@ get_litellm_config() {
       stream_timeout: 600"
     cat <<EOF
 model_list:
-  - model_name: gemma-local
-    litellm_params:
-      $params
-  - model_name: gemini-2.5-flash-lite
-    litellm_params:
-      $params
-  - model_name: gemini-3-flash-preview
-    litellm_params:
-      $params
-  - model_name: gemini-2.5-flash
-    litellm_params:
-      $params
-  - model_name: gemini-2.5-pro
-    litellm_params:
-      $params
-  - model_name: gemini-2.0-flash
-    litellm_params:
-      $params
-  - model_name: gemini-1.5-pro
-    litellm_params:
-      $params
-  - model_name: gemini-1.5-flash
+  - model_name: "*"
     litellm_params:
       $params
 
