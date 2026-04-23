@@ -85,7 +85,7 @@ start_workbench() {
         -v "$(to_host_path "$HOME/.npm-cache"):/root/.npm" \
         -v "$(to_host_path "$HOME/.claude-config"):/root/.claude" \
         -v "$(to_host_path "$HOME/.claude-config.json"):/root/.claude.json" \
-        -e ANTHROPIC_BASE_URL="http://$GLOBAL_ENGINE_NAME:8080" \
+        -e ANTHROPIC_BASE_URL="http://$GLOBAL_PROXY_NAME:4000" \
         -e ANTHROPIC_API_KEY="sk-local-bypass" \
         "$IMAGE_NAME" /bin/bash -c "trap 'true' EXIT; while true; do sleep 3600; done"
 }
