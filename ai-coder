@@ -139,7 +139,7 @@ while [ "$retry_count" -lt "$max_retries" ]; do
         engine_ready=true
     fi
 
-    if curl -s -m 2 http://localhost:4000/v1/models 2>/dev/null | grep -q '"gemma-local"'; then
+    if curl -s -m 2 http://localhost:4000/v1/models 2>/dev/null | grep -q '"object"'; then
         proxy_ready=true
     fi
 
