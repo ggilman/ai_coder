@@ -1,1 +1,6 @@
+# ============================================================
+# apt-aider.txt — extra packages for the Aider workbench only
+# One package per line. Lines starting with # are ignored.
+# ============================================================
+
 universal-ctags
