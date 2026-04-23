@@ -67,7 +67,7 @@ get_engine_health() {
 get_model_name() {
     local resp
     resp=$(timeout "$HEALTH_TIMEOUT" docker exec "$ENGINE_NAME" curl -s http://localhost:8080/v1/models 2>/dev/null) || true
-    echo "$resp" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4
+    echo "$resp" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4 || true
 }
 
 # Draws the dashboard header
