@@ -7,7 +7,9 @@ set -euo pipefail
 # --- [ GLOBAL CONFIGURATION ] -------------------------------------------------
 SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 PACKAGES_DIR="$(dirname "$SCRIPT_DIR")/packages"
-DOCKER_BIN="C:\Program Files\Docker\Docker\Docker Desktop.exe"
+DOCKER_BIN="${DOCKER_BIN:-C:\Program Files\Docker\Docker\Docker Desktop.exe}"
+# Fall back to a plain 'docker desktop' launch if the default path doesn't exist
+[ ! -f "$DOCKER_BIN" ] && DOCKER_BIN=""
 GLOBAL_ENGINE_NAME="ai-hub-engine"
 GLOBAL_PROXY_NAME="ai-hub-proxy"
 HUB_NETWORK="ai-engineering-net"
@@ -205,11 +207,21 @@ check_docker() {
     if ! docker info >/dev/null 2>&1; then
         echo -e "${ICON_GEAR} Starting Docker Desktop..."
         if [ "$IS_WSL" == "true" ]; then
-            powershell.exe -Command "Start-Process '$DOCKER_BIN'" >/dev/null 2>&1 || {
-                echo -e "${RED}✘ Failed to start Docker${NC}"; return 1
-            }
+            if [ -n "$DOCKER_BIN" ]; then
+                powershell.exe -Command "Start-Process '$DOCKER_BIN'" >/dev/null 2>&1 || {
+                    echo -e "${RED}✘ Failed to start Docker${NC}"; return 1
+                }
+            else
+                powershell.exe -Command "Start-Process 'Docker Desktop'" >/dev/null 2>&1 || {
+                    echo -e "${RED}✘ Failed to start Docker${NC}"; return 1
+                }
+            fi
         else
-            start "" "$DOCKER_BIN" || { echo -e "${RED}✘ Failed to start Docker${NC}"; return 1; }
+            if [ -n "$DOCKER_BIN" ]; then
+                start "" "$DOCKER_BIN" || { echo -e "${RED}✘ Failed to start Docker${NC}"; return 1; }
+            else
+                echo -e "${RED}✘ Docker Desktop not found — start it manually and retry.${NC}"; return 1
+            fi
         fi
         
         local wait_count=0
@@ -481,11 +493,11 @@ exec_in_container() {
     # Usage: exec_in_container [extra docker exec flags...] <container> <cmd> [args...]
     # Handles winpty on Git Bash automatically.
     # Explicitly set PATH so npm/pip global bins are found regardless of shell init.
-    local cmd_exec="docker exec -it -e PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin $*"
+    local cmd_args=(docker exec -it -e PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "$@")
     if [ "$IS_GITBASH" = "true" ]; then
-        winpty $cmd_exec
+        winpty "${cmd_args[@]}"
     else
-        eval $cmd_exec
+        "${cmd_args[@]}"
     fi
 }
 
