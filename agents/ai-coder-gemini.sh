@@ -93,6 +93,11 @@ configure_workbench() {
 }
 EOF
     fi
+    # gemini-credentials.json is a known-buggy file that Gemini CLI occasionally
+    # corrupts (upstream issue #24835). Since we always inject GEMINI_API_KEY via
+    # env var, the file is not needed — delete it before each run so the CLI never
+    # hits the corrupted-file error and always uses the env var cleanly.
+    rm -f "$HOME/.gemini-config/gemini-credentials.json"
 }
 
 start_workbench() {
