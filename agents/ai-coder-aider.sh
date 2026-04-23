@@ -4,6 +4,7 @@
 # ==============================================================================
 
 IMAGE_NAME="aider-engineer-v1"
+TOOL_NAME="Aider"
 
 build_image() {
     image_check=$(docker images -q "$IMAGE_NAME" 2>/dev/null)

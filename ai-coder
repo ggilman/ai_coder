@@ -33,22 +33,38 @@ fi
 # --- [ PREFERENCE MANAGEMENT ] ------------------------------------------------
 
 show_menu() {
+    local agents_dir
+    agents_dir="$(dirname "$(realpath "$0")")/agents"
+
+    local pairs=()
+    for f in "$agents_dir"/ai-coder-*.sh; do
+        [ -f "$f" ] || continue
+        local name; name=$(grep -m1 '^TOOL_NAME=' "$f" | cut -d'"' -f2)
+        [ -n "$name" ] || continue
+        local key; key=$(basename "$f" .sh); key="${key#ai-coder-}"
+        pairs+=("$name:$key")
+    done
+    IFS=$'\n' pairs=($(printf '%s\n' "${pairs[@]}" | sort)); unset IFS
+
     echo -e "\n${CYAN}Welcome to AI-Coder. Please select your preferred tool:${NC}"
-    echo "1) Claude"
-    echo "2) OpenCode"
-    echo "3) Gemini"
-    echo "4) Aider"
+    local i=1
+    for pair in "${pairs[@]}"; do
+        echo "$i) ${pair%%:*}"
+        (( i++ ))
+    done
     echo "q) Quit"
     echo -n "Selection: "
     read -r choice
-    case "$choice" in
-        1) echo "claude" > "$PREF_FILE"; echo "Claude selected." ;;
-        2) echo "opencode" > "$PREF_FILE"; echo "OpenCode selected." ;;
-        3) echo "gemini" > "$PREF_FILE"; echo "Gemini selected." ;;
-        4) echo "aider" > "$PREF_FILE"; echo "Aider selected." ;;
-        q) exit 0 ;;
-        *) echo -e "${RED}Invalid selection.${NC}"; show_menu ;;
-    esac
+    if [[ "$choice" == "q" ]]; then exit 0; fi
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#pairs[@]} )); then
+        local key="${pairs[$((choice-1))]#*:}"
+        local name="${pairs[$((choice-1))]%%:*}"
+        echo "$key" > "$PREF_FILE"
+        echo "$name selected."
+    else
+        echo -e "${RED}Invalid selection.${NC}"
+        show_menu
+    fi
 }
 
 # --- [ MAIN ENTRY ] -----------------------------------------------------------
@@ -66,29 +82,15 @@ fi
 
 TOOL_PREF=$(cat "$PREF_FILE")
 
-# Define child script based on preference
-case "$TOOL_PREF" in
-    claude)
-        CHILD_SCRIPT="$(dirname "$(realpath "$0")")/agents/ai-coder-claude.sh"
-        LOCAL_STACK_DIR="$(pwd)/.claude-stack"
-        ;;
-    opencode)
-        CHILD_SCRIPT="$(dirname "$(realpath "$0")")/agents/ai-coder-opencode.sh"
-        LOCAL_STACK_DIR="$(pwd)/.oc-stack"
-        ;;
-    gemini)
-        CHILD_SCRIPT="$(dirname "$(realpath "$0")")/agents/ai-coder-gemini.sh"
-        LOCAL_STACK_DIR="$(pwd)/.gemini-stack"
-        ;;
-    aider)
-        CHILD_SCRIPT="$(dirname "$(realpath "$0")")/agents/ai-coder-aider.sh"
-        LOCAL_STACK_DIR="$(pwd)/.aider-stack"
-        ;;
-    *)
-        echo -e "${RED}Error: Invalid tool preference in $PREF_FILE${NC}"
-        exit 1
-        ;;
-esac
+# Resolve child script from agents directory
+AGENTS_DIR="$(dirname "$(realpath "$0")")/agents"
+CHILD_SCRIPT="$AGENTS_DIR/ai-coder-${TOOL_PREF}.sh"
+if [ ! -f "$CHILD_SCRIPT" ]; then
+    echo -e "${RED}Error: Unknown tool '${TOOL_PREF}'. Run with --menu to reselect.${NC}"
+    rm -f "$PREF_FILE"
+    exit 1
+fi
+LOCAL_STACK_DIR="$(pwd)/.${TOOL_PREF}-stack"
 
 # Load Child Overrides
 if [ ! -f "$CHILD_SCRIPT" ]; then

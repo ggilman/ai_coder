@@ -4,6 +4,7 @@
 # ==============================================================================
 
 IMAGE_NAME="claude-engineer-v4-8"
+TOOL_NAME="Claude"
 
 get_litellm_config() {
     cat <<EOF

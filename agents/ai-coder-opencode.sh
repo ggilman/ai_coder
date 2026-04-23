@@ -4,6 +4,7 @@
 # ==============================================================================
 
 IMAGE_NAME="opencode-engineer-v1"
+TOOL_NAME="OpenCode"
 
 build_image() {
     image_check=$(docker images -q "$IMAGE_NAME" 2>/dev/null)

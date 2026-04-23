@@ -4,6 +4,7 @@
 # ==============================================================================
 
 IMAGE_NAME="gemini-engineer-v4"
+TOOL_NAME="Gemini"
 
 get_litellm_config() {
     local params="model: openai/local
