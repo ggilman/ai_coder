@@ -7,6 +7,7 @@ IMAGE_NAME="gemini-engineer-v4"
 
 get_litellm_config() {
     local params="model: openai/local
+      custom_llm_provider: openai
       api_base: http://$GLOBAL_ENGINE_NAME:8080/v1
       api_key: sk-1234
       timeout: 600

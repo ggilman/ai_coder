@@ -11,6 +11,7 @@ model_list:
   - model_name: "*"
     litellm_params:
       model: openai/local
+      custom_llm_provider: openai
       api_base: http://$GLOBAL_ENGINE_NAME:8080/v1
       api_key: sk-1234
       timeout: 600
