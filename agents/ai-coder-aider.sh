@@ -15,7 +15,7 @@ build_image() {
     fi
     local apt_pkgs; apt_pkgs="$(read_package_list "$PACKAGES_DIR/apt-common.txt") $(read_package_list "$PACKAGES_DIR/apt-aider.txt")"
     build_standard_image "Dockerfile.aider" "$apt_pkgs" "$pm_proxy_cmds" \
-        "RUN pip3 install aider-install && aider-install
+        "RUN pip3 install aider-chat
 RUN aider --version"
 }
 
