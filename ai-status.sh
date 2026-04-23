@@ -63,6 +63,13 @@ get_engine_health() {
     timeout "$HEALTH_TIMEOUT" docker exec "$ENGINE_NAME" curl -s http://localhost:8080/slots 2>/dev/null || echo ""
 }
 
+# Fetches the loaded model name from the engine's /v1/models endpoint
+get_model_name() {
+    local resp
+    resp=$(timeout "$HEALTH_TIMEOUT" docker exec "$ENGINE_NAME" curl -s http://localhost:8080/v1/models 2>/dev/null) || true
+    echo "$resp" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4
+}
+
 # Draws the dashboard header
 draw_header() {
     # Top border
@@ -157,14 +164,22 @@ main() {
         if [ -n "$slots_raw" ]; then
             total_slots=$(echo "$slots_raw" | { grep -o '"id"' || true; } | wc -l | xargs)
             active_slots=$(echo "$slots_raw" | { grep -o '"is_processing":true' || true; } | wc -l | xargs)
+            model_name=$(get_model_name)
 
             health_text="${BOLD}ENGINE HUB: ${GREEN}● Online${NC}${BOLD} | ${total_slots} slot(s) | ${active_slots} active${NC}"
             health_len=$(get_visible_length "$health_text")
             health_pad=$((70 - health_len))
             [ "$health_pad" -lt 0 ] && health_pad=0
-
             printf "%b║%b%b%*s%b║%b\n" \
                 "$CYAN" "$NC" "$health_text" "$health_pad" "" "$CYAN" "$NC"
+
+            if [ -n "$model_name" ]; then
+                model_text="  Model: ${CYAN}${model_name}${NC}"
+                model_len=$(get_visible_length "$model_text")
+                model_pad=$((70 - model_len))
+                [ "$model_pad" -lt 0 ] && model_pad=0
+                printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$model_text" "$model_pad" "" "$CYAN" "$NC"
+            fi
         else
             health_text="${BOLD}ENGINE HUB: ${RED}● Offline${NC}"
             health_len=$(get_visible_length "$health_text")
