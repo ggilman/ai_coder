@@ -102,7 +102,7 @@ start_workbench() {
 
 execute_tool() {
     local container="${WORKBENCH_PREFIX}-${PROJECT_ID}"
-    local cmd_exec="docker exec -it $container opencode"
+    local cmd_exec="docker exec -it $container opencode --max-turns 20"
     if [ "$IS_GITBASH" = "true" ]; then
         winpty $cmd_exec
     else
