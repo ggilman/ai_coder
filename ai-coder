@@ -125,6 +125,9 @@ fi
 
 ensure_workbench_running || { echo -e "${RED}✘ Workbench startup failed${NC}"; exit 1; }
 
+ensure_git_identity
+apply_git_identity
+
 echo -ne "${CYAN}◈ Syncing VRAM Slots:${NC} "
 retry_count=0
 max_retries=90

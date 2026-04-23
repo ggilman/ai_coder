@@ -106,6 +106,56 @@ resolve_proxy_to_ip() {
     fi
 }
 
+# --- [ GIT IDENTITY ] ---------------------------------------------------------
+
+GIT_IDENTITY_FILE="$HOME/.ai-coder-gitconfig"
+
+# Load or prompt for git user identity, then store it for future runs.
+# Sets GIT_USER_EMAIL and GIT_USER_NAME in the calling environment.
+ensure_git_identity() {
+    local git_email="" git_name=""
+
+    # Load from persisted file
+    if [ -f "$GIT_IDENTITY_FILE" ]; then
+        git_email=$(grep '^email=' "$GIT_IDENTITY_FILE" 2>/dev/null | cut -d= -f2-)
+        git_name=$(grep  '^name='  "$GIT_IDENTITY_FILE" 2>/dev/null | cut -d= -f2-)
+    fi
+
+    # Fall back to host global git config
+    [ -z "$git_email" ] && git_email=$(git config --global user.email 2>/dev/null || true)
+    [ -z "$git_name"  ] && git_name=$(git config  --global user.name  2>/dev/null || true)
+
+    # Prompt for anything still missing
+    if [ -z "$git_email" ]; then
+        echo -ne "${CYAN}◈ Git email for commits: ${NC}"
+        read -r git_email
+    fi
+    if [ -z "$git_name" ]; then
+        echo -ne "${CYAN}◈ Git user name for commits: ${NC}"
+        read -r git_name
+    fi
+
+    # Persist for future runs
+    printf 'email=%s\nname=%s\n' "$git_email" "$git_name" > "$GIT_IDENTITY_FILE"
+
+    GIT_USER_EMAIL="$git_email"
+    GIT_USER_NAME="$git_name"
+}
+
+# Write identity into the local repo's .git/config (host-side).
+# The workspace volume mount means the container sees this immediately.
+# Skips gracefully if not inside a git repo or if already configured.
+apply_git_identity() {
+    if ! git -C "$(pwd)" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        return 0
+    fi
+    local cur_email; cur_email=$(git -C "$(pwd)" config --local user.email 2>/dev/null || true)
+    local cur_name;  cur_name=$(git  -C "$(pwd)" config --local user.name  2>/dev/null || true)
+    [ -z "$cur_email" ] && git -C "$(pwd)" config --local user.email "$GIT_USER_EMAIL"
+    [ -z "$cur_name"  ] && git -C "$(pwd)" config --local user.name  "$GIT_USER_NAME"
+    echo -e "${ICON_OK} Git identity: ${CYAN}${GIT_USER_NAME} <${GIT_USER_EMAIL}>${NC}"
+}
+
 # --- [ CORE LOGIC ] -----------------------------------------------------------
 
 check_docker() {
