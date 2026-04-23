@@ -28,6 +28,7 @@ openai-api-base: http://$GLOBAL_PROXY_NAME:4000/v1
 openai-api-key: sk-local-bypass
 model: openai/local
 no-auto-commits: false
+check-update: false
 EOF
     fi
 }
@@ -44,5 +45,5 @@ start_workbench() {
 execute_tool() {
     exec_in_container \
         -e TERM=xterm-256color -e COLORTERM=truecolor \
-        "${WORKBENCH_PREFIX}-${PROJECT_ID}" /opt/aider/bin/aider --config /root/.aider-config/.aider.conf.yml
+        "${WORKBENCH_PREFIX}-${PROJECT_ID}" /opt/aider/bin/aider --no-check-update --config /root/.aider-config/.aider.conf.yml
 }
