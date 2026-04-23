@@ -19,6 +19,9 @@ model_list:
   - model_name: gemini-2.5-flash-lite
     litellm_params:
       $params
+  - model_name: gemini-3-flash-preview
+    litellm_params:
+      $params
   - model_name: gemini-2.5-flash
     litellm_params:
       $params
