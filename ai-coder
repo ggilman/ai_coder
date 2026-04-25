@@ -143,7 +143,9 @@ download_model || {
     echo -e "${CYAN}  Add it to ~/.bash_profile (Git Bash) or ~/.bashrc (WSL) to persist it.${NC}"
     exit 1
 }
-detect_model || { echo -e "${RED}✘ Model detection failed${NC}"; exit 1; }
+if [ -z "${MODEL_FILE:-}" ]; then
+    echo -e "${RED}✘ Model detection failed — no model available${NC}"; exit 1
+fi
 build_image || { echo -e "${RED}✘ Image build failed${NC}"; exit 1; }
 
 ensure_git_identity

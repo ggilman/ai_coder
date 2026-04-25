@@ -7,9 +7,14 @@ set -euo pipefail
 # --- [ GLOBAL CONFIGURATION ] -------------------------------------------------
 SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 PACKAGES_DIR="$(dirname "$SCRIPT_DIR")/packages"
-DOCKER_BIN="${DOCKER_BIN:-C:\Program Files\Docker\Docker\Docker Desktop.exe}"
-# Fall back to a plain 'docker desktop' launch if the default path doesn't exist
-[ ! -f "$DOCKER_BIN" ] && DOCKER_BIN=""
+DOCKER_BIN="${DOCKER_BIN:-}"
+# Resolve the default Docker Desktop path, handling both Git Bash (/c/...) and
+# backslash Windows paths (for WSL powershell.exe invocation).
+if [ -z "$DOCKER_BIN" ]; then
+    _docker_default_gb="/c/Program Files/Docker/Docker/Docker Desktop.exe"
+    _docker_default_win="C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"
+    [ -f "$_docker_default_gb" ] && DOCKER_BIN="$_docker_default_gb" || DOCKER_BIN="$_docker_default_win"
+fi
 GLOBAL_ENGINE_NAME="ai-hub-engine"
 GLOBAL_PROXY_NAME="ai-hub-proxy"
 HUB_NETWORK="ai-engineering-net"
@@ -694,10 +699,10 @@ HELP
             echo -e "${ICON_OK} Alias '${ALIAS_NAME}' added to $rc_file. Run: source $rc_file"
             exit 0
             ;;
-        "")
+        spawn|"")
             ;;
         *)
-            echo -e "${RED}Unknown command: $1${NC}"
+            echo -e "${RED}Unknown command: ${cmd}${NC}"
             echo "Run: $0 --help"
             exit 1
             ;;
