@@ -15,6 +15,32 @@ if [ ! -f "$CORE_SCRIPT" ]; then
 fi
 source "$CORE_SCRIPT"
 
+# Handle commands that don't require an agent selection
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    cat <<HELP
+Usage: $(basename "$0") [COMMAND]
+
+Commands:
+  spawn              Execute command in active workbench
+  --status           Show GPU and engine status dashboard
+  --setup-path       Create shell alias for this script
+  --clean            Stop and remove all containers
+  --rebuild          Remove the workbench image to force a full rebuild
+  --menu             Reset tool preference and show menu
+  --help             Show this message
+HELP
+    exit 0
+fi
+
+if [[ "${1:-}" == "--status" ]]; then
+    exec "$(dirname "$(realpath "$0")")/ai-status.sh"
+fi
+
+if [[ "${1:-}" == "--clean" ]]; then
+    teardown
+    exit 0
+fi
+
 # Handle --setup-path before preference check (no tool selection needed)
 if [[ "${1:-}" == "--setup-path" ]]; then
     rc_file="$HOME/.bashrc"
