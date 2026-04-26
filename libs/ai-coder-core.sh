@@ -418,10 +418,13 @@ pull_base_image_via_proxy() {
     local image_tar; image_tar=$(mktemp --suffix=.tar)
     if HTTPS_PROXY="$proxy" HTTP_PROXY="$proxy" "$crane_bin" pull "$image" "$image_tar"; then
         echo -e "${CYAN}  Loading image into Docker...${NC}"
-        docker load < "$image_tar"
-        local rc=$?
-        rm -f "$image_tar"; [ -n "$crane_tmp" ] && rm -rf "$crane_tmp"
-        return $rc
+        if docker load < "$image_tar"; then
+            rm -f "$image_tar"; [ -n "$crane_tmp" ] && rm -rf "$crane_tmp"
+            return 0
+        else
+            rm -f "$image_tar"; [ -n "$crane_tmp" ] && rm -rf "$crane_tmp"
+            return 1
+        fi
     else
         echo -e "${RED}  ✘ crane pull failed${NC}"
         rm -f "$image_tar"; [ -n "$crane_tmp" ] && rm -rf "$crane_tmp"
@@ -536,8 +539,9 @@ start_hub_engine() {
         -m "/models/$MODEL_FILE" --host 0.0.0.0 --port 8080 \
         --parallel "$MODEL_MAX_SLOTS" -ngl 99 -c "$MODEL_CTX_SIZE" --flash-attn on \
         -ctk q8_0 -ctv q8_0 \
-        --repeat-penalty 1.1 --repeat-last-n 128
-    if [ $? -ne 0 ]; then echo -e "${RED}✘ Failed to start engine container${NC}"; return 1; fi
+        --repeat-penalty 1.1 --repeat-last-n 128 || {
+        echo -e "${RED}✘ Failed to start engine container${NC}"; return 1
+    }
 
     if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
         mkdir -p "$HOME/.ai-coder"
@@ -549,8 +553,9 @@ EOF
             -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
             -e "no_proxy=localhost,127.0.0.1,$GLOBAL_ENGINE_NAME" \
             -v "$(to_host_path "$HOME/.ai-coder/litellm_config.yaml"):/app/config.yaml:ro" \
-            "$LITELLM_IMAGE" --config /app/config.yaml
-        if [ $? -ne 0 ]; then echo -e "${RED}✘ Failed to start proxy container${NC}"; return 1; fi
+            "$LITELLM_IMAGE" --config /app/config.yaml || {
+            echo -e "${RED}✘ Failed to start proxy container${NC}"; return 1
+        }
     fi
 
     # When isolation is active, bridge the engine (and proxy if running) onto

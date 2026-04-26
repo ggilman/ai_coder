@@ -10,7 +10,7 @@ PREF_FILE="$HOME/.ai-coder-pref"
 # Load Core Library
 CORE_SCRIPT="$(dirname "$(realpath "$0")")/libs/ai-coder-core.sh"
 if [ ! -f "$CORE_SCRIPT" ]; then
-    echo -e "${RED}Error: Core library not found at $CORE_SCRIPT${NC}"
+    echo "Error: Core library not found at $CORE_SCRIPT" >&2
     exit 1
 fi
 source "$CORE_SCRIPT"
