@@ -13,10 +13,13 @@ The environment uses a **Hub & Spoke** model:
 
 | File | Purpose |
 | --- | --- |
-| `ai-coder` | Unified launcher — entry point for both Claude and OpenCode |
+| `ai-coder` | Unified launcher — entry point for all AI coding tools |
 | `libs/ai-coder-core.sh` | Shared infrastructure library (sourced by `ai-coder`) |
-| `agents/ai-coder-claude.sh` | Claude-specific overrides (sourced automatically when Claude is selected) |
-| `agents/ai-coder-opencode.sh` | OpenCode-specific overrides (sourced automatically when OpenCode is selected) |
+| `libs/ai-coder-graphics.sh` | Shared ANSI color and icon palette (sourced by core and status) |
+| `agents/ai-coder-claude.sh` | Claude Code overrides (sourced automatically when Claude is selected) |
+| `agents/ai-coder-opencode.sh` | OpenCode overrides (sourced automatically when OpenCode is selected) |
+| `agents/ai-coder-aider.sh` | Aider overrides (sourced automatically when Aider is selected) |
+| `agents/ai-coder-gemini.sh` | Gemini CLI overrides (sourced automatically when Gemini is selected) |
 | `ai-status.sh` | System health dashboard |
 
 ## Available Tools
@@ -33,16 +36,18 @@ Use this script to monitor the health of your environment.
 ```
 
 ### 2. Unified AI Coding Interface (`ai-coder`)
-A single launcher for both Claude Code and OpenCode. On first run (or with `--menu`) it prompts you to select your preferred tool, which is saved to `~/.ai-coder-pref`. Subsequent runs launch the saved preference directly.
+A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run (or with `--menu`) it prompts you to select your preferred tool, which is saved to `~/.ai-coder-pref`. Subsequent runs launch the saved preference directly.
 
 - **Alias**: `ai` (configure with `--setup-path`)
 - **Model selection**: Automatically picks the best Gemma 4 GGUF model based on detected VRAM.
+- **Workspace mount**: Your project folder is mounted into the container as `/<foldername>` (e.g. `/my-project`), so the AI tool starts directly in your project directory.
 - **Auto-cleanup**: When you exit the tool, the workbench container is stopped. If it was the last active spoke, the Hub (engine + proxy) is also shut down automatically.
+- **Agent-free commands**: `--help`, `--status`, `--clean`, and `--setup-path` run immediately without requiring a tool to be selected.
 
 **Commands:**
 | Command | Description |
 | --- | --- |
-| `spawn` | Execute the AI tool inside the active workbench container |
+| `spawn` | (or no argument) Launch the AI tool inside the active workbench container |
 | `--menu` | Reset tool preference and show the selection menu |
 | `--status` | Show the real-time GPU and engine status dashboard |
 | `--setup-path` | Create a shell alias (`ai`) for this script |
@@ -63,9 +68,11 @@ The packages installed into each workbench container are defined in plain text f
 
 | File | Used by |
 | --- | --- |
-| `packages/apt-common.txt` | Both Claude and OpenCode images |
+| `packages/apt-common.txt` | All agent images |
 | `packages/apt-claude.txt` | Claude image only |
 | `packages/apt-opencode.txt` | OpenCode image only |
+| `packages/apt-aider.txt` | Aider image only |
+| `packages/apt-gemini.txt` | Gemini CLI image only |
 
 To add a package, edit the relevant file and then force a rebuild:
 
@@ -81,9 +88,11 @@ echo "htop" >> packages/apt-common.txt
 | --- | --- | --- |
 | Claude Code | Conversation history, sessions, telemetry | `~/.claude-config/` (directory) |
 | Claude Code | First-run preferences, accepted permissions, settings | `~/.claude-config.json` (file) |
-| OpenCode | Config, provider settings, conversation history | `.oc-stack/opencode-config/` (per project) |
+| OpenCode | Config, provider settings | `.ai-coder/opencode/opencode-config/` (per project) |
+| Aider | Git identity, aider config, input history | `~/.aider-config/` (directory) |
+| Gemini CLI | Auth tokens, session state, settings | `~/.gemini-config/` (directory) |
 
-Both paths are volume-mounted into the workbench container, so settings survive container restarts without rebuilding the image. The `~/.claude-config.json` file is pre-created with `{}` on first launch if it does not already exist.
+All paths are volume-mounted into the workbench container, so settings survive container restarts without rebuilding the image. The `~/.claude-config.json` file is pre-created with `{}` on first launch if it does not already exist.
 
 ## Setup
 
@@ -116,6 +125,4 @@ If you are on a network without a proxy, leave `DOWNLOAD_PROXY` unset (the defau
 - **Shell Compatibility**: The scripts support both **WSL2** and **Git Bash** on Windows.
 - **Packages changed but image not rebuilt**: Run `./ai-coder --rebuild` then `./ai-coder`.
 
-## Agent Guidelines
 
-If you are an AI agent working in this environment, please refer to [AGENTS.md](./AGENTS.md) for detailed operational instructions and architectural context.
