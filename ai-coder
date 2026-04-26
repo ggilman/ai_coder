@@ -213,7 +213,8 @@ else
     echo -e " ${RED}TIMEOUT${NC}"
     echo -e "${RED}✘ Engine/Proxy failed to initialize after $((retry_count * 2)) seconds${NC}"
     # Basic diagnostics
-    if [ -n "$(docker ps -aq -f name="$GLOBAL_ENGINE_NAME")" ]; then
+    local _cid; _cid=$(docker ps -aq -f "name=$GLOBAL_ENGINE_NAME" 2>/dev/null) || true
+    if [ -n "$_cid" ]; then
         docker logs "$GLOBAL_ENGINE_NAME" 2>&1 | tail -20 | sed 's/^/    /'
     fi
     exit 1
