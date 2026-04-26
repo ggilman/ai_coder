@@ -54,6 +54,7 @@ BASE_IMAGE="node:20-bullseye-slim"
 # --- [ ENVIRONMENT & SHELL ] --------------------------------------------------
 export MSYS_NO_PATHCONV=1
 PROJECT_ID=$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+WORKSPACE_DIR=$(basename "$PWD" | tr ' ' '_')
 
 # Visuals & Colors
 readonly NC='\033[0m'; readonly BOLD='\033[1m'; readonly GREEN='\033[0;32m'; readonly RED='\033[0;31m'; readonly CYAN='\033[0;36m'; readonly YELLOW='\033[1;33m'
@@ -503,7 +504,7 @@ exec_in_container() {
     # Usage: exec_in_container [extra docker exec flags...] <container> <cmd> [args...]
     # Handles winpty on Git Bash automatically.
     # Explicitly set PATH so npm/pip global bins are found regardless of shell init.
-    local cmd_args=(docker exec -it -e PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "$@")
+    local cmd_args=(docker exec -it -w "/$WORKSPACE_DIR" -e PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "$@")
     if [ "$IS_GITBASH" = "true" ]; then
         winpty "${cmd_args[@]}"
     else
@@ -515,7 +516,7 @@ run_workbench() {
     # Usage: run_workbench [extra docker run flags...] [-- <entrypoint-cmd>]
     # Starts the workbench with standard flags. Pass a custom entrypoint after --.
     local extra_flags=()
-    local entrypoint='trap '"'"'true'"'"' EXIT; while true; do sleep 3600; done'
+    local entrypoint="mkdir -p \"/$WORKSPACE_DIR\"; trap 'true' EXIT; while true; do sleep 3600; done"
     local past_sep=false
     for arg in "$@"; do
         if [ "$arg" = "--" ]; then past_sep=true; continue; fi
@@ -528,7 +529,8 @@ run_workbench() {
     docker run -d --name "$WORKBENCH" --network "$wb_network" --privileged \
         -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
         -e "no_proxy=$no_proxy_hosts" \
-        -v "$(to_host_path "$(pwd)"):/workspace" \
+        -v "$(to_host_path "$(pwd)"):/$WORKSPACE_DIR" \
+        --workdir "/$WORKSPACE_DIR" \
         "${extra_flags[@]}" \
         "$IMAGE_NAME" /bin/bash -c "$entrypoint"
 }

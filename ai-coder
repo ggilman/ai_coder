@@ -176,7 +176,7 @@ ensure_workbench_running || { echo -e "${RED}✘ Workbench startup failed${NC}";
 
 echo -ne "${CYAN}◈ Syncing VRAM Slots:${NC} "
 retry_count=0
-max_retries=90
+max_retries=300
 engine_ready=false
 proxy_ready=false
 
