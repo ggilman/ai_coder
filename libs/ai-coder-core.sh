@@ -159,6 +159,36 @@ ensure_network_config() {
     [ "$isolated_net" = "yes" ] && NETWORK_INTERNAL=true || true
 }
 
+# Load or prompt for GPU mode preference, then store it for future runs.
+# Sets GPU_MODE in the calling environment ("multi" or "single").
+# Silently skips the prompt when only one GPU is present.
+ensure_gpu_config() {
+    local gpu_conf_file="$HOME/.ai-coder-gpuconf"
+    local stored_mode=""
+
+    if [ -f "$gpu_conf_file" ]; then
+        stored_mode=$(grep '^gpu_mode=' "$gpu_conf_file" 2>/dev/null | cut -d= -f2-)
+    fi
+
+    if [ -z "$stored_mode" ]; then
+        local gpu_count=1
+        gpu_count=$($SMI --query-gpu=name --format=csv,noheader,nounits 2>/dev/null | grep -c '.' || echo 1)
+        if [ "${gpu_count:-1}" -gt 1 ]; then
+            echo -e "${CYAN}◈ ${gpu_count} GPUs detected. Use all GPUs for inference? [Y/n]: ${NC}"
+            read -r _ans
+            case "${_ans,,}" in
+                n|no) stored_mode="single" ;;
+                *)    stored_mode="multi"  ;;
+            esac
+        else
+            stored_mode="single"
+        fi
+        printf 'gpu_mode=%s\n' "$stored_mode" > "$gpu_conf_file"
+    fi
+
+    GPU_MODE="$stored_mode"
+}
+
 # Write identity into the local repo's .git/config (host-side).
 # The workspace volume mount means the container sees this immediately.
 # Skips gracefully if not inside a git repo or if already configured.
@@ -356,13 +386,20 @@ detect_model() {
     local vram_list; vram_list=$($SMI --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null) || {
         echo -e "${RED}✘ nvidia-smi failed${NC}"; return 1
     }
-    
-    local total_vram=0
-    for v in $vram_list; do 
-        case "$v" in *[!0-9]*) continue ;; *) total_vram=$((total_vram + v)) ;; esac
+
+    local total_vram=0 gpu_idx=0
+    for v in $vram_list; do
+        case "$v" in *[!0-9]*) gpu_idx=$((gpu_idx + 1)); continue ;; esac
+        # In single-GPU mode only count VRAM from GPU 0 so the tier selection
+        # matches what will actually be available to the engine container.
+        if [ "${GPU_MODE:-multi}" = "single" ] && [ "$gpu_idx" -gt 0 ]; then
+            gpu_idx=$((gpu_idx + 1)); continue
+        fi
+        total_vram=$((total_vram + v))
+        gpu_idx=$((gpu_idx + 1))
     done
     VRAM_GB=$((total_vram / 1024))
-    
+
     echo -e "${ICON_GEAR} Hardware Audit: Detected ${BOLD}${VRAM_GB}GB Total VRAM${NC}"
     
     select_model_for_vram "$VRAM_GB"
@@ -533,13 +570,37 @@ start_hub_engine() {
         fi
     done
 
-    docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$HUB_NETWORK" --gpus all --restart on-failure:3 \
+    # GPU selection: honour GPU_MODE set by ensure_gpu_config / ai-coder-model.conf.
+    # "single" exposes only GPU 0 to the container; "multi" exposes all GPUs and
+    # passes --tensor-split so llama.cpp distributes compute (not just VRAM) across
+    # every card. Without --tensor-split, llama.cpp uses all VRAM but runs all
+    # matrix multiplications on GPU 0 only.
+    local _gpus_flag="all"
+    local _ts_args=()
+    if [ "${GPU_MODE:-multi}" = "single" ]; then
+        _gpus_flag="device=0"
+        echo -e "${ICON_GEAR} GPU Mode: ${YELLOW}Single (GPU 0 only)${NC}"
+    else
+        local _vram_raw; _vram_raw=$($SMI --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null) || true
+        local _split_vals=()
+        for _v in $_vram_raw; do
+            case "$_v" in *[!0-9]*) ;; *) _split_vals+=("$_v") ;; esac
+        done
+        if [ "${#_split_vals[@]}" -gt 1 ]; then
+            local _ts; _ts=$(IFS=,; echo "${_split_vals[*]}")
+            _ts_args=(--tensor-split "$_ts")
+            echo -e "${ICON_GEAR} GPU Mode: ${GREEN}Multi — distributing across ${#_split_vals[@]} GPUs (split: ${CYAN}${_ts}${NC}${GREEN})${NC}"
+        fi
+    fi
+
+    docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$HUB_NETWORK" --gpus "$_gpus_flag" --restart on-failure:3 \
         -v "$(to_host_path "$MODEL_STORAGE_DIR"):/models" \
         "$LLAMA_IMAGE" \
         -m "/models/$MODEL_FILE" --host 0.0.0.0 --port 8080 \
         --parallel "$MODEL_MAX_SLOTS" -ngl 99 -c "$MODEL_CTX_SIZE" --flash-attn on \
         -ctk q8_0 -ctv q8_0 \
-        --repeat-penalty 1.1 --repeat-last-n 128 || {
+        --repeat-penalty 1.1 --repeat-last-n 128 \
+        "${_ts_args[@]}" || {
         echo -e "${RED}✘ Failed to start engine container${NC}"; return 1
     }
 
@@ -649,6 +710,7 @@ Commands:
   --clean            Stop and remove all containers
   --rebuild          Remove the workbench image to force a full rebuild
   --menu             Reset tool preference and show menu
+  --gpu-mode         Reset GPU mode preference (single vs multi-GPU)
   --help             Show this message
 HELP
             exit 0

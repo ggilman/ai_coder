@@ -53,6 +53,7 @@ A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run
 | `--setup-path` | Create a shell alias (`ai`) for this script |
 | `--clean` | Stop and remove all Hub and Spoke containers |
 | `--rebuild` | Remove the workbench image to force a full rebuild on next run |
+| `--gpu-mode` | Reset GPU mode preference and be prompted again on next run |
 | `--help` | Show help information |
 
 **Usage:**
@@ -60,6 +61,31 @@ A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run
 ./ai-coder [COMMAND]
 # or, after --setup-path:
 ai [COMMAND]
+```
+
+## Multi-GPU Support
+
+When two or more NVIDIA GPUs are present, `ai-coder` detects them on first run and asks whether to use all cards for inference:
+
+```
+◈ 2 GPUs detected. Use all GPUs for inference? [Y/n]:
+```
+
+| Mode | Behaviour |
+| --- | --- |
+| **multi** (default) | All GPUs exposed to the engine container. `--tensor-split` is set automatically using each card's VRAM as proportional weights, so both compute *and* VRAM are distributed across GPUs. |
+| **single** | Only GPU 0 is exposed (`--gpus device=0`). VRAM tier selection is also scoped to GPU 0 so the right model size is chosen. Useful when secondary GPUs are used for display output or other workloads. |
+
+The choice is saved to `~/.ai-coder-gpuconf`. To change it later:
+
+```bash
+./ai-coder --gpu-mode   # clears saved preference; re-prompts on next run
+```
+
+You can also override the preference for a single session without changing the saved value:
+
+```bash
+GPU_MODE=single ./ai-coder
 ```
 
 ## Customising the Workbench Image
@@ -91,6 +117,9 @@ echo "htop" >> packages/apt-common.txt
 | OpenCode | Config, provider settings | `.ai-coder/opencode/opencode-config/` (per project) |
 | Aider | Git identity, aider config, input history | `~/.aider-config/` (directory) |
 | Gemini CLI | Auth tokens, session state, settings | `~/.gemini-config/` (directory) |
+| ai-coder | Saved tool preference | `~/.ai-coder-pref` |
+| ai-coder | GPU mode preference (single/multi) | `~/.ai-coder-gpuconf` |
+| ai-coder | Git identity (name + email) | `~/.ai-coder-gitconfig` |
 
 All paths are volume-mounted into the workbench container, so settings survive container restarts without rebuilding the image. The `~/.claude-config.json` file is pre-created with `{}` on first launch if it does not already exist.
 

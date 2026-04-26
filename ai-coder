@@ -27,6 +27,7 @@ Commands:
   --clean            Stop and remove all containers
   --rebuild          Remove the workbench image to force a full rebuild
   --menu             Reset tool preference and show menu
+  --gpu-mode         Reset GPU mode preference (single vs multi-GPU)
   --help             Show this message
 HELP
     exit 0
@@ -38,6 +39,12 @@ fi
 
 if [[ "${1:-}" == "--clean" ]]; then
     teardown
+    exit 0
+fi
+
+if [[ "${1:-}" == "--gpu-mode" ]]; then
+    rm -f "$HOME/.ai-coder-gpuconf"
+    echo -e "${CYAN}◈ GPU mode preference cleared. It will be prompted on next run.${NC}"
     exit 0
 fi
 
@@ -150,6 +157,7 @@ build_image || { echo -e "${RED}✘ Image build failed${NC}"; exit 1; }
 
 ensure_git_identity
 ensure_network_config
+ensure_gpu_config
 docker network create "$HUB_NETWORK" 2>/dev/null || true
 if [ "${NETWORK_INTERNAL:-false}" = "true" ]; then
     docker network create --internal "$HUB_ISOLATED_NET" 2>/dev/null || true
