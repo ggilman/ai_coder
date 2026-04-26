@@ -8,9 +8,10 @@
 #   ./unbundle.sh
 #
 # What it does:
-#   1. Loads all Docker images from images/*.tar.gz into the local daemon
-#   2. Copies the model file into ~/ai-models/ (shared with ai-coder-core.sh)
-#   3. Prints instructions for launching ai-coder from bundle/scripts/
+#   1. Prompts for an install directory for the ai-coder scripts
+#   2. Loads all Docker images from images/*.tar.gz into the local daemon
+#   3. Copies the model file into ~/ai-models/ (shared with ai-coder-core.sh)
+#   4. Copies scripts into the chosen install directory
 #
 # Prerequisites: Docker Desktop must be installed and running.
 # No internet connection is required.
@@ -121,27 +122,97 @@ else
     echo "✔  Model installed."
 fi
 
+# --- [ Script install directory ] --------------------------------------------
+# Accepts Windows paths (C:\foo\bar), Git Bash (/c/foo/bar), or POSIX paths.
+normalize_path() {
+    local raw="$1"
+    # Strip surrounding quotes the user may have typed
+    raw="${raw%\"}"
+    raw="${raw#\"}"
+    raw="${raw%\'}"
+    raw="${raw#\'}"
+    # Expand ~ manually (read -r suppresses tilde expansion)
+    raw="${raw/#\~/$HOME}"
+    # Windows absolute path: C:\... or C:/...
+    if [[ "$raw" =~ ^[A-Za-z]:[/\\] ]]; then
+        local drive letter rest
+        drive="${raw:0:2}"           # e.g. C:
+        letter="${drive:0:1}"
+        rest="${raw:2}"             # everything after the colon
+        rest="${rest//\\//}"        # backslash → forward slash
+        rest="${rest#/}"            # strip leading /
+        if [ "$IS_WSL" = "true" ]; then
+            raw="/mnt/${letter,,}/$rest"
+        else
+            raw="/${letter,,}/$rest"
+        fi
+    else
+        # Already POSIX — just normalise backslashes just in case
+        raw="${raw//\\//}"
+    fi
+    echo "$raw"
+}
+
+echo ""
+echo "► Script installation directory"
+echo "  Enter the path where ai-coder scripts should be installed."
+echo "  Accepts Windows (C:\\path), Git Bash (/c/path), or POSIX (/home/...) paths."
+echo "  Press Enter to use the default: ~/ai-coder"
+echo -n "  Install path: "
+read -r _raw_install_dir
+
+if [ -z "$_raw_install_dir" ]; then
+    INSTALL_DIR="$HOME/ai-coder"
+else
+    INSTALL_DIR="$(normalize_path "$_raw_install_dir")"
+fi
+
+echo "  Installing to: $INSTALL_DIR"
+
+if [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/ai-coder" ]; then
+    echo ""
+    echo -n "  Directory already exists. Overwrite? [y/N]: "
+    read -r _overwrite
+    case "${_overwrite,,}" in
+        y|yes) ;;
+        *) echo "  Skipping script installation."; INSTALL_DIR="" ;;
+    esac
+fi
+
+if [ -n "$INSTALL_DIR" ]; then
+    mkdir -p "$INSTALL_DIR"
+    cp -r "$SCRIPTS_DIR"/. "$INSTALL_DIR/"
+    # Ensure scripts are executable
+    chmod +x "$INSTALL_DIR/ai-coder" "$INSTALL_DIR/ai-status.sh" 2>/dev/null || true
+    find "$INSTALL_DIR/agents" -name '*.sh' -exec chmod +x {} \; 2>/dev/null || true
+    find "$INSTALL_DIR/libs"   -name '*.sh' -exec chmod +x {} \; 2>/dev/null || true
+    echo "✔  Scripts installed."
+fi
+
 # --- [ Done ] -----------------------------------------------------------------
 echo ""
 echo "╔══════════════════════════════════════════════╗"
 echo "║  ✔  Unbundle complete!                       ║"
 echo "╚══════════════════════════════════════════════╝"
 echo ""
-echo "Scripts are in: $SCRIPTS_DIR"
-echo ""
-echo "To launch AI-Coder:"
-echo ""
-echo "  cd \"$SCRIPTS_DIR\""
-echo "  ./ai-coder"
-echo ""
-echo "To create the 'ai' shell alias (run once):"
-echo "  ./ai-coder --setup-path"
-if [ "$IS_GITBASH" = "true" ]; then
-    echo "  source ~/.bash_profile"
-elif [ "$IS_WSL" = "true" ]; then
-    echo "  source ~/.bashrc"
+
+if [ -n "$INSTALL_DIR" ]; then
+    echo "To launch AI-Coder:"
+    echo ""
+    echo "  cd \"$INSTALL_DIR\""
+    echo "  ./ai-coder"
+    echo ""
+    echo "To create the 'ai' shell alias (run once):"
+    echo "  ./ai-coder --setup-path"
+    if [ "$IS_GITBASH" = "true" ]; then
+        echo "  source ~/.bash_profile"
+    else
+        echo "  source ~/.bashrc"
+    fi
 else
-    echo "  source ~/.bashrc"
+    echo "Scripts were not copied. You can run directly from:"
+    echo "  cd \"$SCRIPTS_DIR\""
+    echo "  ./ai-coder"
 fi
 echo ""
-echo "Note: No internet connection is required to run ai-coder after unbundling."
+echo "Note: No internet connection is required to run ai-coder."
