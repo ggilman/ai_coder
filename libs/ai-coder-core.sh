@@ -21,6 +21,7 @@ HUB_NETWORK="ai-engineering-net"
 HUB_ISOLATED_NET="ai-engineering-isolated"
 NETWORK_INTERNAL=false
 NEEDS_LITELLM_PROXY=false
+BUILD_ONLY=false
 WORKBENCH_PREFIX="coder"
 LITELLM_IMAGE="ghcr.io/berriai/litellm:main-latest"
 LLAMA_IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
@@ -711,6 +712,7 @@ Commands:
   --rebuild          Remove the workbench image to force a full rebuild
   --menu             Reset tool preference and show menu
   --gpu-mode         Reset GPU mode preference (single vs multi-GPU)
+  --build-only       Build the workbench image then exit (no Hub or agent launch)
   --help             Show this message
 HELP
             exit 0
@@ -744,6 +746,9 @@ HELP
             echo "alias $ALIAS_NAME='$(realpath "$0")'" >> "$rc_file"
             echo -e "${ICON_OK} Alias '${ALIAS_NAME}' added to $rc_file. Run: source $rc_file"
             exit 0
+            ;;
+        --build-only)
+            BUILD_ONLY=true
             ;;
         spawn|"")
             ;;
