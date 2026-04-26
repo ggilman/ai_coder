@@ -3,4 +3,5 @@ test_*
 .vs/
 .vscode/
 ai_coder.zip
+bundle/
 
