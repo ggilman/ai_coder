@@ -56,9 +56,8 @@ export MSYS_NO_PATHCONV=1
 PROJECT_ID=$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
 WORKSPACE_DIR=$(basename "$PWD" | tr ' ' '_')
 
-# Visuals & Colors
-readonly NC='\033[0m'; readonly BOLD='\033[1m'; readonly GREEN='\033[0;32m'; readonly RED='\033[0;31m'; readonly CYAN='\033[0;36m'; readonly YELLOW='\033[1;33m'
-readonly ICON_OK=" ${GREEN}✔${NC} "; readonly ICON_GEAR=" ${CYAN}⚙${NC} "; readonly ICON_WAIT=" ${CYAN}◈${NC} "
+# Graphics (colors & icons)
+source "$SCRIPT_DIR/ai-coder-graphics.sh"
 
 IS_WSL=$(grep -qi Microsoft /proc/version 2>/dev/null && echo "true" || echo "false")
 IS_GITBASH=$(expr "$(uname -s)" : '.*MINGW.*' >/dev/null 2>&1 && echo "true" || echo "false")

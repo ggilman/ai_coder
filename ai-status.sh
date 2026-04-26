@@ -6,10 +6,9 @@
 # ==============================================================================
 set -euo pipefail
 
-# --- [ COLOR PALETTE ] --------------------------------------------------------
-readonly NC='\033[0m'; readonly BOLD='\033[1m'; readonly DIM='\033[2m'
-readonly RED='\033[0;31m'; readonly GREEN='\033[0;32m'; readonly YELLOW='\033[1;33m'
-readonly CYAN='\033[0;36m'; readonly BG_BLUE='\033[44m'; readonly WHITE='\033[1;37m'
+# --- [ GRAPHICS ] -------------------------------------------------------------
+SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
+source "$SCRIPT_DIR/libs/ai-coder-graphics.sh"
 
 # --- [ CONFIGURATION ] --------------------------------------------------------
 readonly BAR_WIDTH=35
