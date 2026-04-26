@@ -15,8 +15,8 @@
 # ==============================================================================
 set -euo pipefail
 
-SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+OFFLINE_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
+PROJECT_ROOT="$(dirname "$OFFLINE_DIR")"
 BUNDLE_DIR="${BUNDLE_DIR:-$PROJECT_ROOT/bundle}"
 BUNDLE_IMAGES_DIR="$BUNDLE_DIR/images"
 BUNDLE_MODELS_DIR="$BUNDLE_DIR/models"
@@ -155,7 +155,7 @@ bundle_date=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 MANIFEST
 
 # --- [ Embed unbundle script ] ------------------------------------------------
-cp "$SCRIPT_DIR/unbundle.sh" "$BUNDLE_DIR/unbundle.sh"
+cp "$OFFLINE_DIR/unbundle.sh" "$BUNDLE_DIR/unbundle.sh"
 chmod +x "$BUNDLE_DIR/unbundle.sh"
 
 # Cleanup temp Dockerfile artifacts
