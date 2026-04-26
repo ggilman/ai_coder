@@ -26,19 +26,19 @@ configure_workbench() {
   "permission": {
     "write": "deny"
   },
-  "model": "local/gemma-local",
+  "model": "local/hub-model",
   "provider": {
     "local": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "Local Gemma (llama.cpp)",
+      "name": "Local $MODEL_FAMILY (llama.cpp)",
       "options": {
         "baseURL": "http://$GLOBAL_ENGINE_NAME:8080/v1",
         "apiKey": "sk-local-bypass"
       },
       "models": {
-        "gemma-local": {
-          "name": "Gemma 4 Local",
-          "contextLength": 65536
+        "hub-model": {
+          "name": "$MODEL_FAMILY Local",
+          "contextLength": $MODEL_CTX_SIZE
         }
       }
     }

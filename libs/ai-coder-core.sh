@@ -24,31 +24,7 @@ NEEDS_LITELLM_PROXY=false
 WORKBENCH_PREFIX="coder"
 LITELLM_IMAGE="ghcr.io/berriai/litellm:main-latest"
 LLAMA_IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
-STRICT_GEMMA_ONLY="true"
-
-# Verified Gemma 4 GGUF direct downloads
-GEMMA_8GB_FILE="${GEMMA_8GB_FILE:-gemma-4-E2B-it-Q4_K_M.gguf}"
-GEMMA_8GB_URL="${GEMMA_8GB_URL:-https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf}"
-GEMMA_12GB_FILE="${GEMMA_12GB_FILE:-gemma-4-E4B-it-Q8_0.gguf}"
-GEMMA_12GB_URL="${GEMMA_12GB_URL:-https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q8_0.gguf}"
-GEMMA_16GB_FILE="${GEMMA_16GB_FILE:-gemma-4-26B-A4B-it-UD-IQ4_XS.gguf}"
-GEMMA_16GB_URL="${GEMMA_16GB_URL:-https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-IQ4_XS.gguf}"
-GEMMA_24GB_FILE="${GEMMA_24GB_FILE:-google_gemma-4-26B-A4B-it-Q5_K_M.gguf}"
-GEMMA_24GB_URL="${GEMMA_24GB_URL:-https://huggingface.co/bartowski/google_gemma-4-26B-A4B-it-GGUF/resolve/main/google_gemma-4-26B-A4B-it-Q5_K_M.gguf}"
-GEMMA_32GB_FILE="${GEMMA_32GB_FILE:-gemma-4-31B-it-Q5_K_M.gguf}"
-GEMMA_32GB_URL="${GEMMA_32GB_URL:-https://huggingface.co/unsloth/gemma-4-31B-it-GGUF/resolve/main/gemma-4-31B-it-Q5_K_M.gguf}"
-
 DOWNLOAD_PROXY="${DOWNLOAD_PROXY:-}"
-
-# VRAM tier cutoffs
-TIER_8GB_MIN="${TIER_8GB_MIN:-8}"
-TIER_12GB_MIN="${TIER_12GB_MIN:-11}"
-TIER_16GB_MIN="${TIER_16GB_MIN:-15}"
-TIER_24GB_MIN="${TIER_24GB_MIN:-23}"
-TIER_32GB_MIN="${TIER_32GB_MIN:-31}"
-
-MAX_SLOTS=1             
-CTX_PER_SLOT=65536      
 BASE_IMAGE="node:20-bullseye-slim"
 
 # --- [ ENVIRONMENT & SHELL ] --------------------------------------------------
@@ -58,6 +34,9 @@ WORKSPACE_DIR=$(basename "$PWD" | tr ' ' '_')
 
 # Graphics (colors & icons)
 source "$SCRIPT_DIR/ai-coder-graphics.sh"
+
+# Model family configuration
+source "$SCRIPT_DIR/ai-coder-model.conf"
 
 IS_WSL=$(grep -qi Microsoft /proc/version 2>/dev/null && echo "true" || echo "false")
 IS_GITBASH=$(expr "$(uname -s)" : '.*MINGW.*' >/dev/null 2>&1 && echo "true" || echo "false")
@@ -260,11 +239,11 @@ check_docker() {
 # Sets MODEL_FILE and MODEL_TIER based on the supplied VRAM amount in GB.
 select_model_for_vram() {
     local vram="${1:-0}"
-    if   [ "$vram" -ge "$TIER_32GB_MIN" ]; then MODEL_FILE="$GEMMA_32GB_FILE"; MODEL_TIER="32GB-tier"
-    elif [ "$vram" -ge "$TIER_24GB_MIN" ]; then MODEL_FILE="$GEMMA_24GB_FILE"; MODEL_TIER="24GB-tier"
-    elif [ "$vram" -ge "$TIER_16GB_MIN" ]; then MODEL_FILE="$GEMMA_16GB_FILE"; MODEL_TIER="16GB-tier"
-    elif [ "$vram" -ge "$TIER_12GB_MIN" ]; then MODEL_FILE="$GEMMA_12GB_FILE"; MODEL_TIER="12GB-tier"
-    else                                          MODEL_FILE="$GEMMA_8GB_FILE";  MODEL_TIER="8GB-tier"
+    if   [ "$vram" -ge "$MODEL_TIER_32GB_MIN" ]; then MODEL_FILE="$MODEL_32GB_FILE"; MODEL_TIER="32GB-tier"
+    elif [ "$vram" -ge "$MODEL_TIER_24GB_MIN" ]; then MODEL_FILE="$MODEL_24GB_FILE"; MODEL_TIER="24GB-tier"
+    elif [ "$vram" -ge "$MODEL_TIER_16GB_MIN" ]; then MODEL_FILE="$MODEL_16GB_FILE"; MODEL_TIER="16GB-tier"
+    elif [ "$vram" -ge "$MODEL_TIER_12GB_MIN" ]; then MODEL_FILE="$MODEL_12GB_FILE"; MODEL_TIER="12GB-tier"
+    else                                               MODEL_FILE="$MODEL_8GB_FILE";  MODEL_TIER="8GB-tier"
     fi
 }
 
@@ -311,11 +290,11 @@ download_model() {
     fi
 
     case "$MODEL_FILE" in
-        "$GEMMA_32GB_FILE") model_url="$GEMMA_32GB_URL"; model_hint="Gemma-4 31B Q5_K_M (32GB tier)" ;;
-        "$GEMMA_24GB_FILE") model_url="$GEMMA_24GB_URL"; model_hint="Gemma-4 26B A4B Q5_K_M (24GB tier)" ;;
-        "$GEMMA_16GB_FILE") model_url="$GEMMA_16GB_URL"; model_hint="Gemma-4 26B A4B UD-IQ4_XS (16GB tier)" ;;
-        "$GEMMA_12GB_FILE") model_url="$GEMMA_12GB_URL"; model_hint="Gemma-4 E4B Q8_0 (12GB tier)" ;;
-        "$GEMMA_8GB_FILE")  model_url="$GEMMA_8GB_URL";  model_hint="Gemma-4 E2B Q4_K_M (8GB tier)" ;;
+        "$MODEL_32GB_FILE") model_url="$MODEL_32GB_URL"; model_hint="$MODEL_32GB_DESC" ;;
+        "$MODEL_24GB_FILE") model_url="$MODEL_24GB_URL"; model_hint="$MODEL_24GB_DESC" ;;
+        "$MODEL_16GB_FILE") model_url="$MODEL_16GB_URL"; model_hint="$MODEL_16GB_DESC" ;;
+        "$MODEL_12GB_FILE") model_url="$MODEL_12GB_URL"; model_hint="$MODEL_12GB_DESC" ;;
+        "$MODEL_8GB_FILE")  model_url="$MODEL_8GB_URL";  model_hint="$MODEL_8GB_DESC" ;;
         *) echo -e "${RED}✘ Unsupported target model: $MODEL_FILE${NC}"; return 1 ;;
     esac
 
@@ -396,16 +375,16 @@ detect_model() {
     fi
     
     echo -e "${YELLOW}⚠ Target model not found: $MODEL_FILE${NC}"
-    echo -e "${CYAN}Scanning for available Gemma GGUF models...${NC}"
-    local found_model; found_model=$(find "$MODEL_STORAGE_DIR" -maxdepth 1 -type f -name "*.gguf" 2>/dev/null | grep -Ei 'gemma' | head -1)
+    echo -e "${CYAN}Scanning for available ${MODEL_FAMILY} GGUF models...${NC}"
+    local found_model; found_model=$(find "$MODEL_STORAGE_DIR" -maxdepth 1 -type f -name "*.gguf" 2>/dev/null | grep -Ei "$MODEL_FILE_PATTERN" | head -1)
     if [ -n "$found_model" ]; then
         MODEL_FILE=$(basename "$found_model")
         echo -e "${GREEN}✔ Using available model: ${CYAN}${MODEL_FILE}${NC}"
         return 0
     fi
     
-    if [ "$STRICT_GEMMA_ONLY" = "true" ]; then
-        echo -e "${RED}✘ No Gemma models found in $MODEL_STORAGE_DIR${NC}"; return 1
+    if [ "$MODEL_STRICT_FAMILY" = "true" ]; then
+        echo -e "${RED}✘ No ${MODEL_FAMILY} models found in $MODEL_STORAGE_DIR${NC}"; return 1
     fi
     return 1
 }
@@ -556,7 +535,7 @@ start_hub_engine() {
         -v "$(to_host_path "$MODEL_STORAGE_DIR"):/models" \
         "$LLAMA_IMAGE" \
         -m "/models/$MODEL_FILE" --host 0.0.0.0 --port 8080 \
-        --parallel "$MAX_SLOTS" -ngl 99 -c "$CTX_PER_SLOT" --flash-attn on \
+        --parallel "$MODEL_MAX_SLOTS" -ngl 99 -c "$MODEL_CTX_SIZE" --flash-attn on \
         -ctk q8_0 -ctv q8_0 \
         --repeat-penalty 1.1 --repeat-last-n 128
     if [ $? -ne 0 ]; then echo -e "${RED}✘ Failed to start engine container${NC}"; return 1; fi
