@@ -468,7 +468,6 @@ ENV http_proxy=\${PROXY_URL} https_proxy=\${PROXY_URL} HTTP_PROXY=\${PROXY_URL} 
     no_proxy=localhost,127.0.0.1 NO_PROXY=localhost,127.0.0.1
 ${pm_proxy_cmds}
 ${install_cmds}
-WORKDIR /workspace
 DOCKERFILE
 
     docker build -t "$IMAGE_NAME" "${proxy_args[@]}" \
