@@ -122,11 +122,8 @@ GIT_IDENTITY_FILE="$HOME/.ai-coder-gitconfig"
 # Load or prompt for git user identity, then store it for future runs.
 # Sets GIT_USER_EMAIL and GIT_USER_NAME in the calling environment.
 ensure_git_identity() {
-    local git_email="" git_name=""
-    if [ -f "$GIT_IDENTITY_FILE" ]; then
-        git_email=$(grep '^email=' "$GIT_IDENTITY_FILE" 2>/dev/null | cut -d= -f2-)
-        git_name=$(grep  '^name='  "$GIT_IDENTITY_FILE" 2>/dev/null | cut -d= -f2-)
-    fi
+    local git_email; git_email=$(read_pref "$GIT_IDENTITY_FILE" email)
+    local git_name;  git_name=$(read_pref  "$GIT_IDENTITY_FILE" name)
     [ -z "$git_email" ] && git_email=$(git config --global user.email 2>/dev/null || true)
     [ -z "$git_name"  ] && git_name=$(git config  --global user.name  2>/dev/null || true)
     GIT_USER_EMAIL="${git_email:-}"
