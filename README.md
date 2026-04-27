@@ -36,7 +36,7 @@ The environment uses a **Hub & Spoke** model:
 Use this script to monitor the health of your environment.
 - **Check GPU status**: Monitor utilization and VRAM.
 - **Verify AI services**: Ensure `ai-hub-engine` and `ai-hub-proxy` are running.
-- **Container status**: View active Docker containers.
+- **Network status**: Shows whether containers are running in isolated or standard network mode.
 
 **Usage:**
 ```bash
@@ -59,7 +59,7 @@ A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run
 | `spawn` | (or no argument) Launch the AI tool inside the active workbench container |
 | `--menu` | Reset model family **and** tool preferences; show both selection menus |
 | `--status` | Show the real-time GPU and engine status dashboard |
-| `--setup` | Create a shell alias (`ai`) and configure the proxy setting |
+| `--setup` | Register shell alias, configure proxy, and set network isolation preference |
 | `--clean` | Stop and remove all Hub and Spoke containers |
 | `--rebuild` | Remove the workbench image to force a full rebuild on next run |
 | `--build-only` | Build the workbench image then exit (no Hub or agent launch) |
