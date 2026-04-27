@@ -157,6 +157,9 @@ apply_git_identity() {
     local cur_name;  cur_name=$(git  -C "$(pwd)" config --local user.name  2>/dev/null || true)
     [ -z "$cur_email" ] && [ -n "${GIT_USER_EMAIL:-}" ] && git -C "$(pwd)" config --local user.email "$GIT_USER_EMAIL"
     [ -z "$cur_name"  ] && [ -n "${GIT_USER_NAME:-}"  ] && git -C "$(pwd)" config --local user.name  "$GIT_USER_NAME"
+    # Normalize CRLF→LF on checkout inside the container (Windows host mounts files with CRLF).
+    # 'input' strips CR on add but never introduces CR on checkout — safe for all platforms.
+    git -C "$(pwd)" config --local core.autocrlf input 2>/dev/null || true
     [ -n "${GIT_USER_NAME:-}" ] && echo -e "${ICON_OK} Git identity: ${CYAN}${GIT_USER_NAME} <${GIT_USER_EMAIL}>${NC}"
 }
 

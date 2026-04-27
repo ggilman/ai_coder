@@ -22,8 +22,14 @@ RUN /opt/aider/bin/aider --version"
 configure_workbench() {
     mkdir -p "$HOME/.aider-config"
     # Only write gitconfig if we have identity — avoids baking in blank name/email
+    # Always write gitconfig — sets global autocrlf=input even without identity.
+    # Guards on name/email to avoid writing blank values.
+    cat > "$HOME/.aider-config/.gitconfig" <<EOF
+[core]
+    autocrlf = input
+EOF
     if [ -n "${GIT_USER_NAME:-}" ] || [ -n "${GIT_USER_EMAIL:-}" ]; then
-        cat > "$HOME/.aider-config/.gitconfig" <<EOF
+        cat >> "$HOME/.aider-config/.gitconfig" <<EOF
 [user]
     name = ${GIT_USER_NAME:-}
     email = ${GIT_USER_EMAIL:-}
