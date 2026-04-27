@@ -6,6 +6,8 @@ set -euo pipefail
 
 ALIAS_NAME="ai"
 PREF_FILE="$HOME/.ai-coder-pref"
+FAMILY_PREF_FILE="$HOME/.ai-coder-family"
+FAMILIES_DIR="$(dirname "$(realpath "$0")")/config/families"
 
 # Load Core Library
 CORE_SCRIPT="$(dirname "$(realpath "$0")")/libs/ai-coder-core.sh"
@@ -26,7 +28,7 @@ Commands:
   --setup-path       Create shell alias for this script
   --clean            Stop and remove all containers
   --rebuild          Remove the workbench image to force a full rebuild
-  --menu             Reset tool preference and show menu
+  --menu             Reset model family and tool preferences, show selection menus
   --gpu-mode         Reset GPU mode preference (single vs multi-GPU)  --build-only       Build the workbench image then exit (no Hub or agent launch)  --help             Show this message
 HELP
     exit 0
@@ -63,6 +65,39 @@ if [[ "${1:-}" == "--setup-path" ]]; then
 fi
 
 # --- [ PREFERENCE MANAGEMENT ] ------------------------------------------------
+
+show_family_menu() {
+    local pairs=()
+    for f in "$FAMILIES_DIR"/*.conf; do
+        [ -f "$f" ] || continue
+        local name; name=$(grep -m1 '^MODEL_FAMILY=' "$f" | sed 's/^MODEL_FAMILY=//;s/"//g;s/\${[^:]*:-//;s/}//')
+        [ -n "$name" ] || continue
+        local key; key=$(basename "$f" .conf)
+        pairs+=("$name:$key")
+    done
+    IFS=$'\n' pairs=($(printf '%s\n' "${pairs[@]}" | sort)); unset IFS
+
+    while true; do
+        echo -e "\n${CYAN}Please select your preferred model family:${NC}"
+        local i=1
+        for pair in "${pairs[@]}"; do
+            echo "  $i) ${pair%%:*}"
+            (( i++ ))
+        done
+        echo "  q) Quit"
+        echo -n "Selection: "
+        read -r choice
+        if [[ "$choice" == "q" ]]; then exit 0; fi
+        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#pairs[@]} )); then
+            local key="${pairs[$((choice-1))]#*:}"
+            local name="${pairs[$((choice-1))]%%:*}"
+            echo "$key" > "$FAMILY_PREF_FILE"
+            echo -e "${ICON_OK} ${name} selected."
+            return
+        fi
+        echo -e "${RED}Invalid selection.${NC}"
+    done
+}
 
 show_menu() {
     local agents_dir
@@ -102,13 +137,30 @@ show_menu() {
 
 # --- [ MAIN ENTRY ] -----------------------------------------------------------
 
-# Handle --menu flag
+# Handle --menu flag: clears both family and tool preferences so both menus
+# are shown again on the next step of this run.
 if [[ "${1:-}" == "--menu" ]]; then
-    show_menu
-    shift # remove --menu from arguments
+    rm -f "$FAMILY_PREF_FILE" "$PREF_FILE"
+    shift
 fi
 
-# Handle first-run or missing preference
+# --- [ FAMILY SELECTION ] ----------------------------------------------------
+# Show the family menu on first run or after --menu clears the preference.
+if [ ! -f "$FAMILY_PREF_FILE" ] || [ -z "$(cat "$FAMILY_PREF_FILE" 2>/dev/null)" ]; then
+    show_family_menu
+fi
+
+FAMILY_PREF=$(cat "$FAMILY_PREF_FILE")
+FAMILY_CONF="$FAMILIES_DIR/${FAMILY_PREF}.conf"
+if [ ! -f "$FAMILY_CONF" ]; then
+    echo -e "${RED}Error: Unknown model family '${FAMILY_PREF}'. Run with --menu to reselect.${NC}"
+    rm -f "$FAMILY_PREF_FILE"
+    exit 1
+fi
+source "$FAMILY_CONF"
+
+# --- [ TOOL SELECTION ] ------------------------------------------------------
+# Show the tool menu on first run or after --menu clears the preference.
 if [ ! -f "$PREF_FILE" ] || [ -z "$(cat "$PREF_FILE")" ]; then
     show_menu
 fi

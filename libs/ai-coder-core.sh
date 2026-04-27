@@ -36,8 +36,10 @@ WORKSPACE_DIR=$(basename "$PWD" | tr ' ' '_')
 # Graphics (colors & icons)
 source "$SCRIPT_DIR/ai-coder-graphics.sh"
 
-# Model family configuration
-source "$SCRIPT_DIR/ai-coder-model.conf"
+# Model framework configuration — family-specific conf is sourced by ai-coder
+# after the user's family preference is resolved.
+CONFIG_DIR="$(dirname "$SCRIPT_DIR")/config"
+source "$CONFIG_DIR/ai-coder-model.conf"
 
 IS_WSL=$(grep -qi Microsoft /proc/version 2>/dev/null && echo "true" || echo "false")
 IS_GITBASH=$(expr "$(uname -s)" : '.*MINGW.*' >/dev/null 2>&1 && echo "true" || echo "false")
@@ -357,10 +359,12 @@ download_model() {
         _await_download $! "$model_path" || { echo -e "${RED}✘ Download failed${NC}"; return 1; }
     elif [ -n "${DOWNLOAD_PROXY:-}" ] && [ -n "$win_curl" ]; then
         local win_path; win_path=$(wslpath -w "$model_path")
-        "$win_curl" -L --proxy "$DOWNLOAD_PROXY" --ssl-no-revoke --no-progress-meter --show-error -o "$win_path" "$model_url" &
+        local http_proxy_win; http_proxy_win=$(echo "$DOWNLOAD_PROXY" | sed 's|^https://|http://|')
+        "$win_curl" -L --proxy "$http_proxy_win" --ssl-no-revoke --no-progress-meter --show-error -o "$win_path" "$model_url" &
         _await_download $! "$model_path" || { echo -e "${RED}✘ Download failed${NC}"; return 1; }
     elif [ -n "${DOWNLOAD_PROXY:-}" ] && command -v curl >/dev/null 2>&1; then
-        curl -L --proxy "$DOWNLOAD_PROXY" --progress-bar --show-error -o "$model_path" "$model_url" || {
+        local http_proxy_curl; http_proxy_curl=$(echo "$DOWNLOAD_PROXY" | sed 's|^https://|http://|')
+        curl -L --proxy "$http_proxy_curl" --progress-bar --show-error -o "$model_path" "$model_url" || {
             echo -e "${RED}✘ Download failed${NC}"; return 1
         }
     elif [ -n "$win_curl" ]; then

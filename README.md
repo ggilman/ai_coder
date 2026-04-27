@@ -16,6 +16,9 @@ The environment uses a **Hub & Spoke** model:
 | `ai-coder` | Unified launcher — entry point for all AI coding tools |
 | `libs/ai-coder-core.sh` | Shared infrastructure library (sourced by `ai-coder`) |
 | `libs/ai-coder-graphics.sh` | Shared ANSI color and icon palette (sourced by core and status) |
+| `config/ai-coder-model.conf` | Model framework config — GPU mode, inference settings, VRAM tier thresholds |
+| `config/families/gemma4.conf` | Gemma 4 family config — model names, download URLs, display labels per tier |
+| `config/families/qwen3.conf` | Qwen3 family config — model names, download URLs, display labels per tier |
 | `agents/ai-coder-claude.sh` | Claude Code overrides (sourced automatically when Claude is selected) |
 | `agents/ai-coder-opencode.sh` | OpenCode overrides (sourced automatically when OpenCode is selected) |
 | `agents/ai-coder-aider.sh` | Aider overrides (sourced automatically when Aider is selected) |
@@ -118,6 +121,7 @@ echo "htop" >> packages/apt-common.txt
 | Aider | Git identity, aider config, input history | `~/.aider-config/` (directory) |
 | Gemini CLI | Auth tokens, session state, settings | `~/.gemini-config/` (directory) |
 | ai-coder | Saved tool preference | `~/.ai-coder-pref` |
+| ai-coder | Saved model family preference | `~/.ai-coder-family` |
 | ai-coder | GPU mode preference (single/multi) | `~/.ai-coder-gpuconf` |
 | ai-coder | Git identity (name + email) | `~/.ai-coder-gitconfig` |
 
