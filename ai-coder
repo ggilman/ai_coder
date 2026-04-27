@@ -27,6 +27,7 @@ Commands:
   spawn              Execute command in active workbench
   --status           Show GPU and engine status dashboard
   --setup            First-time and re-configuration wizard (alias, proxy, isolation, GPU, git)
+  --fix-project      Fix line endings in the current project for AI editing (run from project folder)
   --clean            Stop and remove all containers
   --rebuild          Remove all workbench images to force a full rebuild on next run
   --menu             Reset model family and tool preferences, show selection menus
@@ -42,6 +43,53 @@ fi
 
 if [[ "${1:-}" == "--clean" ]]; then
     teardown
+    exit 0
+fi
+
+if [[ "${1:-}" == "--fix-project" ]]; then
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo -e "${RED}✘ Not inside a git repository. Run this from your project folder.${NC}"
+        exit 1
+    fi
+
+    _proj_root=$(git rev-parse --show-toplevel)
+    _ga="$_proj_root/.gitattributes"
+    _ec="$_proj_root/.editorconfig"
+
+    echo -e "\n${CYAN}◈ Fixing project: ${BOLD}$_proj_root${NC}\n"
+
+    # .gitattributes — add eol=lf catch-all if not already present
+    if grep -q 'eol=lf' "$_ga" 2>/dev/null; then
+        echo -e "${DIM}  .gitattributes already has eol=lf — skipping.${NC}"
+    else
+        if [ -f "$_ga" ]; then
+            printf '\n# Normalize all text files to LF (added by ai-coder --fix-project)\n* text=auto eol=lf\n' >> "$_ga"
+            echo -e "${ICON_OK} Appended LF normalization rule to .gitattributes"
+        else
+            printf '# Normalize all text files to LF\n* text=auto eol=lf\n\n*.png  binary\n*.jpg  binary\n*.jpeg binary\n*.gif  binary\n*.gz   binary\n*.zip  binary\n' > "$_ga"
+            echo -e "${ICON_OK} Created .gitattributes with LF normalization rules"
+        fi
+    fi
+
+    # .editorconfig — create if absent
+    if [ -f "$_ec" ]; then
+        echo -e "${DIM}  .editorconfig already exists — skipping.${NC}"
+    else
+        printf 'root = true\n\n[*]\nend_of_line = lf\ncharset = utf-8\ntrim_trailing_whitespace = true\ninsert_final_newline = true\n\n[*.md]\ntrim_trailing_whitespace = false\n' > "$_ec"
+        echo -e "${ICON_OK} Created .editorconfig (lf, utf-8)"
+    fi
+
+    # Set autocrlf=input locally so git strips CR on add
+    git -C "$_proj_root" config --local core.autocrlf input
+    echo -e "${ICON_OK} Set core.autocrlf=input in .git/config"
+
+    # Renormalize all tracked files to LF
+    echo -e "${CYAN}◈ Renormalizing tracked files (this may take a moment)...${NC}"
+    git -C "$_proj_root" add --renormalize . 2>/dev/null && \
+        echo -e "${ICON_OK} All tracked files normalized to LF" || \
+        echo -e "${YELLOW}⚠ Renormalize had warnings — check git status${NC}"
+
+    echo -e "\n${ICON_OK} Done. Commit the changes to lock them in:\n  ${CYAN}git commit -m 'chore: normalize line endings to LF'${NC}\n"
     exit 0
 fi
 
