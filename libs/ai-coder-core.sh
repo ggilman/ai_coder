@@ -553,9 +553,15 @@ run_workbench() {
     [ "${NETWORK_INTERNAL:-false}" = "true" ] && wb_network="$HUB_ISOLATED_NET"
     local no_proxy_hosts="localhost,127.0.0.1,$GLOBAL_ENGINE_NAME"
     [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ] && no_proxy_hosts="$no_proxy_hosts,$GLOBAL_PROXY_NAME"
+    # When isolated, don't inject proxy env vars — the container has no internet
+    # access anyway, and proxy settings can interfere with internal container
+    # communication if no_proxy isn't perfectly honoured by every client.
+    local _wb_http_proxy="${DOWNLOAD_PROXY:-}"
+    [ "${NETWORK_INTERNAL:-false}" = "true" ] && _wb_http_proxy=""
     docker run -d --name "$WORKBENCH" --network "$wb_network" --privileged \
-        -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
-        -e "no_proxy=$no_proxy_hosts" \
+        -e "http_proxy=${_wb_http_proxy}" -e "https_proxy=${_wb_http_proxy}" \
+        -e "HTTP_PROXY=${_wb_http_proxy}" -e "HTTPS_PROXY=${_wb_http_proxy}" \
+        -e "no_proxy=$no_proxy_hosts" -e "NO_PROXY=$no_proxy_hosts" \
         -v "$(to_host_path "$(pwd)"):/$WORKSPACE_DIR" \
         --workdir "/$WORKSPACE_DIR" \
         "${extra_flags[@]}" \
