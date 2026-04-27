@@ -51,7 +51,8 @@ A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run
 - **Tool selection**: On first run, also prompts for your preferred coding tool (Claude, OpenCode, Aider, Gemini). Saved to `~/.ai-coder-pref`.
 - **Workspace mount**: Your project folder is mounted into the container as `/<foldername>` (e.g. `/my-project`), so the AI tool starts directly in your project directory.
 - **Auto-cleanup**: When you exit the tool, the workbench container is stopped. If it was the last active spoke, the Hub (engine + proxy) is also shut down automatically.
-- **Agent-free commands**: `--help`, `--status`, `--clean`, and `--setup` run immediately without requiring a tool to be selected.
+- **Agent-free commands**: `--help`, `--status`, `--clean`, `--rebuild`, `--menu`, and `--setup` run immediately without requiring a tool to be selected.
+- **Setup required**: `--setup` must be run at least once before launching. This ensures all preferences are configured intentionally.
 
 **Commands:**
 | Command | Description |
@@ -59,11 +60,11 @@ A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run
 | `spawn` | (or no argument) Launch the AI tool inside the active workbench container |
 | `--menu` | Reset model family **and** tool preferences; show both selection menus |
 | `--status` | Show the real-time GPU and engine status dashboard |
-| `--setup` | Register shell alias, configure proxy, and set network isolation preference |
+| `--setup` | First-time and re-configuration wizard: alias, proxy, network isolation, GPU mode |
 | `--clean` | Stop and remove all Hub and Spoke containers |
 | `--rebuild` | Remove the workbench image to force a full rebuild on next run |
 | `--build-only` | Build the workbench image then exit (no Hub or agent launch) |
-| `--gpu-mode` | Reset GPU mode preference and be prompted again on next run |
+| `--gpu-mode` | Clear GPU mode preference; run `--setup` to reconfigure |
 | `--help` | Show help information |
 
 **Usage:**
@@ -128,30 +129,35 @@ echo "htop" >> packages/apt-common.txt
 | ai-coder | GPU mode preference (single/multi) | `~/.ai-coder-gpuconf` |
 | ai-coder | Saved proxy URL | `~/.ai-coder-proxy` |
 | ai-coder | Network isolation preference | `~/.ai-coder-netconfig` |
+| ai-coder | Setup completion sentinel | `~/.ai-coder-setup` |
 | ai-coder | Git identity (name + email) | `~/.ai-coder-gitconfig` |
 
 All paths are volume-mounted into the workbench container, so settings survive container restarts without rebuilding the image. The `~/.claude-config.json` file is pre-created with `{}` on first launch if it does not already exist.
 
 ## Setup
 
-### Shell Alias, Proxy & Network Isolation
+### Setup (`--setup`)
 
-Run `--setup` once after installation. It registers the `ai` shell alias, prompts for a proxy URL, asks whether to enable network isolation, and (if multiple GPUs are detected) asks which GPU mode to use:
+**`--setup` must be run once before first launch.** It walks through four configuration steps:
 
 ```bash
 ./ai-coder --setup
-# → adds alias to ~/.bash_profile / ~/.bashrc / ~/.zshrc
-# → prompts: Proxy URL: http://proxy.corp.com:8080
-# → prompts: Isolate containers? [y/N]
-# → prompts: Use all GPUs? [Y/n]   (only shown when 2+ GPUs are present)
-# then: source ~/.bash_profile   # or ~/.bashrc
 ```
 
-**Proxy**: The URL is saved to `~/.ai-coder-proxy` and automatically applied on every subsequent run for downloading GGUF model files, pulling Docker images, and passing proxy settings into workbench containers at build time. Leave blank for no proxy.
+1. **Shell alias** — optionally adds an `ai` shortcut to your rc file. Skip if you prefer to manage your PATH yourself. Any previously added alias is removed if you decline.
+2. **Proxy** — enter an HTTP proxy URL (saved to `~/.ai-coder-proxy`), or leave blank for none.
+3. **Network isolation** — optionally block all internet access from containers (`~/.ai-coder-netconfig`).
+4. **GPU mode** — only shown when 2+ GPUs are detected; choose multi (all GPUs) or single (`~/.ai-coder-gpuconf`).
 
-**Network isolation**: When enabled, all containers (engine, proxy, workbench) are placed on a Docker `--internal` network with no internet access. Proxy env vars are also stripped from the workbench in this mode to avoid interference. Setting saved to `~/.ai-coder-netconfig`.
+After completing setup, if you added the alias:
 
-To change either setting, run `--setup` again.
+```bash
+source ~/.bash_profile   # Git Bash
+# or
+source ~/.bashrc         # WSL / Linux
+```
+
+To change any setting, run `--setup` again.
 
 ## Offline / Air-Gapped Deployment
 
