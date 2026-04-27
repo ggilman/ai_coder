@@ -31,6 +31,8 @@ Commands:
   --rebuild          Remove the workbench image to force a full rebuild
   --menu             Reset model family and tool preferences, show selection menus
   --gpu-mode         Reset GPU mode preference (single vs multi-GPU)
+  --proxy <url>      Save a proxy URL for model downloads and image pulls
+  --proxy-clear      Remove the saved proxy setting
   --build-only       Build the workbench image then exit (no Hub or agent launch)
   --help             Show this message
 HELP
@@ -49,6 +51,24 @@ fi
 if [[ "${1:-}" == "--gpu-mode" ]]; then
     rm -f "$HOME/.ai-coder-gpuconf"
     echo -e "${CYAN}◈ GPU mode preference cleared. It will be prompted on next run.${NC}"
+    exit 0
+fi
+
+if [[ "${1:-}" == "--proxy" ]]; then
+    if [ -z "${2:-}" ]; then
+        echo -e "${RED}✘ Usage: $(basename "$0") --proxy <url>${NC}"
+        echo -e "${CYAN}  Example: $(basename "$0") --proxy http://proxy.corp.com:8080${NC}"
+        exit 1
+    fi
+    echo "${2}" > "$HOME/.ai-coder-proxy"
+    echo -e "${ICON_OK} Proxy saved: ${CYAN}${2}${NC}"
+    echo -e "${DIM}  Stored in ~/.ai-coder-proxy. Override per-session with: export DOWNLOAD_PROXY=...${NC}"
+    exit 0
+fi
+
+if [[ "${1:-}" == "--proxy-clear" ]]; then
+    rm -f "$HOME/.ai-coder-proxy"
+    echo -e "${ICON_OK} Proxy setting cleared."
     exit 0
 fi
 

@@ -63,6 +63,8 @@ A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run
 | `--clean` | Stop and remove all Hub and Spoke containers |
 | `--rebuild` | Remove the workbench image to force a full rebuild on next run |
 | `--build-only` | Build the workbench image then exit (no Hub or agent launch) |
+| `--proxy <url>` | Save a proxy URL for model downloads and image pulls |
+| `--proxy-clear` | Remove the saved proxy setting |
 | `--gpu-mode` | Reset GPU mode preference and be prompted again on next run |
 | `--help` | Show help information |
 
@@ -130,6 +132,7 @@ echo "htop" >> packages/apt-common.txt
 | ai-coder | Saved tool preference | `~/.ai-coder-pref` |
 | ai-coder | Saved model family preference | `~/.ai-coder-family` |
 | ai-coder | GPU mode preference (single/multi) | `~/.ai-coder-gpuconf` |
+| ai-coder | Saved proxy URL | `~/.ai-coder-proxy` |
 | ai-coder | Git identity (name + email) | `~/.ai-coder-gitconfig` |
 
 All paths are volume-mounted into the workbench container, so settings survive container restarts without rebuilding the image. The `~/.claude-config.json` file is pre-created with `{}` on first launch if it does not already exist.
@@ -138,24 +141,32 @@ All paths are volume-mounted into the workbench container, so settings survive c
 
 ### Corporate / Proxy Networks
 
-If your machine routes traffic through an HTTP proxy, set the `DOWNLOAD_PROXY` environment variable before running any script. It is used for:
+If your machine routes traffic through an HTTP proxy, set it once with the built-in flag:
+
+```bash
+./ai-coder --proxy http://proxy.corp.com:8080
+```
+
+The URL is saved to `~/.ai-coder-proxy` and automatically applied on every subsequent run for:
 - Downloading GGUF model files
 - Pulling Docker images
 - Passing proxy settings into workbench containers at build time
 
-**Git Bash** (`~/.bash_profile`):
+To remove the saved proxy:
+
 ```bash
-export DOWNLOAD_PROXY="http://proxy.corp.com:8080"
+./ai-coder --proxy-clear
 ```
 
-**WSL / Linux** (`~/.bashrc`):
+To override for a single session without changing the saved value, set the environment variable directly:
+
 ```bash
-export DOWNLOAD_PROXY="http://proxy.corp.com:8080"
+DOWNLOAD_PROXY=http://other-proxy:3128 ./ai-coder
 ```
 
-Then reload your shell (`source ~/.bash_profile` or `source ~/.bashrc`) or open a new terminal.
+The precedence is: **environment variable** > **saved `~/.ai-coder-proxy`** > **no proxy**.
 
-If you are on a network without a proxy, leave `DOWNLOAD_PROXY` unset (the default).
+If you are on a network without a proxy, leave both unset (the default).
 
 ## Offline / Air-Gapped Deployment
 

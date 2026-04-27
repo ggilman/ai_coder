@@ -26,6 +26,11 @@ WORKBENCH_PREFIX="coder"
 LITELLM_IMAGE="ghcr.io/berriai/litellm:main-latest"
 LLAMA_IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
 DOWNLOAD_PROXY="${DOWNLOAD_PROXY:-}"
+# If DOWNLOAD_PROXY was not set in the environment, fall back to the saved preference file.
+PROXY_PREF_FILE="$HOME/.ai-coder-proxy"
+if [ -z "$DOWNLOAD_PROXY" ] && [ -f "$PROXY_PREF_FILE" ]; then
+    DOWNLOAD_PROXY=$(cat "$PROXY_PREF_FILE" 2>/dev/null || true)
+fi
 BASE_IMAGE="node:20-bullseye-slim"
 
 # --- [ ENVIRONMENT & SHELL ] --------------------------------------------------
@@ -716,6 +721,8 @@ Commands:
   --rebuild          Remove the workbench image to force a full rebuild
   --menu             Reset tool preference and show menu
   --gpu-mode         Reset GPU mode preference (single vs multi-GPU)
+  --proxy <url>      Save a proxy URL for model downloads and image pulls
+  --proxy-clear      Remove the saved proxy setting
   --build-only       Build the workbench image then exit (no Hub or agent launch)
   --help             Show this message
 HELP
@@ -753,6 +760,20 @@ HELP
             ;;
         --build-only)
             BUILD_ONLY=true
+            ;;
+        --proxy)
+            if [ -z "${2:-}" ]; then
+                echo -e "${RED}✘ Usage: $(basename "$0") --proxy <url>${NC}"
+                exit 1
+            fi
+            echo "${2}" > "$HOME/.ai-coder-proxy"
+            echo -e "${ICON_OK} Proxy saved: ${CYAN}${2}${NC}"
+            exit 0
+            ;;
+        --proxy-clear)
+            rm -f "$HOME/.ai-coder-proxy"
+            echo -e "${ICON_OK} Proxy setting cleared."
+            exit 0
             ;;
         spawn|"")
             ;;
