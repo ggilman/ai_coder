@@ -138,6 +138,9 @@ if [[ "${1:-}" == "--setup" ]]; then
                 ;;
         esac
     fi
+
+    touch "$HOME/.ai-coder-setup"
+    echo -e "\n${ICON_OK} Setup complete."
     exit 0
 fi
 
@@ -213,6 +216,16 @@ show_menu() {
 }
 
 # --- [ MAIN ENTRY ] -----------------------------------------------------------
+
+# Guard: require --setup to have been run at least once before launching.
+# Commands that operate independently of a configured environment are exempt.
+_exempted_cmd="${1:-}"
+if [[ "$_exempted_cmd" != "--menu" && "$_exempted_cmd" != "--rebuild" ]] && \
+   [ ! -f "$HOME/.ai-coder-setup" ]; then
+    echo -e "${YELLOW}◈ First-time setup required. Run:${NC}"
+    echo -e "  ${CYAN}$(realpath "$0") --setup${NC}"
+    exit 1
+fi
 
 # Handle --menu flag: clears both family and tool preferences so both menus
 # are shown again on the next step of this run.
