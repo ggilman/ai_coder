@@ -26,9 +26,9 @@ Usage: $(basename "$0") [COMMAND]
 Commands:
   spawn              Execute command in active workbench
   --status           Show GPU and engine status dashboard
-  --setup            Create shell alias and configure proxy settings
+  --setup            First-time and re-configuration wizard (alias, proxy, isolation, GPU, git)
   --clean            Stop and remove all containers
-  --rebuild          Remove the workbench image to force a full rebuild
+  --rebuild          Remove all workbench images to force a full rebuild on next run
   --menu             Reset model family and tool preferences, show selection menus
   --build-only       Build the workbench image then exit (no Hub or agent launch)
   --help             Show this message
@@ -42,6 +42,27 @@ fi
 
 if [[ "${1:-}" == "--clean" ]]; then
     teardown
+    exit 0
+fi
+
+if [[ "${1:-}" == "--rebuild" ]]; then
+    agents_dir="$(dirname "$(realpath "$0")")/agents"
+    _removed=0
+    for f in "$agents_dir"/ai-coder-*.sh; do
+        [ -f "$f" ] || continue
+        _img=$(grep -m1 '^IMAGE_NAME=' "$f" | cut -d'"' -f2)
+        [ -z "$_img" ] && continue
+        if docker image inspect "$_img" >/dev/null 2>&1; then
+            echo -e "${CYAN}◈ Removing [$_img]...${NC}"
+            docker rmi "$_img" 2>/dev/null && \
+                echo -e "${GREEN}✔ Removed${NC}" || \
+                echo -e "${YELLOW}  Could not remove — container may be running${NC}"
+            _removed=$((_removed + 1))
+        fi
+    done
+    [ "$_removed" -eq 0 ] && \
+        echo -e "${DIM}  No workbench images found — nothing to remove.${NC}" || \
+        echo -e "${ICON_OK} Workbench images cleared. They will be rebuilt on next run."
     exit 0
 fi
 
@@ -132,6 +153,29 @@ if [[ "${1:-}" == "--setup" ]]; then
         esac
     fi
 
+    echo -e "\n${CYAN}Git identity for commits inside containers:${NC}"
+    _cur_git_email=""
+    _cur_git_name=""
+    if [ -f "$HOME/.ai-coder-gitconfig" ]; then
+        _cur_git_email=$(grep '^email=' "$HOME/.ai-coder-gitconfig" 2>/dev/null | cut -d= -f2- || true)
+        _cur_git_name=$(grep '^name=' "$HOME/.ai-coder-gitconfig" 2>/dev/null | cut -d= -f2- || true)
+    fi
+    [ -z "$_cur_git_email" ] && _cur_git_email=$(git config --global user.email 2>/dev/null || true)
+    [ -z "$_cur_git_name" ]  && _cur_git_name=$(git config --global user.name 2>/dev/null || true)
+    [ -n "$_cur_git_email" ] && echo -e "${DIM}  Current: ${_cur_git_name} <${_cur_git_email}>${NC}"
+    echo -n "  Email (leave blank to keep): "
+    read -r _git_email_input
+    echo -n "  Name  (leave blank to keep): "
+    read -r _git_name_input
+    _final_git_email="${_git_email_input:-$_cur_git_email}"
+    _final_git_name="${_git_name_input:-$_cur_git_name}"
+    if [ -n "$_final_git_email" ] || [ -n "$_final_git_name" ]; then
+        printf 'email=%s\nname=%s\n' "$_final_git_email" "$_final_git_name" > "$HOME/.ai-coder-gitconfig"
+        echo -e "${ICON_OK} Git identity saved."
+    else
+        echo -e "${DIM}  No git identity set — commits will use container defaults.${NC}"
+    fi
+
     touch "$HOME/.ai-coder-setup"
     echo -e "\n${ICON_OK} Setup complete."
     exit 0
@@ -211,10 +255,7 @@ show_menu() {
 # --- [ MAIN ENTRY ] -----------------------------------------------------------
 
 # Guard: require --setup to have been run at least once before launching.
-# Commands that operate independently of a configured environment are exempt.
-_exempted_cmd="${1:-}"
-if [[ "$_exempted_cmd" != "--menu" && "$_exempted_cmd" != "--rebuild" ]] && \
-   [ ! -f "$HOME/.ai-coder-setup" ]; then
+if [ ! -f "$HOME/.ai-coder-setup" ]; then
     echo -e "${YELLOW}◈ First-time setup required. Run:${NC}"
     echo -e "  ${CYAN}$(realpath "$0") --setup${NC}"
     exit 1
