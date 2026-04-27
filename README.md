@@ -60,9 +60,10 @@ A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run
 | `spawn` | (or no argument) Launch the AI tool inside the active workbench container |
 | `--menu` | Reset model family **and** tool preferences; show both selection menus |
 | `--status` | Show the real-time GPU and engine status dashboard |
-| `--setup` | First-time and re-configuration wizard: alias, proxy, network isolation, GPU mode |
+| `--setup` | First-time and re-configuration wizard: alias, proxy, network isolation, GPU mode, git identity |
+| `--fix-project` | Normalize line endings in the current project folder for AI editing (run once per project) |
 | `--clean` | Stop and remove all Hub and Spoke containers |
-| `--rebuild` | Remove the workbench image to force a full rebuild on next run |
+| `--rebuild` | Remove all workbench images to force a full rebuild on next run |
 | `--build-only` | Build the workbench image then exit (no Hub or agent launch) |
 | `--help` | Show help information |
 
@@ -133,7 +134,7 @@ All paths are volume-mounted into the workbench container, so settings survive c
 
 ### Setup (`--setup`)
 
-**`--setup` must be run once before first launch.** It walks through four configuration steps:
+**`--setup` must be run once before first launch.** It walks through five configuration steps:
 
 ```bash
 ./ai-coder --setup
@@ -143,6 +144,7 @@ All paths are volume-mounted into the workbench container, so settings survive c
 2. **Proxy** — enter an HTTP proxy URL (saved to `~/.ai-coder-proxy`), or leave blank for none.
 3. **Network isolation** — optionally block all internet access from containers (`~/.ai-coder-netconfig`).
 4. **GPU mode** — only shown when 2+ GPUs are detected; choose multi (all GPUs) or single (`~/.ai-coder-gpuconf`).
+5. **Git identity** — name and email used for commits made inside the container (`~/.ai-coder-gitconfig`). Falls back to your host global git config if already set.
 
 After completing setup, if you added the alias:
 
@@ -198,6 +200,13 @@ No internet connection is required on the target machine.
 - **Connectivity Issues**: Ensure `DOWNLOAD_PROXY` is set correctly. The scripts use `nslookup` to resolve proxy hostnames to IPs so Docker build containers can reach the proxy.
 - **Shell Compatibility**: The scripts support both **WSL2** and **Git Bash** on Windows.
 - **Packages changed but image not rebuilt**: Run `./ai-coder --rebuild` then `./ai-coder`.
+- **Claude Code "Error editing file"**: Caused by CRLF line endings in project files on Windows. Fix with:
+  ```bash
+  cd /your/project
+  ai --fix-project
+  git commit -m "chore: normalize line endings to LF"
+  ```
+  This adds `.gitattributes` (`eol=lf`), `.editorconfig`, and normalizes all tracked files in one step.
 
 ---
 
