@@ -30,7 +30,6 @@ Commands:
   --clean            Stop and remove all containers
   --rebuild          Remove the workbench image to force a full rebuild
   --menu             Reset model family and tool preferences, show selection menus
-  --gpu-mode         Reset GPU mode preference (single vs multi-GPU)
   --build-only       Build the workbench image then exit (no Hub or agent launch)
   --help             Show this message
 HELP
@@ -43,12 +42,6 @@ fi
 
 if [[ "${1:-}" == "--clean" ]]; then
     teardown
-    exit 0
-fi
-
-if [[ "${1:-}" == "--gpu-mode" ]]; then
-    rm -f "$HOME/.ai-coder-gpuconf"
-    echo -e "${CYAN}◈ GPU mode preference cleared. Run ${NC}${BOLD}./ai-coder --setup${NC}${CYAN} to reconfigure.${NC}"
     exit 0
 fi
 

@@ -688,7 +688,6 @@ Commands:
   --clean            Stop and remove all containers
   --rebuild          Remove the workbench image to force a full rebuild
   --menu             Reset tool preference and show menu
-  --gpu-mode         Reset GPU mode preference (single vs multi-GPU)
   --build-only       Build the workbench image then exit (no Hub or agent launch)
   --help             Show this message
 HELP

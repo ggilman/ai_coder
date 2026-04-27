@@ -64,7 +64,6 @@ A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run
 | `--clean` | Stop and remove all Hub and Spoke containers |
 | `--rebuild` | Remove the workbench image to force a full rebuild on next run |
 | `--build-only` | Build the workbench image then exit (no Hub or agent launch) |
-| `--gpu-mode` | Clear GPU mode preference; run `--setup` to reconfigure |
 | `--help` | Show help information |
 
 **Usage:**
@@ -83,11 +82,7 @@ When two or more NVIDIA GPUs are present, `--setup` will ask whether to use all 
 | **multi** (default) | All GPUs exposed to the engine container. `--tensor-split` is set automatically using each card's VRAM as proportional weights, so both compute *and* VRAM are distributed across GPUs. |
 | **single** | Only GPU 0 is exposed (`--gpus device=0`). VRAM tier selection is also scoped to GPU 0 so the right model size is chosen. Useful when secondary GPUs are used for display output or other workloads. |
 
-The choice is saved to `~/.ai-coder-gpuconf`. To change it, run `./ai-coder --setup` again, or clear and reset with:
-
-```bash
-./ai-coder --gpu-mode   # clears saved preference; run --setup to reconfigure
-```
+The choice is saved to `~/.ai-coder-gpuconf`. To change it, run `./ai-coder --setup` again.
 
 You can also override the preference for a single session without changing the saved value:
 
