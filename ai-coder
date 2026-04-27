@@ -60,10 +60,22 @@ if [[ "${1:-}" == "--setup" ]]; then
     elif [ "$SHELL" != "${SHELL%zsh}" ]; then
         rc_file="$HOME/.zshrc"
     fi
+
+    echo -e "\n${CYAN}Shell alias — add '${ALIAS_NAME}' shortcut to $rc_file?${NC}"
+    echo -e "${DIM}  Skip if you prefer to add ai-coder to your PATH manually.${NC}"
+    echo -n "  Add alias? [Y/n]: "
+    read -r _alias_input
     touch "$rc_file"
     sed -i.bak "/alias $ALIAS_NAME=/d" "$rc_file"
-    echo "alias $ALIAS_NAME='$(realpath "$0")'" >> "$rc_file"
-    echo -e "${ICON_OK} Alias '${ALIAS_NAME}' added to $rc_file. Run: ${CYAN}source $rc_file${NC}"
+    case "${_alias_input,,}" in
+        n|no)
+            echo -e "${DIM}  Alias not added. Any previous alias has been removed from $rc_file.${NC}"
+            ;;
+        *)
+            echo "alias $ALIAS_NAME='$(realpath "$0")'" >> "$rc_file"
+            echo -e "${ICON_OK} Alias '${ALIAS_NAME}' added to $rc_file. Run: ${CYAN}source $rc_file${NC}"
+            ;;
+    esac
 
     echo -e "\n${CYAN}Proxy configuration (leave blank for none / to clear existing):${NC}"
     if [ -f "$HOME/.ai-coder-proxy" ]; then
