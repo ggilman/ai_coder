@@ -145,25 +145,11 @@ ensure_git_identity() {
 # Load or prompt for network isolation preference, then store it for future runs.
 # Sets NETWORK_INTERNAL in the calling environment.
 ensure_network_config() {
-    local isolated_net=""
-    local network_config_file="$(pwd)/.ai-coder/netconfig"
-
-    # Load from persisted file
+    local isolated_net="no"
+    local network_config_file="$HOME/.ai-coder-netconfig"
     if [ -f "$network_config_file" ]; then
-        isolated_net=$(grep '^isolated=' "$network_config_file" 2>/dev/null | cut -d= -f2-)
+        isolated_net=$(grep '^isolated=' "$network_config_file" 2>/dev/null | cut -d= -f2- || echo "no")
     fi
-
-    # Prompt if not yet set
-    if [ -z "$isolated_net" ]; then
-        echo -ne "${CYAN}◈ Internal network only — block all internet access from containers? [y/N]: ${NC}"
-        read -r _ans
-        case "${_ans,,}" in
-            y|yes) isolated_net="yes" ;;
-            *)     isolated_net="no"  ;;
-        esac
-        printf 'isolated=%s\n' "$isolated_net" > "$network_config_file"
-    fi
-
     [ "$isolated_net" = "yes" ] && NETWORK_INTERNAL=true || true
 }
 

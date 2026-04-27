@@ -79,6 +79,29 @@ if [[ "${1:-}" == "--setup" ]]; then
         rm -f "$HOME/.ai-coder-proxy"
         echo -e "${DIM}  No proxy set.${NC}"
     fi
+
+    echo -e "\n${CYAN}Network isolation — block all internet access from containers?${NC}"
+    echo -e "${DIM}  (Recommended for regulated environments. Leave blank to keep current setting.)${NC}"
+    _cur_iso="no"
+    if [ -f "$HOME/.ai-coder-netconfig" ]; then
+        _cur_iso=$(grep '^isolated=' "$HOME/.ai-coder-netconfig" 2>/dev/null | cut -d= -f2- || echo "no")
+    fi
+    echo -e "${DIM}  Current: ${_cur_iso}${NC}"
+    echo -n "  Isolate containers? [y/N]: "
+    read -r _iso_input
+    case "${_iso_input,,}" in
+        y|yes)
+            printf 'isolated=yes\n' > "$HOME/.ai-coder-netconfig"
+            echo -e "${ICON_OK} Network isolation ${GREEN}enabled${NC}."
+            ;;
+        n|no)
+            printf 'isolated=no\n' > "$HOME/.ai-coder-netconfig"
+            echo -e "${DIM}  Network isolation disabled.${NC}"
+            ;;
+        *)
+            echo -e "${DIM}  Network isolation unchanged (${_cur_iso}).${NC}"
+            ;;
+    esac
     exit 0
 fi
 

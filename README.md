@@ -131,39 +131,30 @@ echo "htop" >> packages/apt-common.txt
 | ai-coder | Saved model family preference | `~/.ai-coder-family` |
 | ai-coder | GPU mode preference (single/multi) | `~/.ai-coder-gpuconf` |
 | ai-coder | Saved proxy URL | `~/.ai-coder-proxy` |
+| ai-coder | Network isolation preference | `~/.ai-coder-netconfig` |
 | ai-coder | Git identity (name + email) | `~/.ai-coder-gitconfig` |
 
 All paths are volume-mounted into the workbench container, so settings survive container restarts without rebuilding the image. The `~/.claude-config.json` file is pre-created with `{}` on first launch if it does not already exist.
 
 ## Setup
 
-### Shell Alias & Proxy Configuration
+### Shell Alias, Proxy & Network Isolation
 
-Run `--setup` once after installation. It registers the `ai` shell alias and prompts for a proxy URL (or leaves it blank for none):
+Run `--setup` once after installation. It registers the `ai` shell alias, prompts for a proxy URL, and asks whether to enable network isolation for containers:
 
 ```bash
 ./ai-coder --setup
 # → adds alias to ~/.bash_profile / ~/.bashrc / ~/.zshrc
 # → prompts: Proxy URL: http://proxy.corp.com:8080
+# → prompts: Isolate containers? [y/N]
 # then: source ~/.bash_profile   # or ~/.bashrc
 ```
 
-The proxy URL is saved to `~/.ai-coder-proxy` and automatically applied on every subsequent run for:
-- Downloading GGUF model files
-- Pulling Docker images
-- Passing proxy settings into workbench containers at build time
+**Proxy**: The URL is saved to `~/.ai-coder-proxy` and automatically applied on every subsequent run for downloading GGUF model files, pulling Docker images, and passing proxy settings into workbench containers at build time. Leave blank for no proxy.
 
-To change or clear the proxy, run `--setup` again and leave the prompt blank to remove it.
+**Network isolation**: When enabled, all containers (engine, proxy, workbench) are placed on a Docker `--internal` network with no internet access. Proxy env vars are also stripped from the workbench in this mode to avoid interference. Setting saved to `~/.ai-coder-netconfig`.
 
-To override for a single session without changing the saved value:
-
-```bash
-DOWNLOAD_PROXY=http://other-proxy:3128 ./ai-coder
-```
-
-The precedence is: **environment variable** > **saved `~/.ai-coder-proxy`** > **no proxy**.
-
-If you are on a network without a proxy, leave the prompt blank (the default).
+To change either setting, run `--setup` again.
 
 ## Offline / Air-Gapped Deployment
 
