@@ -202,4 +202,7 @@ No internet connection is required on the target machine.
 - **Shell Compatibility**: The scripts support both **WSL2** and **Git Bash** on Windows.
 - **Packages changed but image not rebuilt**: Run `./ai-coder --rebuild` then `./ai-coder`.
 
+---
+
+Maintained by George Gilman — ggilman@gmail.com
 

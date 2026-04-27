@@ -1,6 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # AI-CODER | Unified Launcher for Claude & OpenCode
+# Author: George Gilman <ggilman@gmail.com>
 # ==============================================================================
 set -euo pipefail
 
