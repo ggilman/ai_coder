@@ -603,7 +603,12 @@ start_hub_engine() {
         fi
     fi
 
-    docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$HUB_NETWORK" --gpus "$_gpus_flag" --restart on-failure:3 \
+    # When isolation is active, start Hub containers directly on the isolated
+    # network so they have no internet access. Otherwise use the standard hub network.
+    local _hub_net="$HUB_NETWORK"
+    [ "${NETWORK_INTERNAL:-false}" = "true" ] && _hub_net="$HUB_ISOLATED_NET"
+
+    docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$_hub_net" --gpus "$_gpus_flag" --restart on-failure:3 \
         -v "$(to_host_path "$MODEL_STORAGE_DIR"):/models" \
         "$LLAMA_IMAGE" \
         -m "/models/$MODEL_FILE" --host 0.0.0.0 --port 8080 \
@@ -620,24 +625,13 @@ start_hub_engine() {
         cat > "$HOME/.ai-coder/litellm_config.yaml" <<EOF
 $config_content
 EOF
-        docker run -d --name "$GLOBAL_PROXY_NAME" --network "$HUB_NETWORK" -p 4000:4000 --restart always \
+        docker run -d --name "$GLOBAL_PROXY_NAME" --network "$_hub_net" -p 4000:4000 --restart always \
             -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
             -e "no_proxy=localhost,127.0.0.1,$GLOBAL_ENGINE_NAME" \
             -v "$(to_host_path "$HOME/.ai-coder/litellm_config.yaml"):/app/config.yaml:ro" \
             "$LITELLM_IMAGE" --config /app/config.yaml || {
             echo -e "${RED}✘ Failed to start proxy container${NC}"; return 1
         }
-    fi
-
-    # When isolation is active, bridge the engine (and proxy if running) onto
-    # the isolated network so workbench containers can reach them.
-    if [ "${NETWORK_INTERNAL:-false}" = "true" ]; then
-        docker network connect "$HUB_ISOLATED_NET" "$GLOBAL_ENGINE_NAME" || \
-            { echo -e "${RED}✘ Failed to connect engine to isolated network${NC}"; return 1; }
-        if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
-            docker network connect "$HUB_ISOLATED_NET" "$GLOBAL_PROXY_NAME" || \
-                { echo -e "${RED}✘ Failed to connect proxy to isolated network${NC}"; return 1; }
-        fi
     fi
 }
 
