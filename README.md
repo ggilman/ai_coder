@@ -204,5 +204,5 @@ No internet connection is required on the target machine.
 
 ---
 
-Maintained by George Gilman — ggilman@gmail.com
+Licensed under the [MIT License](LICENSE). &copy; 2026 George Gilman — ggilman@gmail.com
 
