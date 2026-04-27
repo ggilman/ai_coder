@@ -1,10 +1,14 @@
-# Force LF line endings for shell scripts so they run correctly from WSL and Git Bash.
-# Without this, git on Windows converts LF→CRLF and bash errors with
-# "syntax error near unexpected token" on every line with a subshell.
-*.sh        text eol=lf
-*.conf      text eol=lf
-*.txt       text eol=lf
-ai-coder    text eol=lf
-ai-coder-*  text eol=lf
-ai-status   text eol=lf
-.gitignore  text eol=lf
+# Normalize all text files to LF. Prevents CRLF in containers causing bash
+# "syntax error near unexpected token" and Claude Code "Error editing file".
+* text=auto eol=lf
+
+# Explicitly binary — never touch line endings
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.gz   binary
+*.tar  binary
+*.zip  binary
+*.gguf binary
