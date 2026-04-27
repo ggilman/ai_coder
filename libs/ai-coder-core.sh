@@ -88,7 +88,12 @@ read_package_list() {
 # Read a key=value entry from a preference file. Returns the value, or $default if missing.
 read_pref() {
     local file="$1" key="$2" default="${3:-}"
-    [ -f "$file" ] && grep "^${key}=" "$file" 2>/dev/null | cut -d= -f2- || echo "$default"
+    if [ -f "$file" ]; then
+        local val; val=$(grep "^${key}=" "$file" 2>/dev/null | cut -d= -f2-)
+        [ -n "$val" ] && echo "$val" || echo "$default"
+    else
+        echo "$default"
+    fi
 }
 
 # Resolve proxy hostname to IP so Docker build containers can reach it.
@@ -626,10 +631,12 @@ stop_hub() {
 
 teardown() {
     echo -e "${CYAN}Tearing down Hub & Project Spokes...${NC}"
-    docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" \
-        $(docker ps -q --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
-    docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" \
-        $(docker ps -aq --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
+    local _running; _running=$(docker ps -q  --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null || true)
+    local _all;     _all=$(docker ps -aq --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null || true)
+    # shellcheck disable=SC2086
+    docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" $( [ -n "$_running" ] && echo "$_running") 2>/dev/null || true
+    # shellcheck disable=SC2086
+    docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" $( [ -n "$_all" ]     && echo "$_all")     2>/dev/null || true
     docker network rm "$HUB_NETWORK" "$HUB_ISOLATED_NET" 2>/dev/null || true
 }
 

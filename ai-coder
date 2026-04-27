@@ -108,10 +108,7 @@ if [[ "${1:-}" == "--setup" ]]; then
 
     echo -e "\n${CYAN}Network isolation — block all internet access from containers?${NC}"
     echo -e "${DIM}  (Recommended for regulated environments. Leave blank to keep current setting.)${NC}"
-    _cur_iso="no"
-    if [ -f "$HOME/.ai-coder-netconfig" ]; then
-        _cur_iso=$(grep '^isolated=' "$HOME/.ai-coder-netconfig" 2>/dev/null | cut -d= -f2- || echo "no")
-    fi
+    _cur_iso=$(read_pref "$HOME/.ai-coder-netconfig" isolated no)
     echo -e "${DIM}  Current: ${_cur_iso}${NC}"
     echo -n "  Isolate containers? [y/N]: "
     read -r _iso_input
@@ -134,10 +131,7 @@ if [[ "${1:-}" == "--setup" ]]; then
     _gpu_count=$($SMI --query-gpu=name --format=csv,noheader,nounits 2>/dev/null | grep -c '.' || echo 1)
     if [ "${_gpu_count:-1}" -gt 1 ]; then
         echo -e "\n${CYAN}GPU mode — ${_gpu_count} GPUs detected. Use all for inference?${NC}"
-        _cur_gpu="multi"
-        if [ -f "$HOME/.ai-coder-gpuconf" ]; then
-            _cur_gpu=$(grep '^gpu_mode=' "$HOME/.ai-coder-gpuconf" 2>/dev/null | cut -d= -f2- || echo "multi")
-        fi
+        _cur_gpu=$(read_pref "$HOME/.ai-coder-gpuconf" gpu_mode multi)
         echo -e "${DIM}  Current: ${_cur_gpu}${NC}"
         echo -n "  Use all GPUs? [Y/n]: "
         read -r _gpu_input
@@ -154,12 +148,8 @@ if [[ "${1:-}" == "--setup" ]]; then
     fi
 
     echo -e "\n${CYAN}Git identity for commits inside containers:${NC}"
-    _cur_git_email=""
-    _cur_git_name=""
-    if [ -f "$HOME/.ai-coder-gitconfig" ]; then
-        _cur_git_email=$(grep '^email=' "$HOME/.ai-coder-gitconfig" 2>/dev/null | cut -d= -f2- || true)
-        _cur_git_name=$(grep '^name=' "$HOME/.ai-coder-gitconfig" 2>/dev/null | cut -d= -f2- || true)
-    fi
+    _cur_git_email=$(read_pref "$HOME/.ai-coder-gitconfig" email)
+    _cur_git_name=$(read_pref "$HOME/.ai-coder-gitconfig" name)
     [ -z "$_cur_git_email" ] && _cur_git_email=$(git config --global user.email 2>/dev/null || true)
     [ -z "$_cur_git_name" ]  && _cur_git_name=$(git config --global user.name 2>/dev/null || true)
     [ -n "$_cur_git_email" ] && echo -e "${DIM}  Current: ${_cur_git_name} <${_cur_git_email}>${NC}"

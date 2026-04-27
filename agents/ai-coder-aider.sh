@@ -21,12 +21,14 @@ RUN /opt/aider/bin/aider --version"
 
 configure_workbench() {
     mkdir -p "$HOME/.aider-config"
-    # Always write gitconfig so the container has git identity via GIT_CONFIG_GLOBAL
-    cat > "$HOME/.aider-config/.gitconfig" <<EOF
+    # Only write gitconfig if we have identity — avoids baking in blank name/email
+    if [ -n "${GIT_USER_NAME:-}" ] || [ -n "${GIT_USER_EMAIL:-}" ]; then
+        cat > "$HOME/.aider-config/.gitconfig" <<EOF
 [user]
-    name = $GIT_USER_NAME
-    email = $GIT_USER_EMAIL
+    name = ${GIT_USER_NAME:-}
+    email = ${GIT_USER_EMAIL:-}
 EOF
+    fi
     # Always write the aider config so the API base URL stays current.
     # User customisations (model, flags) can be made in the file after first run
     # but the connection settings must match the current infrastructure.
