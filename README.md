@@ -75,21 +75,17 @@ ai [COMMAND]
 
 ## Multi-GPU Support
 
-When two or more NVIDIA GPUs are present, `ai-coder` detects them on first run and asks whether to use all cards for inference:
-
-```
-◈ 2 GPUs detected. Use all GPUs for inference? [Y/n]:
-```
+When two or more NVIDIA GPUs are present, `--setup` will ask whether to use all cards for inference. Single-GPU machines skip this question automatically.
 
 | Mode | Behaviour |
 | --- | --- |
 | **multi** (default) | All GPUs exposed to the engine container. `--tensor-split` is set automatically using each card's VRAM as proportional weights, so both compute *and* VRAM are distributed across GPUs. |
 | **single** | Only GPU 0 is exposed (`--gpus device=0`). VRAM tier selection is also scoped to GPU 0 so the right model size is chosen. Useful when secondary GPUs are used for display output or other workloads. |
 
-The choice is saved to `~/.ai-coder-gpuconf`. To change it later:
+The choice is saved to `~/.ai-coder-gpuconf`. To change it, run `./ai-coder --setup` again, or clear and reset with:
 
 ```bash
-./ai-coder --gpu-mode   # clears saved preference; re-prompts on next run
+./ai-coder --gpu-mode   # clears saved preference; run --setup to reconfigure
 ```
 
 You can also override the preference for a single session without changing the saved value:
@@ -140,13 +136,14 @@ All paths are volume-mounted into the workbench container, so settings survive c
 
 ### Shell Alias, Proxy & Network Isolation
 
-Run `--setup` once after installation. It registers the `ai` shell alias, prompts for a proxy URL, and asks whether to enable network isolation for containers:
+Run `--setup` once after installation. It registers the `ai` shell alias, prompts for a proxy URL, asks whether to enable network isolation, and (if multiple GPUs are detected) asks which GPU mode to use:
 
 ```bash
 ./ai-coder --setup
 # → adds alias to ~/.bash_profile / ~/.bashrc / ~/.zshrc
 # → prompts: Proxy URL: http://proxy.corp.com:8080
 # → prompts: Isolate containers? [y/N]
+# → prompts: Use all GPUs? [Y/n]   (only shown when 2+ GPUs are present)
 # then: source ~/.bash_profile   # or ~/.bashrc
 ```
 

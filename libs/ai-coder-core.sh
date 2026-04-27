@@ -158,28 +158,10 @@ ensure_network_config() {
 # Silently skips the prompt when only one GPU is present.
 ensure_gpu_config() {
     local gpu_conf_file="$HOME/.ai-coder-gpuconf"
-    local stored_mode=""
-
+    local stored_mode="single"
     if [ -f "$gpu_conf_file" ]; then
-        stored_mode=$(grep '^gpu_mode=' "$gpu_conf_file" 2>/dev/null | cut -d= -f2-)
+        stored_mode=$(grep '^gpu_mode=' "$gpu_conf_file" 2>/dev/null | cut -d= -f2- || echo "single")
     fi
-
-    if [ -z "$stored_mode" ]; then
-        local gpu_count=1
-        gpu_count=$($SMI --query-gpu=name --format=csv,noheader,nounits 2>/dev/null | grep -c '.' || echo 1)
-        if [ "${gpu_count:-1}" -gt 1 ]; then
-            echo -e "${CYAN}◈ ${gpu_count} GPUs detected. Use all GPUs for inference? [Y/n]: ${NC}"
-            read -r _ans
-            case "${_ans,,}" in
-                n|no) stored_mode="single" ;;
-                *)    stored_mode="multi"  ;;
-            esac
-        else
-            stored_mode="single"
-        fi
-        printf 'gpu_mode=%s\n' "$stored_mode" > "$gpu_conf_file"
-    fi
-
     GPU_MODE="$stored_mode"
 }
 

@@ -48,7 +48,7 @@ fi
 
 if [[ "${1:-}" == "--gpu-mode" ]]; then
     rm -f "$HOME/.ai-coder-gpuconf"
-    echo -e "${CYAN}◈ GPU mode preference cleared. It will be prompted on next run.${NC}"
+    echo -e "${CYAN}◈ GPU mode preference cleared. Run ${NC}${BOLD}./ai-coder --setup${NC}${CYAN} to reconfigure.${NC}"
     exit 0
 fi
 
@@ -102,6 +102,30 @@ if [[ "${1:-}" == "--setup" ]]; then
             echo -e "${DIM}  Network isolation unchanged (${_cur_iso}).${NC}"
             ;;
     esac
+
+    # GPU mode — only prompt if multiple GPUs are detected
+    _gpu_count=1
+    _gpu_count=$($SMI --query-gpu=name --format=csv,noheader,nounits 2>/dev/null | grep -c '.' || echo 1)
+    if [ "${_gpu_count:-1}" -gt 1 ]; then
+        echo -e "\n${CYAN}GPU mode — ${_gpu_count} GPUs detected. Use all for inference?${NC}"
+        _cur_gpu="multi"
+        if [ -f "$HOME/.ai-coder-gpuconf" ]; then
+            _cur_gpu=$(grep '^gpu_mode=' "$HOME/.ai-coder-gpuconf" 2>/dev/null | cut -d= -f2- || echo "multi")
+        fi
+        echo -e "${DIM}  Current: ${_cur_gpu}${NC}"
+        echo -n "  Use all GPUs? [Y/n]: "
+        read -r _gpu_input
+        case "${_gpu_input,,}" in
+            n|no)
+                printf 'gpu_mode=single\n' > "$HOME/.ai-coder-gpuconf"
+                echo -e "${DIM}  GPU mode set to single.${NC}"
+                ;;
+            *)
+                printf 'gpu_mode=multi\n' > "$HOME/.ai-coder-gpuconf"
+                echo -e "${ICON_OK} GPU mode set to ${GREEN}multi${NC}."
+                ;;
+        esac
+    fi
     exit 0
 fi
 
