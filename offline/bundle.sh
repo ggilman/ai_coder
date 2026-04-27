@@ -22,6 +22,7 @@ BUNDLE_IMAGES_DIR="$BUNDLE_DIR/images"
 BUNDLE_MODELS_DIR="$BUNDLE_DIR/models"
 BUNDLE_SCRIPTS_DIR="$BUNDLE_DIR/scripts"
 BUNDLE_WORK_DIR="$PROJECT_ROOT/.bundle-work"
+FAMILIES_DIR="$PROJECT_ROOT/config/families"
 
 # Load core library: colors, icons, SMI path, download helpers, image variables
 source "$PROJECT_ROOT/libs/ai-coder-core.sh"
@@ -32,6 +33,38 @@ echo -e "╚══════════════════════�
 echo -e "${DIM}Output: ${BUNDLE_DIR}${NC}\n"
 
 check_docker || exit 1
+
+# --- [ Family selection ] ----------------------------------------------------
+_bundle_family_pairs=()
+for _f in "$FAMILIES_DIR"/*.conf; do
+    [ -f "$_f" ] || continue
+    _fname=$(grep -m1 '^MODEL_FAMILY=' "$_f" | sed 's/^MODEL_FAMILY=//;s/"//g;s/\${[^:]*:-//;s/}//')
+    [ -n "$_fname" ] || continue
+    _fkey=$(basename "$_f" .conf)
+    _bundle_family_pairs+=("$_fname:$_fkey")
+done
+IFS=$'\n' _bundle_family_pairs=($(printf '%s\n' "${_bundle_family_pairs[@]}" | sort)); unset IFS
+
+if [ ${#_bundle_family_pairs[@]} -eq 0 ]; then
+    echo -e "${RED}✘ No family confs found in ${FAMILIES_DIR}${NC}"
+    exit 1
+fi
+
+echo -e "${CYAN}Select the model family to bundle:${NC}"
+_bfi=1
+for _pair in "${_bundle_family_pairs[@]}"; do
+    echo -e "  $_bfi)  ${_pair%%:*}"
+    (( _bfi++ ))
+done
+echo -ne "\nFamily [1-${#_bundle_family_pairs[@]}]: "
+read -r _family_sel
+if ! [[ "$_family_sel" =~ ^[0-9]+$ ]] || (( _family_sel < 1 || _family_sel > ${#_bundle_family_pairs[@]} )); then
+    echo -e "${RED}✘ Invalid selection.${NC}"; exit 1
+fi
+FAMILY_CONF_KEY="${_bundle_family_pairs[$((_family_sel-1))]#*:}"
+FAMILY_CONF_DISPLAY="${_bundle_family_pairs[$((_family_sel-1))]%%:*}"
+source "$FAMILIES_DIR/${FAMILY_CONF_KEY}.conf"
+echo -e "${ICON_OK} Family: ${CYAN}${FAMILY_CONF_DISPLAY}${NC}"
 
 # --- [ VRAM tier selection ] --------------------------------------------------
 echo -e "${CYAN}Select the VRAM tier model to include in the bundle:${NC}"
@@ -58,7 +91,7 @@ mkdir -p "$BUNDLE_IMAGES_DIR" "$BUNDLE_MODELS_DIR" "$BUNDLE_SCRIPTS_DIR" "$BUNDL
 
 # --- [ Copy project scripts ] -------------------------------------------------
 echo -e "${ICON_GEAR} Copying project scripts..."
-for _item in ai-coder ai-status.sh agents libs packages README.md; do
+for _item in ai-coder ai-status.sh agents libs config packages README.md; do
     [ -e "$PROJECT_ROOT/$_item" ] || continue
     cp -r "$PROJECT_ROOT/$_item" "$BUNDLE_SCRIPTS_DIR/"
 done
@@ -149,6 +182,7 @@ done
 
 # --- [ Write bundle manifest ] ------------------------------------------------
 cat > "$BUNDLE_DIR/bundle.manifest" <<MANIFEST
+model_family=${FAMILY_CONF_DISPLAY}
 model_file=${TARGET_MODEL_FILE}
 model_desc=${TARGET_MODEL_DESC}
 bundle_date=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
