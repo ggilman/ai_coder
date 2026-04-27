@@ -26,13 +26,11 @@ Usage: $(basename "$0") [COMMAND]
 Commands:
   spawn              Execute command in active workbench
   --status           Show GPU and engine status dashboard
-  --setup-path       Create shell alias for this script
+  --setup            Create shell alias and configure proxy settings
   --clean            Stop and remove all containers
   --rebuild          Remove the workbench image to force a full rebuild
   --menu             Reset model family and tool preferences, show selection menus
   --gpu-mode         Reset GPU mode preference (single vs multi-GPU)
-  --proxy <url>      Save a proxy URL for model downloads and image pulls
-  --proxy-clear      Remove the saved proxy setting
   --build-only       Build the workbench image then exit (no Hub or agent launch)
   --help             Show this message
 HELP
@@ -54,26 +52,8 @@ if [[ "${1:-}" == "--gpu-mode" ]]; then
     exit 0
 fi
 
-if [[ "${1:-}" == "--proxy" ]]; then
-    if [ -z "${2:-}" ]; then
-        echo -e "${RED}✘ Usage: $(basename "$0") --proxy <url>${NC}"
-        echo -e "${CYAN}  Example: $(basename "$0") --proxy http://proxy.corp.com:8080${NC}"
-        exit 1
-    fi
-    echo "${2}" > "$HOME/.ai-coder-proxy"
-    echo -e "${ICON_OK} Proxy saved: ${CYAN}${2}${NC}"
-    echo -e "${DIM}  Stored in ~/.ai-coder-proxy. Override per-session with: export DOWNLOAD_PROXY=...${NC}"
-    exit 0
-fi
-
-if [[ "${1:-}" == "--proxy-clear" ]]; then
-    rm -f "$HOME/.ai-coder-proxy"
-    echo -e "${ICON_OK} Proxy setting cleared."
-    exit 0
-fi
-
-# Handle --setup-path before preference check (no tool selection needed)
-if [[ "${1:-}" == "--setup-path" ]]; then
+# Handle --setup: alias registration + proxy configuration
+if [[ "${1:-}" == "--setup" ]]; then
     rc_file="$HOME/.bashrc"
     if [ "$IS_GITBASH" = "true" ]; then
         rc_file="$HOME/.bash_profile"
@@ -83,7 +63,22 @@ if [[ "${1:-}" == "--setup-path" ]]; then
     touch "$rc_file"
     sed -i.bak "/alias $ALIAS_NAME=/d" "$rc_file"
     echo "alias $ALIAS_NAME='$(realpath "$0")'" >> "$rc_file"
-    echo -e "${ICON_OK} Alias '${ALIAS_NAME}' added to $rc_file. Run: source $rc_file"
+    echo -e "${ICON_OK} Alias '${ALIAS_NAME}' added to $rc_file. Run: ${CYAN}source $rc_file${NC}"
+
+    echo -e "\n${CYAN}Proxy configuration (leave blank for none / to clear existing):${NC}"
+    if [ -f "$HOME/.ai-coder-proxy" ]; then
+        _cur_proxy=$(cat "$HOME/.ai-coder-proxy" 2>/dev/null || true)
+        echo -e "${DIM}  Current proxy: ${_cur_proxy}${NC}"
+    fi
+    echo -n "  Proxy URL: "
+    read -r _proxy_input
+    if [ -n "$_proxy_input" ]; then
+        echo "$_proxy_input" > "$HOME/.ai-coder-proxy"
+        echo -e "${ICON_OK} Proxy saved: ${CYAN}${_proxy_input}${NC}"
+    else
+        rm -f "$HOME/.ai-coder-proxy"
+        echo -e "${DIM}  No proxy set.${NC}"
+    fi
     exit 0
 fi
 
@@ -219,9 +214,7 @@ check_docker || { echo -e "${RED}✘ Docker initialization failed${NC}"; exit 1;
 detect_model || true
 download_model || {
     echo -e "${RED}✘ Model download failed${NC}"
-    echo -e "${YELLOW}  If you are on a corporate or proxy network, ensure DOWNLOAD_PROXY is set:${NC}"
-    echo -e "${CYAN}    export DOWNLOAD_PROXY=\"http://proxy.corp.com:8080\"${NC}"
-    echo -e "${CYAN}  Add it to ~/.bash_profile (Git Bash) or ~/.bashrc (WSL) to persist it.${NC}"
+    echo -e "${YELLOW}  If you are on a corporate or proxy network, run: ${CYAN}$(basename "$0") --setup${NC}"
     exit 1
 }
 if [ -z "${MODEL_FILE:-}" ]; then

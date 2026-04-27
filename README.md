@@ -46,12 +46,12 @@ Use this script to monitor the health of your environment.
 ### 2. Unified AI Coding Interface (`ai-coder`)
 A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run (or with `--menu`) it prompts you to select your preferred tool, which is saved to `~/.ai-coder-pref`. Subsequent runs launch the saved preference directly.
 
-- **Alias**: `ai` (configure with `--setup-path`)
+- **Alias**: `ai` (configure with `--setup`)
 - **Model family selection**: On first run, prompts you to choose a model family (Gemma 4, Qwen3, Qwen3.6, Llama 4, Devstral 2, …). The choice is saved to `~/.ai-coder-family`. Within the chosen family, the best GGUF tier is selected automatically based on detected VRAM.
 - **Tool selection**: On first run, also prompts for your preferred coding tool (Claude, OpenCode, Aider, Gemini). Saved to `~/.ai-coder-pref`.
 - **Workspace mount**: Your project folder is mounted into the container as `/<foldername>` (e.g. `/my-project`), so the AI tool starts directly in your project directory.
 - **Auto-cleanup**: When you exit the tool, the workbench container is stopped. If it was the last active spoke, the Hub (engine + proxy) is also shut down automatically.
-- **Agent-free commands**: `--help`, `--status`, `--clean`, and `--setup-path` run immediately without requiring a tool to be selected.
+- **Agent-free commands**: `--help`, `--status`, `--clean`, and `--setup` run immediately without requiring a tool to be selected.
 
 **Commands:**
 | Command | Description |
@@ -59,19 +59,17 @@ A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run
 | `spawn` | (or no argument) Launch the AI tool inside the active workbench container |
 | `--menu` | Reset model family **and** tool preferences; show both selection menus |
 | `--status` | Show the real-time GPU and engine status dashboard |
-| `--setup-path` | Create a shell alias (`ai`) for this script |
+| `--setup` | Create a shell alias (`ai`) and configure the proxy setting |
 | `--clean` | Stop and remove all Hub and Spoke containers |
 | `--rebuild` | Remove the workbench image to force a full rebuild on next run |
 | `--build-only` | Build the workbench image then exit (no Hub or agent launch) |
-| `--proxy <url>` | Save a proxy URL for model downloads and image pulls |
-| `--proxy-clear` | Remove the saved proxy setting |
 | `--gpu-mode` | Reset GPU mode preference and be prompted again on next run |
 | `--help` | Show help information |
 
 **Usage:**
 ```bash
 ./ai-coder [COMMAND]
-# or, after --setup-path:
+# or, after --setup:
 ai [COMMAND]
 ```
 
@@ -139,26 +137,25 @@ All paths are volume-mounted into the workbench container, so settings survive c
 
 ## Setup
 
-### Corporate / Proxy Networks
+### Shell Alias & Proxy Configuration
 
-If your machine routes traffic through an HTTP proxy, set it once with the built-in flag:
+Run `--setup` once after installation. It registers the `ai` shell alias and prompts for a proxy URL (or leaves it blank for none):
 
 ```bash
-./ai-coder --proxy http://proxy.corp.com:8080
+./ai-coder --setup
+# → adds alias to ~/.bash_profile / ~/.bashrc / ~/.zshrc
+# → prompts: Proxy URL: http://proxy.corp.com:8080
+# then: source ~/.bash_profile   # or ~/.bashrc
 ```
 
-The URL is saved to `~/.ai-coder-proxy` and automatically applied on every subsequent run for:
+The proxy URL is saved to `~/.ai-coder-proxy` and automatically applied on every subsequent run for:
 - Downloading GGUF model files
 - Pulling Docker images
 - Passing proxy settings into workbench containers at build time
 
-To remove the saved proxy:
+To change or clear the proxy, run `--setup` again and leave the prompt blank to remove it.
 
-```bash
-./ai-coder --proxy-clear
-```
-
-To override for a single session without changing the saved value, set the environment variable directly:
+To override for a single session without changing the saved value:
 
 ```bash
 DOWNLOAD_PROXY=http://other-proxy:3128 ./ai-coder
@@ -166,7 +163,7 @@ DOWNLOAD_PROXY=http://other-proxy:3128 ./ai-coder
 
 The precedence is: **environment variable** > **saved `~/.ai-coder-proxy`** > **no proxy**.
 
-If you are on a network without a proxy, leave both unset (the default).
+If you are on a network without a proxy, leave the prompt blank (the default).
 
 ## Offline / Air-Gapped Deployment
 

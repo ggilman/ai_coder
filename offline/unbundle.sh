@@ -204,8 +204,8 @@ if [ -n "$INSTALL_DIR" ]; then
     echo "  cd \"$INSTALL_DIR\""
     echo "  ./ai-coder"
     echo ""
-    echo "To create the 'ai' shell alias (run once):"
-    echo "  ./ai-coder --setup-path"
+    echo "To configure the shell alias and proxy (run once):"
+    echo "  ./ai-coder --setup"
     if [ "$IS_GITBASH" = "true" ]; then
         echo "  source ~/.bash_profile"
     else

@@ -716,13 +716,11 @@ Usage: $(basename "$0") [COMMAND]
 Commands:
   spawn              Execute command in active workbench
   --status           Show GPU and engine status dashboard
-  --setup-path       Create shell alias for this script
+  --setup            Create shell alias and configure proxy settings
   --clean            Stop and remove all containers
   --rebuild          Remove the workbench image to force a full rebuild
   --menu             Reset tool preference and show menu
   --gpu-mode         Reset GPU mode preference (single vs multi-GPU)
-  --proxy <url>      Save a proxy URL for model downloads and image pulls
-  --proxy-clear      Remove the saved proxy setting
   --build-only       Build the workbench image then exit (no Hub or agent launch)
   --help             Show this message
 HELP
@@ -744,36 +742,8 @@ HELP
             teardown
             exit 0
             ;;
-        --setup-path)
-            # ALIAS_NAME is set by launcher
-            rc_file="$HOME/.bashrc"
-            if [ "$IS_GITBASH" = "true" ]; then
-                rc_file="$HOME/.bash_profile"
-            elif [ "$SHELL" != "${SHELL%zsh}" ]; then
-                rc_file="$HOME/.zshrc"
-            fi
-            touch "$rc_file"
-            sed -i.bak "/alias $ALIAS_NAME=/d" "$rc_file"
-            echo "alias $ALIAS_NAME='$(realpath "$0")'" >> "$rc_file"
-            echo -e "${ICON_OK} Alias '${ALIAS_NAME}' added to $rc_file. Run: source $rc_file"
-            exit 0
-            ;;
         --build-only)
             BUILD_ONLY=true
-            ;;
-        --proxy)
-            if [ -z "${2:-}" ]; then
-                echo -e "${RED}✘ Usage: $(basename "$0") --proxy <url>${NC}"
-                exit 1
-            fi
-            echo "${2}" > "$HOME/.ai-coder-proxy"
-            echo -e "${ICON_OK} Proxy saved: ${CYAN}${2}${NC}"
-            exit 0
-            ;;
-        --proxy-clear)
-            rm -f "$HOME/.ai-coder-proxy"
-            echo -e "${ICON_OK} Proxy setting cleared."
-            exit 0
             ;;
         spawn|"")
             ;;
