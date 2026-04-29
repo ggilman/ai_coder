@@ -1,11 +1,14 @@
 #!/bin/bash
 # ==============================================================================
 # AI-CODER | Unified Launcher for Claude & OpenCode
+# Author: George Gilman <ggilman@gmail.com>
 # ==============================================================================
 set -euo pipefail
 
 ALIAS_NAME="ai"
 PREF_FILE="$HOME/.ai-coder-pref"
+FAMILY_PREF_FILE="$HOME/.ai-coder-family"
+FAMILIES_DIR="$(dirname "$(realpath "$0")")/config/families"
 
 # Load Core Library
 CORE_SCRIPT="$(dirname "$(realpath "$0")")/libs/ai-coder-core.sh"
@@ -15,6 +18,10 @@ if [ ! -f "$CORE_SCRIPT" ]; then
 fi
 source "$CORE_SCRIPT"
 
+# Load additional libraries
+source "$(dirname "$(realpath "$0")")/libs/ai-coder-setup.sh"
+source "$(dirname "$(realpath "$0")")/libs/ai-coder-menus.sh"
+
 # Handle commands that don't require an agent selection
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat <<HELP
@@ -23,11 +30,13 @@ Usage: $(basename "$0") [COMMAND]
 Commands:
   spawn              Execute command in active workbench
   --status           Show GPU and engine status dashboard
-  --setup-path       Create shell alias for this script
+  --setup            First-time and re-configuration wizard (alias, proxy, isolation, GPU, git)
+  --fix-project      Fix line endings in the current project for AI editing (run from project folder)
   --clean            Stop and remove all containers
-  --rebuild          Remove the workbench image to force a full rebuild
-  --menu             Reset tool preference and show menu
-  --gpu-mode         Reset GPU mode preference (single vs multi-GPU)  --build-only       Build the workbench image then exit (no Hub or agent launch)  --help             Show this message
+  --rebuild          Remove all workbench images to force a full rebuild on next run
+  --menu             Reset model family and tool preferences, show selection menus
+  --build-only       Build the workbench image then exit (no Hub or agent launch)
+  --help             Show this message
 HELP
     exit 0
 fi
@@ -41,74 +50,70 @@ if [[ "${1:-}" == "--clean" ]]; then
     exit 0
 fi
 
-if [[ "${1:-}" == "--gpu-mode" ]]; then
-    rm -f "$HOME/.ai-coder-gpuconf"
-    echo -e "${CYAN}◈ GPU mode preference cleared. It will be prompted on next run.${NC}"
-    exit 0
+if [[ "${1:-}" == "--fix-project" ]]; then
+    cmd_fix_project
+    exit $?
 fi
 
-# Handle --setup-path before preference check (no tool selection needed)
-if [[ "${1:-}" == "--setup-path" ]]; then
-    rc_file="$HOME/.bashrc"
-    if [ "$IS_GITBASH" = "true" ]; then
-        rc_file="$HOME/.bash_profile"
-    elif [ "$SHELL" != "${SHELL%zsh}" ]; then
-        rc_file="$HOME/.zshrc"
-    fi
-    touch "$rc_file"
-    sed -i.bak "/alias $ALIAS_NAME=/d" "$rc_file"
-    echo "alias $ALIAS_NAME='$(realpath "$0")'" >> "$rc_file"
-    echo -e "${ICON_OK} Alias '${ALIAS_NAME}' added to $rc_file. Run: source $rc_file"
-    exit 0
-fi
-
-# --- [ PREFERENCE MANAGEMENT ] ------------------------------------------------
-
-show_menu() {
-    local agents_dir
+if [[ "${1:-}" == "--rebuild" ]]; then
     agents_dir="$(dirname "$(realpath "$0")")/agents"
-
-    local pairs=()
+    _removed=0
     for f in "$agents_dir"/ai-coder-*.sh; do
         [ -f "$f" ] || continue
-        local name; name=$(grep -m1 '^TOOL_NAME=' "$f" | cut -d'"' -f2)
-        [ -n "$name" ] || continue
-        local key; key=$(basename "$f" .sh); key="${key#ai-coder-}"
-        pairs+=("$name:$key")
-    done
-    IFS=$'\n' pairs=($(printf '%s\n' "${pairs[@]}" | sort)); unset IFS
-
-    while true; do
-        echo -e "\n${CYAN}Welcome to AI-Coder. Please select your preferred tool:${NC}"
-        local i=1
-        for pair in "${pairs[@]}"; do
-            echo "$i) ${pair%%:*}"
-            (( i++ ))
-        done
-        echo "q) Quit"
-        echo -n "Selection: "
-        read -r choice
-        if [[ "$choice" == "q" ]]; then exit 0; fi
-        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#pairs[@]} )); then
-            local key="${pairs[$((choice-1))]#*:}"
-            local name="${pairs[$((choice-1))]%%:*}"
-            echo "$key" > "$PREF_FILE"
-            echo "$name selected."
-            return
+        _img=$(grep -m1 '^IMAGE_NAME=' "$f" | cut -d'"' -f2)
+        [ -z "$_img" ] && continue
+        if docker image inspect "$_img" >/dev/null 2>&1; then
+            echo -e "${CYAN}◈ Removing [$_img]...${NC}"
+            docker rmi "$_img" 2>/dev/null && \
+                echo -e "${GREEN}✔ Removed${NC}" || \
+                echo -e "${YELLOW}  Could not remove — container may be running${NC}"
+            _removed=$((_removed + 1))
         fi
-        echo -e "${RED}Invalid selection.${NC}"
     done
-}
+    [ "$_removed" -eq 0 ] && \
+        echo -e "${DIM}  No workbench images found — nothing to remove.${NC}" || \
+        echo -e "${ICON_OK} Workbench images cleared. They will be rebuilt on next run."
+    exit 0
+fi
+
+if [[ "${1:-}" == "--setup" ]]; then
+    cmd_setup
+    exit 0
+fi
 
 # --- [ MAIN ENTRY ] -----------------------------------------------------------
 
-# Handle --menu flag
-if [[ "${1:-}" == "--menu" ]]; then
-    show_menu
-    shift # remove --menu from arguments
+# Guard: require --setup to have been run at least once before launching.
+if [ ! -f "$HOME/.ai-coder-setup" ]; then
+    echo -e "${YELLOW}◈ First-time setup required. Run:${NC}"
+    echo -e "  ${CYAN}$(realpath "$0") --setup${NC}"
+    exit 1
 fi
 
-# Handle first-run or missing preference
+# Handle --menu flag: clears both family and tool preferences so both menus
+# are shown again on the next step of this run.
+if [[ "${1:-}" == "--menu" ]]; then
+    rm -f "$FAMILY_PREF_FILE" "$PREF_FILE"
+    shift
+fi
+
+# --- [ FAMILY SELECTION ] ----------------------------------------------------
+# Show the family menu on first run or after --menu clears the preference.
+if [ ! -f "$FAMILY_PREF_FILE" ] || [ -z "$(cat "$FAMILY_PREF_FILE" 2>/dev/null)" ]; then
+    show_family_menu
+fi
+
+FAMILY_PREF=$(cat "$FAMILY_PREF_FILE")
+FAMILY_CONF="$FAMILIES_DIR/${FAMILY_PREF}.conf"
+if [ ! -f "$FAMILY_CONF" ]; then
+    echo -e "${RED}Error: Unknown model family '${FAMILY_PREF}'. Run with --menu to reselect.${NC}"
+    rm -f "$FAMILY_PREF_FILE"
+    exit 1
+fi
+source "$FAMILY_CONF"
+
+# --- [ TOOL SELECTION ] ------------------------------------------------------
+# Show the tool menu on first run or after --menu clears the preference.
 if [ ! -f "$PREF_FILE" ] || [ -z "$(cat "$PREF_FILE")" ]; then
     show_menu
 fi
@@ -144,9 +149,7 @@ check_docker || { echo -e "${RED}✘ Docker initialization failed${NC}"; exit 1;
 detect_model || true
 download_model || {
     echo -e "${RED}✘ Model download failed${NC}"
-    echo -e "${YELLOW}  If you are on a corporate or proxy network, ensure DOWNLOAD_PROXY is set:${NC}"
-    echo -e "${CYAN}    export DOWNLOAD_PROXY=\"http://proxy.corp.com:8080\"${NC}"
-    echo -e "${CYAN}  Add it to ~/.bash_profile (Git Bash) or ~/.bashrc (WSL) to persist it.${NC}"
+    echo -e "${YELLOW}  If you are on a corporate or proxy network, run: ${CYAN}$(basename "$0") --setup${NC}"
     exit 1
 }
 if [ -z "${MODEL_FILE:-}" ]; then
@@ -217,8 +220,8 @@ else
     echo -e " ${RED}TIMEOUT${NC}"
     echo -e "${RED}✘ Engine/Proxy failed to initialize after $((retry_count * 2)) seconds${NC}"
     # Basic diagnostics
-    local _cid; _cid=$(docker ps -aq -f "name=$GLOBAL_ENGINE_NAME" 2>/dev/null) || true
-    if [ -n "$_cid" ]; then
+    _cid=$(docker ps -aq -f "name=$GLOBAL_ENGINE_NAME" 2>/dev/null) || true
+    if [ -n "${_cid:-}" ]; then
         docker logs "$GLOBAL_ENGINE_NAME" 2>&1 | tail -20 | sed 's/^/    /'
     fi
     exit 1

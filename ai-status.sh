@@ -179,6 +179,19 @@ main() {
                 [ "$model_pad" -lt 0 ] && model_pad=0
                 printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$model_text" "$model_pad" "" "$CYAN" "$NC"
             fi
+
+            # Network isolation status
+            _iso_val="no"
+            [ -f "$HOME/.ai-coder-netconfig" ] && _iso_val=$(grep '^isolated=' "$HOME/.ai-coder-netconfig" 2>/dev/null | cut -d= -f2- || echo "no")
+            if [ "$_iso_val" = "yes" ]; then
+                net_text="  Network: ${YELLOW}⊘ Isolated${NC}${DIM} (ai-engineering-isolated)${NC}"
+            else
+                net_text="  Network: ${GREEN}◎ Standard${NC}${DIM} (ai-engineering-net)${NC}"
+            fi
+            net_len=$(get_visible_length "$net_text")
+            net_pad=$((70 - net_len))
+            [ "$net_pad" -lt 0 ] && net_pad=0
+            printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$net_text" "$net_pad" "" "$CYAN" "$NC"
         else
             health_text="${BOLD}ENGINE HUB: ${RED}● Offline${NC}"
             health_len=$(get_visible_length "$health_text")

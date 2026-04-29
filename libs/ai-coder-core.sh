@@ -26,6 +26,11 @@ WORKBENCH_PREFIX="coder"
 LITELLM_IMAGE="ghcr.io/berriai/litellm:main-latest"
 LLAMA_IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
 DOWNLOAD_PROXY="${DOWNLOAD_PROXY:-}"
+# If DOWNLOAD_PROXY was not set in the environment, fall back to the saved preference file.
+PROXY_PREF_FILE="$HOME/.ai-coder-proxy"
+if [ -z "$DOWNLOAD_PROXY" ] && [ -f "$PROXY_PREF_FILE" ]; then
+    DOWNLOAD_PROXY=$(cat "$PROXY_PREF_FILE" 2>/dev/null || true)
+fi
 BASE_IMAGE="node:20-bullseye-slim"
 
 # --- [ ENVIRONMENT & SHELL ] --------------------------------------------------
@@ -36,8 +41,10 @@ WORKSPACE_DIR=$(basename "$PWD" | tr ' ' '_')
 # Graphics (colors & icons)
 source "$SCRIPT_DIR/ai-coder-graphics.sh"
 
-# Model family configuration
-source "$SCRIPT_DIR/ai-coder-model.conf"
+# Model framework configuration — family-specific conf is sourced by ai-coder
+# after the user's family preference is resolved.
+CONFIG_DIR="$(dirname "$SCRIPT_DIR")/config"
+source "$CONFIG_DIR/ai-coder-model.conf"
 
 IS_WSL=$(grep -qi Microsoft /proc/version 2>/dev/null && echo "true" || echo "false")
 IS_GITBASH=$(expr "$(uname -s)" : '.*MINGW.*' >/dev/null 2>&1 && echo "true" || echo "false")
@@ -78,6 +85,17 @@ read_package_list() {
     [ -f "$file" ] && grep -v '^\s*#' "$file" | grep -v '^\s*$' | tr -d '\r' | tr '\n' ' ' || echo ""
 }
 
+# Read a key=value entry from a preference file. Returns the value, or $default if missing.
+read_pref() {
+    local file="$1" key="$2" default="${3:-}"
+    if [ -f "$file" ]; then
+        local val; val=$(grep "^${key}=" "$file" 2>/dev/null | cut -d= -f2-)
+        [ -n "$val" ] && echo "$val" || echo "$default"
+    else
+        echo "$default"
+    fi
+}
+
 # Resolve proxy hostname to IP so Docker build containers can reach it.
 # getent is Linux-only; fall back to nslookup (available in Git Bash + WSL).
 resolve_proxy_to_ip() {
@@ -104,33 +122,12 @@ GIT_IDENTITY_FILE="$HOME/.ai-coder-gitconfig"
 # Load or prompt for git user identity, then store it for future runs.
 # Sets GIT_USER_EMAIL and GIT_USER_NAME in the calling environment.
 ensure_git_identity() {
-    local git_email="" git_name=""
-
-    # Load from persisted file
-    if [ -f "$GIT_IDENTITY_FILE" ]; then
-        git_email=$(grep '^email=' "$GIT_IDENTITY_FILE" 2>/dev/null | cut -d= -f2-)
-        git_name=$(grep  '^name='  "$GIT_IDENTITY_FILE" 2>/dev/null | cut -d= -f2-)
-    fi
-
-    # Fall back to host global git config
+    local git_email; git_email=$(read_pref "$GIT_IDENTITY_FILE" email)
+    local git_name;  git_name=$(read_pref  "$GIT_IDENTITY_FILE" name)
     [ -z "$git_email" ] && git_email=$(git config --global user.email 2>/dev/null || true)
     [ -z "$git_name"  ] && git_name=$(git config  --global user.name  2>/dev/null || true)
-
-    # Prompt for anything still missing
-    if [ -z "$git_email" ]; then
-        echo -ne "${CYAN}◈ Git email for commits: ${NC}"
-        read -r git_email
-    fi
-    if [ -z "$git_name" ]; then
-        echo -ne "${CYAN}◈ Git user name for commits: ${NC}"
-        read -r git_name
-    fi
-
-    # Persist for future runs
-    printf 'email=%s\nname=%s\n' "$git_email" "$git_name" > "$GIT_IDENTITY_FILE"
-
-    GIT_USER_EMAIL="$git_email"
-    GIT_USER_NAME="$git_name"
+    GIT_USER_EMAIL="${git_email:-}"
+    GIT_USER_NAME="${git_name:-}"
 }
 
 # --- [ NETWORK CONFIG ] -------------------------------------------------------
@@ -138,25 +135,7 @@ ensure_git_identity() {
 # Load or prompt for network isolation preference, then store it for future runs.
 # Sets NETWORK_INTERNAL in the calling environment.
 ensure_network_config() {
-    local isolated_net=""
-    local network_config_file="$(pwd)/.ai-coder/netconfig"
-
-    # Load from persisted file
-    if [ -f "$network_config_file" ]; then
-        isolated_net=$(grep '^isolated=' "$network_config_file" 2>/dev/null | cut -d= -f2-)
-    fi
-
-    # Prompt if not yet set
-    if [ -z "$isolated_net" ]; then
-        echo -ne "${CYAN}◈ Internal network only — block all internet access from containers? [y/N]: ${NC}"
-        read -r _ans
-        case "${_ans,,}" in
-            y|yes) isolated_net="yes" ;;
-            *)     isolated_net="no"  ;;
-        esac
-        printf 'isolated=%s\n' "$isolated_net" > "$network_config_file"
-    fi
-
+    local isolated_net; isolated_net=$(read_pref "$HOME/.ai-coder-netconfig" isolated no)
     [ "$isolated_net" = "yes" ] && NETWORK_INTERNAL=true || true
 }
 
@@ -164,30 +143,7 @@ ensure_network_config() {
 # Sets GPU_MODE in the calling environment ("multi" or "single").
 # Silently skips the prompt when only one GPU is present.
 ensure_gpu_config() {
-    local gpu_conf_file="$HOME/.ai-coder-gpuconf"
-    local stored_mode=""
-
-    if [ -f "$gpu_conf_file" ]; then
-        stored_mode=$(grep '^gpu_mode=' "$gpu_conf_file" 2>/dev/null | cut -d= -f2-)
-    fi
-
-    if [ -z "$stored_mode" ]; then
-        local gpu_count=1
-        gpu_count=$($SMI --query-gpu=name --format=csv,noheader,nounits 2>/dev/null | grep -c '.' || echo 1)
-        if [ "${gpu_count:-1}" -gt 1 ]; then
-            echo -e "${CYAN}◈ ${gpu_count} GPUs detected. Use all GPUs for inference? [Y/n]: ${NC}"
-            read -r _ans
-            case "${_ans,,}" in
-                n|no) stored_mode="single" ;;
-                *)    stored_mode="multi"  ;;
-            esac
-        else
-            stored_mode="single"
-        fi
-        printf 'gpu_mode=%s\n' "$stored_mode" > "$gpu_conf_file"
-    fi
-
-    GPU_MODE="$stored_mode"
+    GPU_MODE=$(read_pref "$HOME/.ai-coder-gpuconf" gpu_mode single)
 }
 
 # Write identity into the local repo's .git/config (host-side).
@@ -199,9 +155,12 @@ apply_git_identity() {
     fi
     local cur_email; cur_email=$(git -C "$(pwd)" config --local user.email 2>/dev/null || true)
     local cur_name;  cur_name=$(git  -C "$(pwd)" config --local user.name  2>/dev/null || true)
-    [ -z "$cur_email" ] && git -C "$(pwd)" config --local user.email "$GIT_USER_EMAIL"
-    [ -z "$cur_name"  ] && git -C "$(pwd)" config --local user.name  "$GIT_USER_NAME"
-    echo -e "${ICON_OK} Git identity: ${CYAN}${GIT_USER_NAME} <${GIT_USER_EMAIL}>${NC}"
+    [ -z "$cur_email" ] && [ -n "${GIT_USER_EMAIL:-}" ] && git -C "$(pwd)" config --local user.email "$GIT_USER_EMAIL"
+    [ -z "$cur_name"  ] && [ -n "${GIT_USER_NAME:-}"  ] && git -C "$(pwd)" config --local user.name  "$GIT_USER_NAME"
+    # Normalize CRLF→LF on checkout inside the container (Windows host mounts files with CRLF).
+    # 'input' strips CR on add but never introduces CR on checkout — safe for all platforms.
+    git -C "$(pwd)" config --local core.autocrlf input 2>/dev/null || true
+    [ -n "${GIT_USER_NAME:-}" ] && echo -e "${ICON_OK} Git identity: ${CYAN}${GIT_USER_NAME} <${GIT_USER_EMAIL}>${NC}"
 }
 
 # --- [ CORE LOGIC ] -----------------------------------------------------------
@@ -278,6 +237,41 @@ select_model_for_vram() {
     fi
 }
 
+# Download a URL to a local path. Selects the best available tool and handles proxy.
+_download_file() {
+    local url="$1" dest="$2"
+    local win_curl=""
+    [ "$IS_WSL" = "true" ] && win_curl=$(command -v curl.exe 2>/dev/null || true)
+    local http_proxy=""
+    [ -n "${DOWNLOAD_PROXY:-}" ] && http_proxy=$(echo "$DOWNLOAD_PROXY" | sed 's|^https://|http://|')
+
+    if [ "$IS_GITBASH" = "true" ] && command -v powershell.exe >/dev/null 2>&1; then
+        local win_out; win_out=$(cygpath -w "$dest")
+        local ps_cmd="\$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '${url}' -OutFile '${win_out}' -UseBasicParsing"
+        [ -n "$http_proxy" ] && ps_cmd+=" -Proxy '${http_proxy}'"
+        powershell.exe -NoProfile -NonInteractive -Command "$ps_cmd" &
+        _await_download $! "$dest"
+    elif [ -n "$http_proxy" ] && [ -n "$win_curl" ]; then
+        local win_path; win_path=$(wslpath -w "$dest")
+        "$win_curl" -L --proxy "$http_proxy" --ssl-no-revoke --no-progress-meter --show-error -o "$win_path" "$url" &
+        _await_download $! "$dest"
+    elif [ -n "$http_proxy" ] && command -v curl >/dev/null 2>&1; then
+        curl -L --proxy "$http_proxy" --progress-bar --show-error -o "$dest" "$url"
+    elif [ -n "$win_curl" ]; then
+        local win_path; win_path=$(wslpath -w "$dest")
+        "$win_curl" -L --no-progress-meter --show-error -o "$win_path" "$url" &
+        _await_download $! "$dest"
+    elif command -v curl >/dev/null 2>&1; then
+        curl -L --progress-bar --show-error -o "$dest" "$url"
+    elif command -v wget >/dev/null 2>&1; then
+        local wget_proxy_args=()
+        [ -n "$http_proxy" ] && wget_proxy_args=(-e "use_proxy=yes" -e "http_proxy=$http_proxy" -e "https_proxy=$http_proxy")
+        wget --no-verbose --show-progress --progress=dot:giga "${wget_proxy_args[@]}" -O "$dest" "$url"
+    else
+        return 1
+    fi
+}
+
 # Show a file-size progress ticker for a background download PID, then wait for it.
 # Cleans up a partial file if the download fails.
 _await_download() {
@@ -307,80 +301,27 @@ download_model() {
         return 0
     fi
 
-    if ! command -v wget >/dev/null 2>&1 && ! command -v curl >/dev/null 2>&1; then
-        echo -e "${RED}✘ Neither wget nor curl found. Cannot download model.${NC}"
-        return 1
-    fi
+    [ -z "${MODEL_FILE:-}" ] && select_model_for_vram "${VRAM_GB:-0}"
 
-    local model_url
-    local model_path
-    local model_hint
-
-    if [ -z "${MODEL_FILE:-}" ]; then
-        select_model_for_vram "${VRAM_GB:-0}"
-    fi
-
+    local model_url model_hint
     case "$MODEL_FILE" in
         "$MODEL_32GB_FILE") model_url="$MODEL_32GB_URL"; model_hint="$MODEL_32GB_DESC" ;;
         "$MODEL_24GB_FILE") model_url="$MODEL_24GB_URL"; model_hint="$MODEL_24GB_DESC" ;;
         "$MODEL_16GB_FILE") model_url="$MODEL_16GB_URL"; model_hint="$MODEL_16GB_DESC" ;;
         "$MODEL_12GB_FILE") model_url="$MODEL_12GB_URL"; model_hint="$MODEL_12GB_DESC" ;;
-        "$MODEL_8GB_FILE")  model_url="$MODEL_8GB_URL";  model_hint="$MODEL_8GB_DESC" ;;
+        "$MODEL_8GB_FILE")  model_url="$MODEL_8GB_URL";  model_hint="$MODEL_8GB_DESC"  ;;
         *) echo -e "${RED}✘ Unsupported target model: $MODEL_FILE${NC}"; return 1 ;;
     esac
 
-    model_path="$MODEL_STORAGE_DIR/$MODEL_FILE"
+    [ -z "$model_url" ] && { echo -e "${RED}✘ Missing download URL for $MODEL_FILE${NC}"; return 1; }
 
-    if [ -z "$model_url" ]; then
-        echo -e "${RED}✘ Missing download URL for $MODEL_FILE${NC}"; return 1
-    fi
-
+    local model_path="$MODEL_STORAGE_DIR/$MODEL_FILE"
     echo -e "${ICON_GEAR} Downloading ${model_hint}..."
     echo -e "${CYAN}Downloading to: $model_path${NC}"
     [ -n "${DOWNLOAD_PROXY:-}" ] && echo -e "${CYAN}Using proxy: $DOWNLOAD_PROXY${NC}"
 
-    # curl.exe via WSL interop (uses wslpath) — WSL only, not Git Bash
-    local win_curl=""
-    [ "$IS_WSL" = "true" ] && win_curl=$(command -v curl.exe 2>/dev/null)
-
-    # Git Bash: use PowerShell Invoke-WebRequest which uses WinHTTP + Windows cert store,
-    # bypassing SChannel TLS handshake failures with SSL-intercepting corporate proxies.
-    # PowerShell 5.1 ServicePointManager does not support https:// proxy URIs — coerce to http://.
-    if [ "$IS_GITBASH" = "true" ] && command -v powershell.exe >/dev/null 2>&1; then
-        local win_out; win_out=$(cygpath -w "$model_path")
-        local ps_cmd="\$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '${model_url}' -OutFile '${win_out}' -UseBasicParsing"
-        if [ -n "${DOWNLOAD_PROXY:-}" ]; then
-            local http_proxy; http_proxy=$(echo "$DOWNLOAD_PROXY" | sed 's|^https://|http://|')
-            ps_cmd+=" -Proxy '${http_proxy}'"
-        fi
-        powershell.exe -NoProfile -NonInteractive -Command "$ps_cmd" &
-        _await_download $! "$model_path" || { echo -e "${RED}✘ Download failed${NC}"; return 1; }
-    elif [ -n "${DOWNLOAD_PROXY:-}" ] && [ -n "$win_curl" ]; then
-        local win_path; win_path=$(wslpath -w "$model_path")
-        "$win_curl" -L --proxy "$DOWNLOAD_PROXY" --ssl-no-revoke --no-progress-meter --show-error -o "$win_path" "$model_url" &
-        _await_download $! "$model_path" || { echo -e "${RED}✘ Download failed${NC}"; return 1; }
-    elif [ -n "${DOWNLOAD_PROXY:-}" ] && command -v curl >/dev/null 2>&1; then
-        curl -L --proxy "$DOWNLOAD_PROXY" --progress-bar --show-error -o "$model_path" "$model_url" || {
-            echo -e "${RED}✘ Download failed${NC}"; return 1
-        }
-    elif [ -n "$win_curl" ]; then
-        local win_path; win_path=$(wslpath -w "$model_path")
-        "$win_curl" -L --no-progress-meter --show-error -o "$win_path" "$model_url" &
-        _await_download $! "$model_path" || { echo -e "${RED}✘ Download failed${NC}"; return 1; }
-    elif command -v curl >/dev/null 2>&1; then
-        curl -L --progress-bar --show-error -o "$model_path" "$model_url" || {
-            echo -e "${RED}✘ Download failed${NC}"; return 1
-        }
-    elif command -v wget >/dev/null 2>&1; then
-        local wget_proxy_args=()
-        [ -n "${DOWNLOAD_PROXY:-}" ] && wget_proxy_args=(-e "use_proxy=yes" -e "http_proxy=$DOWNLOAD_PROXY" -e "https_proxy=$DOWNLOAD_PROXY")
-        wget --no-verbose --show-progress --progress=dot:giga "${wget_proxy_args[@]}" -O "$model_path" "$model_url" || {
-            echo -e "${RED}✘ Download failed${NC}"; return 1
-        }
-    fi
-
+    _download_file "$model_url" "$model_path" || { echo -e "${RED}✘ Download failed${NC}"; return 1; }
     echo -e "${GREEN}✔ Model downloaded successfully${NC}"
-    return 0
 }
 
 detect_model() {
@@ -544,9 +485,15 @@ run_workbench() {
     [ "${NETWORK_INTERNAL:-false}" = "true" ] && wb_network="$HUB_ISOLATED_NET"
     local no_proxy_hosts="localhost,127.0.0.1,$GLOBAL_ENGINE_NAME"
     [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ] && no_proxy_hosts="$no_proxy_hosts,$GLOBAL_PROXY_NAME"
+    # When isolated, don't inject proxy env vars — the container has no internet
+    # access anyway, and proxy settings can interfere with internal container
+    # communication if no_proxy isn't perfectly honoured by every client.
+    local _wb_http_proxy="${DOWNLOAD_PROXY:-}"
+    [ "${NETWORK_INTERNAL:-false}" = "true" ] && _wb_http_proxy=""
     docker run -d --name "$WORKBENCH" --network "$wb_network" --privileged \
-        -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
-        -e "no_proxy=$no_proxy_hosts" \
+        -e "http_proxy=${_wb_http_proxy}" -e "https_proxy=${_wb_http_proxy}" \
+        -e "HTTP_PROXY=${_wb_http_proxy}" -e "HTTPS_PROXY=${_wb_http_proxy}" \
+        -e "no_proxy=$no_proxy_hosts" -e "NO_PROXY=$no_proxy_hosts" \
         -v "$(to_host_path "$(pwd)"):/$WORKSPACE_DIR" \
         --workdir "/$WORKSPACE_DIR" \
         "${extra_flags[@]}" \
@@ -594,7 +541,12 @@ start_hub_engine() {
         fi
     fi
 
-    docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$HUB_NETWORK" --gpus "$_gpus_flag" --restart on-failure:3 \
+    # When isolation is active, start Hub containers directly on the isolated
+    # network so they have no internet access. Otherwise use the standard hub network.
+    local _hub_net="$HUB_NETWORK"
+    [ "${NETWORK_INTERNAL:-false}" = "true" ] && _hub_net="$HUB_ISOLATED_NET"
+
+    docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$_hub_net" --gpus "$_gpus_flag" --restart on-failure:3 \
         -v "$(to_host_path "$MODEL_STORAGE_DIR"):/models" \
         "$LLAMA_IMAGE" \
         -m "/models/$MODEL_FILE" --host 0.0.0.0 --port 8080 \
@@ -611,24 +563,13 @@ start_hub_engine() {
         cat > "$HOME/.ai-coder/litellm_config.yaml" <<EOF
 $config_content
 EOF
-        docker run -d --name "$GLOBAL_PROXY_NAME" --network "$HUB_NETWORK" -p 4000:4000 --restart always \
+        docker run -d --name "$GLOBAL_PROXY_NAME" --network "$_hub_net" -p 4000:4000 --restart always \
             -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
             -e "no_proxy=localhost,127.0.0.1,$GLOBAL_ENGINE_NAME" \
             -v "$(to_host_path "$HOME/.ai-coder/litellm_config.yaml"):/app/config.yaml:ro" \
             "$LITELLM_IMAGE" --config /app/config.yaml || {
             echo -e "${RED}✘ Failed to start proxy container${NC}"; return 1
         }
-    fi
-
-    # When isolation is active, bridge the engine (and proxy if running) onto
-    # the isolated network so workbench containers can reach them.
-    if [ "${NETWORK_INTERNAL:-false}" = "true" ]; then
-        docker network connect "$HUB_ISOLATED_NET" "$GLOBAL_ENGINE_NAME" || \
-            { echo -e "${RED}✘ Failed to connect engine to isolated network${NC}"; return 1; }
-        if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
-            docker network connect "$HUB_ISOLATED_NET" "$GLOBAL_PROXY_NAME" || \
-                { echo -e "${RED}✘ Failed to connect proxy to isolated network${NC}"; return 1; }
-        fi
     fi
 }
 
@@ -690,63 +631,18 @@ stop_hub() {
 
 teardown() {
     echo -e "${CYAN}Tearing down Hub & Project Spokes...${NC}"
-    docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" \
-        $(docker ps -q --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
-    docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" \
-        $(docker ps -aq --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null) 2>/dev/null || true
+    local _running; _running=$(docker ps -q  --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null || true)
+    local _all;     _all=$(docker ps -aq --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null || true)
+    # shellcheck disable=SC2086
+    docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" $( [ -n "$_running" ] && echo "$_running") 2>/dev/null || true
+    # shellcheck disable=SC2086
+    docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" $( [ -n "$_all" ]     && echo "$_all")     2>/dev/null || true
     docker network rm "$HUB_NETWORK" "$HUB_ISOLATED_NET" 2>/dev/null || true
 }
 
 handle_command() {
     cmd="${1:-}"
     case "$cmd" in
-        --help|-h)
-            cat <<HELP
-Usage: $(basename "$0") [COMMAND]
-
-Commands:
-  spawn              Execute command in active workbench
-  --status           Show GPU and engine status dashboard
-  --setup-path       Create shell alias for this script
-  --clean            Stop and remove all containers
-  --rebuild          Remove the workbench image to force a full rebuild
-  --menu             Reset tool preference and show menu
-  --gpu-mode         Reset GPU mode preference (single vs multi-GPU)
-  --build-only       Build the workbench image then exit (no Hub or agent launch)
-  --help             Show this message
-HELP
-            exit 0
-            ;;
-        --status)
-            exec "$(dirname "$(realpath "$0")")/ai-status.sh"
-            ;;
-        --rebuild)
-            if [ -n "${IMAGE_NAME:-}" ]; then
-                echo -e "${CYAN}◈ Removing image [$IMAGE_NAME]...${NC}"
-                docker rmi "$IMAGE_NAME" 2>/dev/null && echo -e "${GREEN}✔ Image removed. It will be rebuilt on next run.${NC}" || echo -e "${YELLOW}  Image not found — nothing to remove.${NC}"
-            else
-                echo -e "${RED}✘ IMAGE_NAME not set — source a child script first.${NC}"
-            fi
-            exit 0
-            ;;
-        --clean)
-            teardown
-            exit 0
-            ;;
-        --setup-path)
-            # ALIAS_NAME is set by launcher
-            rc_file="$HOME/.bashrc"
-            if [ "$IS_GITBASH" = "true" ]; then
-                rc_file="$HOME/.bash_profile"
-            elif [ "$SHELL" != "${SHELL%zsh}" ]; then
-                rc_file="$HOME/.zshrc"
-            fi
-            touch "$rc_file"
-            sed -i.bak "/alias $ALIAS_NAME=/d" "$rc_file"
-            echo "alias $ALIAS_NAME='$(realpath "$0")'" >> "$rc_file"
-            echo -e "${ICON_OK} Alias '${ALIAS_NAME}' added to $rc_file. Run: source $rc_file"
-            exit 0
-            ;;
         --build-only)
             BUILD_ONLY=true
             ;;

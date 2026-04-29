@@ -60,11 +60,13 @@ fi
 [ -d "$MODELS_DIR" ]  || { echo "✘  models/ directory not found.";  exit 1; }
 [ -d "$SCRIPTS_DIR" ] || { echo "✘  scripts/ directory not found."; exit 1; }
 
-MODEL_FILE=$(grep '^model_file='  "$MANIFEST_FILE" | cut -d= -f2-)
-MODEL_DESC=$(grep '^model_desc='  "$MANIFEST_FILE" | cut -d= -f2-)
-BUNDLE_DATE=$(grep '^bundle_date=' "$MANIFEST_FILE" | cut -d= -f2- || echo "unknown")
+MODEL_FILE=$(grep '^model_file='    "$MANIFEST_FILE" | cut -d= -f2-)
+MODEL_DESC=$(grep '^model_desc='    "$MANIFEST_FILE" | cut -d= -f2-)
+MODEL_FAMILY=$(grep '^model_family=' "$MANIFEST_FILE" | cut -d= -f2- || echo "unknown")
+BUNDLE_DATE=$(grep '^bundle_date='  "$MANIFEST_FILE" | cut -d= -f2- || echo "unknown")
 
 echo "  Bundle date : $BUNDLE_DATE"
+echo "  Family      : $MODEL_FAMILY"
 echo "  Model       : $MODEL_DESC"
 echo "  Model path  : $MODEL_STORAGE_DIR/$MODEL_FILE"
 echo ""
@@ -202,8 +204,8 @@ if [ -n "$INSTALL_DIR" ]; then
     echo "  cd \"$INSTALL_DIR\""
     echo "  ./ai-coder"
     echo ""
-    echo "To create the 'ai' shell alias (run once):"
-    echo "  ./ai-coder --setup-path"
+    echo "To configure the shell alias and proxy (run once):"
+    echo "  ./ai-coder --setup"
     if [ "$IS_GITBASH" = "true" ]; then
         echo "  source ~/.bash_profile"
     else

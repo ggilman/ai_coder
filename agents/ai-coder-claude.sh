@@ -14,9 +14,13 @@ build_image() {
         "RUN npm install -g @anthropic-ai/claude-code --quiet"
 }
 
+configure_workbench() {
+    mkdir -p "$HOME/.claude-config"
+    [ -f "$HOME/.claude-config.json" ] || echo '{}' > "$HOME/.claude-config.json"
+}
+
 start_workbench() {
     echo -e "${ICON_GEAR} Mapping Spoke for [$PROJECT_ID]..."
-    [ -f "$HOME/.claude-config.json" ] || echo '{}' > "$HOME/.claude-config.json"
     run_workbench \
         -v "$(to_host_path "$HOME/.npm-cache"):/root/.npm" \
         -v "$(to_host_path "$HOME/.claude-config"):/root/.claude" \
