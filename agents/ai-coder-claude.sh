@@ -32,6 +32,35 @@ $(make_mcp_servers_json "/$WORKSPACE_DIR" standard "$PACKAGES_DIR/mcp-common.txt
   }
 }
 EOF
+    # Write global instructions so Claude uses MCP tools for file I/O.
+    # This avoids the str_replace exact-match failures that occur when editing
+    # files with whitespace variance or after merge conflicts add marker lines.
+    cat > "$HOME/.claude-config/CLAUDE.md" <<'EOF'
+# File Editing Instructions
+
+When reading or writing files — especially during merge conflict resolution —
+**always use the MCP filesystem tools** (`read_file`, `write_file`) instead of
+the built-in `str_replace_based_edit_tool` or `create_file`.
+
+## Why
+
+The built-in `str_replace` tool requires an exact character-for-character match
+of the text being replaced. This fails when:
+- Files contain conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`)
+- Whitespace or indentation differs from what was previously read
+- The file was modified between the read and the edit
+
+The MCP `write_file` tool replaces the whole file atomically and never fails
+due to content mismatch.
+
+## Workflow for merge conflicts
+
+1. Run `git status` (shell) to identify conflicted files
+2. Use `read_file` (MCP filesystem) to read the full file content
+3. Resolve all conflict blocks in memory
+4. Use `write_file` (MCP filesystem) to write the complete resolved content
+5. Run `git add <file>` then `git commit` (shell) to finalise
+EOF
 }
 
 start_workbench() {
