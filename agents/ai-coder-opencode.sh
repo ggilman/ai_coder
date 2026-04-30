@@ -3,15 +3,22 @@
 # AI-CODER-OPENCODE.SH | OpenCode Variant Overrides
 # ==============================================================================
 
-IMAGE_NAME="opencode-engineer-v1"
+IMAGE_NAME="opencode-engineer-v2"
 TOOL_NAME="OpenCode"
 
 build_image() {
     echo -e "${ICON_GEAR} Building OpenCode Image..."
     local pm_proxy_cmds; pm_proxy_cmds=$(make_npm_proxy_cmds)
+    local pip_proxy_cmds; pip_proxy_cmds=$(make_pip_proxy_cmds)
     local apt_pkgs; apt_pkgs="$(read_package_list "$PACKAGES_DIR/apt-common.txt") $(read_package_list "$PACKAGES_DIR/apt-opencode.txt")"
+    local mcp_pkgs; mcp_pkgs=$(read_mcp_packages "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-opencode.txt")
+    local mcp_pip_pkgs; mcp_pip_pkgs=$(read_mcp_pip_packages "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-opencode.txt")
+    local pip_cmd=""
+    if [ -n "$(echo "$mcp_pip_pkgs" | tr -d ' ')" ]; then
+        pip_cmd=$'\nRUN '"${pip_proxy_cmds} ${mcp_pip_pkgs}"
+    fi
     build_standard_image "Dockerfile.oc" "$apt_pkgs" "$pm_proxy_cmds" \
-        "RUN npm install -g opencode-ai
+        "RUN npm install -g opencode-ai ${mcp_pkgs}${pip_cmd}
 RUN opencode --version"
 }
 
@@ -42,6 +49,9 @@ configure_workbench() {
         }
       }
     }
+  },
+  "mcp": {
+$(make_mcp_servers_json "/$WORKSPACE_DIR" opencode "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-opencode.txt")
   }
 }
 EOF

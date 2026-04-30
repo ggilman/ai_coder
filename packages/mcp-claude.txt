@@ -1,0 +1,11 @@
+# ============================================================
+# mcp-claude.txt — extra MCP servers for the Claude workbench only
+#
+# Format (pipe-delimited, one server per line):
+#   npm-package | server-key | command | arg1 arg2 ...
+#
+# Use {workspace} as a placeholder for the container workspace path.
+# Lines starting with # are ignored. Blank lines are ignored.
+# ============================================================
+
+# Add Claude-specific MCP servers here

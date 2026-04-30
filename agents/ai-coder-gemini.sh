@@ -3,16 +3,23 @@
 # AI-CODER-GEMINI.SH | Gemini CLI Variant Overrides
 # ==============================================================================
 
-IMAGE_NAME="gemini-engineer-v4"
+IMAGE_NAME="gemini-engineer-v5"
 TOOL_NAME="Gemini"
 NEEDS_LITELLM_PROXY=true
 
 build_image() {
     echo -e "${ICON_GEAR} Building Gemini CLI Image..."
     local pm_proxy_cmds; pm_proxy_cmds=$(make_npm_proxy_cmds)
+    local pip_proxy_cmds; pip_proxy_cmds=$(make_pip_proxy_cmds)
     local apt_pkgs; apt_pkgs="$(read_package_list "$PACKAGES_DIR/apt-common.txt") $(read_package_list "$PACKAGES_DIR/apt-gemini.txt")"
+    local mcp_pkgs; mcp_pkgs=$(read_mcp_packages "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-gemini.txt")
+    local mcp_pip_pkgs; mcp_pip_pkgs=$(read_mcp_pip_packages "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-gemini.txt")
+    local pip_cmd=""
+    if [ -n "$(echo "$mcp_pip_pkgs" | tr -d ' ')" ]; then
+        pip_cmd=$'\nRUN '"${pip_proxy_cmds} ${mcp_pip_pkgs}"
+    fi
     build_standard_image "Dockerfile.gemini" "$apt_pkgs" "$pm_proxy_cmds" \
-        "RUN npm install -g @google/gemini-cli
+        "RUN npm install -g @google/gemini-cli ${mcp_pkgs}${pip_cmd}
 RUN gemini --version"
 }
 
@@ -20,16 +27,17 @@ configure_workbench() {
     # Store gemini config in the host home dir so auth tokens and session state
     # persist across projects and container restarts, matching Claude's pattern.
     mkdir -p "$HOME/.gemini-config"
-    # Only write settings.json on first run — never overwrite, so that any auth
-    # tokens or state Gemini CLI writes back are preserved on subsequent runs.
-    if [ ! -f "$HOME/.gemini-config/settings.json" ]; then
-        cat > "$HOME/.gemini-config/settings.json" <<EOF
+    # Always rewrite settings.json so mcpServers paths reflect the current project.
+    # Auth is injected via GEMINI_API_KEY env var, so no tokens are stored here.
+    cat > "$HOME/.gemini-config/settings.json" <<EOF
 {
   "selectedAuthType": "gemini-api-key",
-  "theme": "Default"
+  "theme": "Default",
+  "mcpServers": {
+$(make_mcp_servers_json "/$WORKSPACE_DIR" standard "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-gemini.txt")
+  }
 }
 EOF
-    fi
     # gemini-credentials.json is a known-buggy file that Gemini CLI occasionally
     # corrupts (upstream issue #24835). Since we always inject GEMINI_API_KEY via
     # env var, the file is not needed — delete it before each run so the CLI never

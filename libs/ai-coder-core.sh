@@ -85,6 +85,75 @@ read_package_list() {
     [ -f "$file" ] && grep -v '^\s*#' "$file" | grep -v '^\s*$' | tr -d '\r' | tr '\n' ' ' || echo ""
 }
 
+# Read MCP npm package names from one or more server list files.
+# Usage: read_mcp_packages <file1> [file2 ...]
+# File format (pipe-delimited): npm-package | server-key | command | args...
+# Lines whose package field starts with "pip:" are skipped (pip-only servers).
+read_mcp_packages() {
+    local file
+    for file in "$@"; do
+        [ -f "$file" ] || continue
+        grep -v '^\s*#' "$file" | grep -v '^\s*$' | tr -d '\r' | \
+            awk -F'|' '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); if ($1 != "" && substr($1,1,4) != "pip:") printf "%s ", $1}'
+    done
+}
+
+# Read MCP pip package names from one or more server list files.
+# Usage: read_mcp_pip_packages <file1> [file2 ...]
+# Only returns entries whose package field starts with "pip:" (strips the prefix).
+read_mcp_pip_packages() {
+    local file
+    for file in "$@"; do
+        [ -f "$file" ] || continue
+        grep -v '^\s*#' "$file" | grep -v '^\s*$' | tr -d '\r' | \
+            awk -F'|' '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); if (substr($1,1,4) == "pip:") printf "%s ", substr($1,5)}'
+    done
+}
+
+# Emit indented mcpServers JSON entries from one or more server list files.
+# Usage: make_mcp_servers_json <workspace-path> <mode> <file1> [file2 ...]
+# mode: "standard" (Claude / Gemini format) or "opencode"
+# File format (pipe-delimited): npm-package | server-key | command | arg1 arg2 ...
+# Use {workspace} in args as a placeholder for <workspace-path>.
+make_mcp_servers_json() {
+    local workspace="$1" mode="${2:-standard}"
+    shift 2
+    local entries=()
+    local file
+    for file in "$@"; do
+        [ -f "$file" ] || continue
+        while IFS='|' read -r pkg key cmd args_str; do
+            pkg=$(printf '%s' "$pkg"  | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed 's/^pip://')
+            [[ "$pkg" =~ ^# ]] && continue
+            [ -z "$pkg" ] && continue
+            key=$(printf '%s' "$key"  | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            cmd=$(printf '%s' "$cmd"  | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            args_str=$(printf '%s' "$args_str" | tr -d '\r' | \
+                sed "s|{workspace}|$workspace|g" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            # Build JSON array from space-delimited tokens
+            local arr=() a
+            for a in $args_str; do arr+=("\"$a\""); done
+            local args_json="[]"
+            if [ "${#arr[@]}" -gt 0 ]; then
+                local joined; joined=$(printf ',%s' "${arr[@]}"); args_json="[${joined:1}]"
+            fi
+            if [ "$mode" = "opencode" ]; then
+                entries+=("    \"$key\": {\"type\": \"local\", \"command\": \"$cmd\", \"args\": $args_json}")
+            else
+                entries+=("    \"$key\": {\"command\": \"$cmd\", \"args\": $args_json}")
+            fi
+        done < "$file"
+    done
+    local i
+    for i in "${!entries[@]}"; do
+        if [ "$i" -lt $(( ${#entries[@]} - 1 )) ]; then
+            printf '%s,\n' "${entries[$i]}"
+        else
+            printf '%s\n' "${entries[$i]}"
+        fi
+    done
+}
+
 # Read a key=value entry from a preference file. Returns the value, or $default if missing.
 read_pref() {
     local file="$1" key="$2" default="${3:-}"
@@ -296,6 +365,22 @@ make_npm_proxy_cmds() {
     echo "RUN npm config set proxy $npm_proxy && npm config set https-proxy $npm_proxy && npm config set strict-ssl false"
 }
 
+make_pip_proxy_cmds() {
+    # Returns the full command prefix to place between "RUN " and the package names.
+    # When no proxy is configured: just "pip3 install".
+    # When proxy is configured: unset proxy env vars first (old urllib3/pip in
+    # Debian bullseye tries TLS-in-TLS when https_proxy is set, even with http://
+    # scheme, causing "check_hostname requires server_hostname"). Clearing the env
+    # vars and passing --proxy http:// explicitly forces a plain CONNECT tunnel.
+    if [ -z "${DOWNLOAD_PROXY:-}" ]; then
+        echo "pip3 install"
+        return
+    fi
+    local build_proxy; build_proxy=$(resolve_proxy_to_ip "$DOWNLOAD_PROXY")
+    local pip_proxy; pip_proxy=$(echo "$build_proxy" | sed 's|^https://|http://|')
+    echo "env -u https_proxy -u HTTPS_PROXY -u http_proxy -u HTTP_PROXY pip3 install --proxy $pip_proxy --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org"
+}
+
 download_model() {
     if [ -n "${MODEL_FILE:-}" ] && [ -f "$MODEL_STORAGE_DIR/$MODEL_FILE" ]; then
         return 0
@@ -381,19 +466,40 @@ pull_base_image_via_proxy() {
         return 0
     fi
 
+    # In WSL2 the Docker daemon runs inside Docker Desktop (Windows), which has
+    # its own proxy settings configured via the Docker Desktop GUI — independent
+    # of WSL env vars. Try plain docker pull first; it often works even when the
+    # proxy is unreachable from the WSL shell itself.
+    echo -e "${CYAN}  Pulling $image via Docker Desktop (WSL2)...${NC}"
+    if docker pull "$image" 2>/dev/null; then
+        return 0
+    fi
+    echo -e "${YELLOW}  Plain pull failed — attempting crane for proxy-aware pull...${NC}"
+
     local crane_bin crane_tmp=""
     crane_bin=$(command -v crane 2>/dev/null)
     if [ -z "$crane_bin" ]; then
         local crane_url="https://github.com/google/go-containerregistry/releases/download/v0.20.2/go-containerregistry_Linux_x86_64.tar.gz"
-        echo -e "${CYAN}  Downloading crane (registry pull tool) via proxy...${NC}"
         crane_tmp=$(mktemp -d)
-        if ! curl --proxy "$proxy" -fsSL "$crane_url" | tar xz -C "$crane_tmp" crane; then
-            echo -e "${RED}  ✘ Failed to download crane — check proxy and GitHub access${NC}"
-            rm -rf "$crane_tmp"; return 1
+        # Try without proxy first (--noproxy overrides env http_proxy), then via proxy.
+        echo -e "${CYAN}  Downloading crane (registry pull tool) directly...${NC}"
+        if curl --noproxy '*' -fsSL --connect-timeout 15 "$crane_url" 2>/dev/null | tar xz -C "$crane_tmp" crane 2>/dev/null; then
+            crane_bin="$crane_tmp/crane"
+        else
+            echo -e "${CYAN}  Direct download failed, retrying via proxy...${NC}"
+            if curl --proxy "$proxy" -fsSL --connect-timeout 30 "$crane_url" | tar xz -C "$crane_tmp" crane; then
+                crane_bin="$crane_tmp/crane"
+            else
+                echo -e "${YELLOW}  ✘ crane unavailable — trying docker pull with explicit proxy env vars${NC}"
+                rm -rf "$crane_tmp"
+                HTTPS_PROXY="$proxy" HTTP_PROXY="$proxy" docker pull "$image" || {
+                    echo -e "${RED}  ✘ Base image pull failed${NC}"; return 1
+                }
+                return 0
+            fi
         fi
-        crane_bin="$crane_tmp/crane"
     fi
-    echo -e "${CYAN}  Pulling $image from registry via proxy (WSL2, not daemon VM)...${NC}"
+    echo -e "${CYAN}  Pulling $image from registry via proxy (crane)...${NC}"
     local image_tar; image_tar=$(mktemp --suffix=.tar)
     if HTTPS_PROXY="$proxy" HTTP_PROXY="$proxy" "$crane_bin" pull "$image" "$image_tar"; then
         echo -e "${CYAN}  Loading image into Docker...${NC}"
