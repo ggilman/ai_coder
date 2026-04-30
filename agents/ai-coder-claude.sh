@@ -38,28 +38,39 @@ EOF
     cat > "$HOME/.claude-config/CLAUDE.md" <<'EOF'
 # File Editing Instructions
 
-When reading or writing files — especially during merge conflict resolution —
-**always use the MCP filesystem tools** (`read_file`, `write_file`) instead of
-the built-in `str_replace_based_edit_tool` or `create_file`.
+When reading or writing files, **always prefer the MCP filesystem tools**
+(`read_file`, `write_file`, `edit_file`) over the built-in
+`str_replace_based_edit_tool` or `create_file`.
 
-## Why
+## Choosing the right tool
 
-The built-in `str_replace` tool requires an exact character-for-character match
-of the text being replaced. This fails when:
-- Files contain conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`)
-- Whitespace or indentation differs from what was previously read
-- The file was modified between the read and the edit
+| Situation | Tool to use |
+|-----------|-------------|
+| Read a file | MCP `read_file` |
+| Replace a specific block (e.g. a function, a conflict) | MCP `edit_file` |
+| Create a new file or fully regenerate a file | MCP `write_file` |
+| Small precise edit in a normal file | MCP `edit_file` |
 
-The MCP `write_file` tool replaces the whole file atomically and never fails
-due to content mismatch.
+Avoid `str_replace_based_edit_tool` — it requires an exact character-for-character
+match and fails when whitespace, indentation, or line endings differ even slightly.
 
 ## Workflow for merge conflicts
 
+Conflict marker blocks (`<<<<<<<` / `=======` / `>>>>>>>`) are always unique
+within a file and make ideal anchors for `edit_file`. Do NOT rewrite the whole
+file for a conflict — use a targeted replacement:
+
 1. Run `git status` (shell) to identify conflicted files
-2. Use `read_file` (MCP filesystem) to read the full file content
-3. Resolve all conflict blocks in memory
-4. Use `write_file` (MCP filesystem) to write the complete resolved content
+2. Use MCP `read_file` to read the full file and locate the conflict block
+3. Use MCP `edit_file` with:
+   - `oldText` = the entire conflict block verbatim, from the `<<<<<<<` line
+     through to and including the `>>>>>>>` line
+   - `newText` = the resolved content only (no markers)
+4. Repeat for each conflict block in the file
 5. Run `git add <file>` then `git commit` (shell) to finalise
+
+If `edit_file` fails for any reason, fall back to MCP `write_file` with the
+fully resolved file content.
 EOF
 }
 
