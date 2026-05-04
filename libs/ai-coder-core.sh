@@ -138,7 +138,12 @@ make_mcp_servers_json() {
                 local joined; joined=$(printf ',%s' "${arr[@]}"); args_json="[${joined:1}]"
             fi
             if [ "$mode" = "opencode" ]; then
-                entries+=("    \"$key\": {\"type\": \"local\", \"command\": \"$cmd\", \"args\": $args_json}")
+                # OpenCode schema: command must be an array merging cmd+args; enabled is required.
+                local cmd_arr="\"$cmd\""
+                if [ "${#arr[@]}" -gt 0 ]; then
+                    cmd_arr="\"$cmd\",$(printf ',%s' "${arr[@]}" | cut -c2-)"
+                fi
+                entries+=("    \"$key\": {\"type\": \"local\", \"command\": [$cmd_arr], \"enabled\": true}")
             else
                 entries+=("    \"$key\": {\"command\": \"$cmd\", \"args\": $args_json}")
             fi
