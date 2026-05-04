@@ -20,7 +20,12 @@ RUN /opt/aider/bin/aider --version"
 }
 
 configure_workbench() {
-    mkdir -p "$HOME/.aider-config"
+    # Docker runs as root so mounted dir files can become root-owned on the WSL host.
+    if [ ! -d "$HOME/.aider-config" ]; then
+        mkdir -p "$HOME/.aider-config"
+    elif [ ! -w "$HOME/.aider-config" ]; then
+        sudo chown -R "$USER" "$HOME/.aider-config"
+    fi
     # Only write gitconfig if we have identity — avoids baking in blank name/email
     # Always write gitconfig — sets global autocrlf=input even without identity.
     # Guards on name/email to avoid writing blank values.

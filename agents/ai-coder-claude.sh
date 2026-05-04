@@ -22,7 +22,13 @@ build_image() {
 }
 
 configure_workbench() {
-    mkdir -p "$HOME/.claude-config"
+    # Docker runs Claude as root so files written back to the mounted ~/.claude-config
+    # end up root-owned on the WSL host. Reclaim ownership before writing config.
+    if [ ! -d "$HOME/.claude-config" ]; then
+        mkdir -p "$HOME/.claude-config"
+    elif [ ! -w "$HOME/.claude-config" ]; then
+        sudo chown -R "$USER" "$HOME/.claude-config"
+    fi
     # Always rewrite so mcpServers paths reflect the current project workspace.
     # Auth tokens are stored in ~/.claude/ (the directory), not this JSON file.
     cat > "$HOME/.claude-config.json" <<EOF

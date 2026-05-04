@@ -24,7 +24,12 @@ RUN opencode --version"
 
 configure_workbench() {
     local config_dir="$LOCAL_STACK_DIR/opencode-config"
-    mkdir -p "$config_dir"
+    # Docker runs as root so mounted dir files can become root-owned on the WSL host.
+    if [ ! -d "$config_dir" ]; then
+        mkdir -p "$config_dir"
+    elif [ ! -w "$config_dir" ]; then
+        sudo chown -R "$USER" "$config_dir"
+    fi
     cat > "$config_dir/opencode.json" <<EOF
 {
   "\$schema": "https://opencode.ai/config.json",
