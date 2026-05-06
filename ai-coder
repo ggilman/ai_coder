@@ -196,22 +196,24 @@ engine_ready=false
 proxy_ready=false
 
 while [ "$retry_count" -lt "$max_retries" ]; do
-    if docker exec "$GLOBAL_ENGINE_NAME" curl -s -m 2 http://localhost:8080/v1/models 2>/dev/null | grep -q '"id"'; then
-        engine_ready=true
-    fi
+    # Fire both checks in parallel to avoid waiting serially
+    docker exec "$GLOBAL_ENGINE_NAME" curl -s -m 2 http://localhost:8080/v1/models 2>/dev/null | grep -q '"id"' &
+    _engine_pid=$!
 
     if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
-        if curl -s -m 2 http://localhost:4000/v1/models 2>/dev/null | grep -q '"object"'; then
-            proxy_ready=true
-        fi
+        curl -s -m 2 http://localhost:4000/v1/models 2>/dev/null | grep -q '"object"' &
+        _proxy_pid=$!
+        wait "$_engine_pid" && engine_ready=true
+        wait "$_proxy_pid"  && proxy_ready=true
     else
+        wait "$_engine_pid" && engine_ready=true
         proxy_ready=true
     fi
 
     if [ "$engine_ready" = "true" ] && [ "$proxy_ready" = "true" ]; then break; fi
     retry_count=$((retry_count + 1))
     echo -ne "◈"
-    sleep 2
+    sleep 1
 done
 
 if [ "$engine_ready" = "true" ] && [ "$proxy_ready" = "true" ]; then

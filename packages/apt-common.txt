@@ -13,6 +13,7 @@ curl
 wget
 netcat-openbsd
 iputils-ping
+openssh-client
 
 # Python
 python3

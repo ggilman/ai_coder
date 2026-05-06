@@ -138,7 +138,11 @@ make_mcp_servers_json() {
                 local joined; joined=$(printf ',%s' "${arr[@]}"); args_json="[${joined:1}]"
             fi
             if [ "$mode" = "opencode" ]; then
-                entries+=("    \"$key\": {\"type\": \"local\", \"command\": \"$cmd\", \"args\": $args_json}")
+                # opencode requires command as a JSON array (cmd + args merged) and an "enabled" key
+                local oc_arr=("\"$cmd\"") oc_a
+                for oc_a in "${arr[@]}"; do oc_arr+=("$oc_a"); done
+                local oc_joined; oc_joined=$(printf ',%s' "${oc_arr[@]}"); local oc_cmd_json="[${oc_joined:1}]"
+                entries+=("    \"$key\": {\"type\": \"local\", \"command\": $oc_cmd_json, \"enabled\": true}")
             else
                 entries+=("    \"$key\": {\"command\": \"$cmd\", \"args\": $args_json}")
             fi
@@ -603,7 +607,7 @@ run_workbench() {
         -v "$(to_host_path "$(pwd)"):/$WORKSPACE_DIR" \
         --workdir "/$WORKSPACE_DIR" \
         "${extra_flags[@]}" \
-        "$IMAGE_NAME" /bin/bash -c "$entrypoint"
+        "$IMAGE_NAME" /bin/bash -c "$entrypoint" > /dev/null
 }
 
 start_hub_engine() {
@@ -659,7 +663,7 @@ start_hub_engine() {
         --parallel "$MODEL_MAX_SLOTS" -ngl 99 -c "$MODEL_CTX_SIZE" --flash-attn on \
         -ctk q8_0 -ctv q8_0 \
         --repeat-penalty 1.1 --repeat-last-n 128 \
-        "${_ts_args[@]}" || {
+        "${_ts_args[@]}" > /dev/null || {
         echo -e "${RED}✘ Failed to start engine container${NC}"; return 1
     }
 
@@ -673,7 +677,7 @@ EOF
             -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
             -e "no_proxy=localhost,127.0.0.1,$GLOBAL_ENGINE_NAME" \
             -v "$(to_host_path "$HOME/.ai-coder/litellm_config.yaml"):/app/config.yaml:ro" \
-            "$LITELLM_IMAGE" --config /app/config.yaml || {
+            "$LITELLM_IMAGE" --config /app/config.yaml > /dev/null || {
             echo -e "${RED}✘ Failed to start proxy container${NC}"; return 1
         }
     fi
