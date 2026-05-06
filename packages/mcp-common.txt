@@ -10,9 +10,7 @@
 # ============================================================
 
 # Git tools: status, diff, add, commit — used to navigate merge conflicts
-# DISABLED: mcp-server-git requires Python >=3.10; node:20-bullseye-slim only
-# has Python 3.9. Re-enable if base image is upgraded to bookworm (Python 3.11).
-# pip:mcp-server-git                          | git        | mcp-server-git                   | --repository {workspace}
+pip:mcp-server-git                          | git        | mcp-server-git                   | --repository {workspace}
 
 # Filesystem tools: reliable whole-file read/write bypassing str_replace fragility
 @modelcontextprotocol/server-filesystem       | filesystem | mcp-server-filesystem            | {workspace}
@@ -27,13 +25,11 @@
 
 # ----------------------------------------------------------------------------
 # NOTE: All official MCP servers from modelcontextprotocol/servers that are
-# Python-based require Python >=3.10. The current base image (node:20-bullseye-slim)
-# ships Python 3.9 — pip will silently reject them as "no matching distribution".
-# To use any pip: entries below, first upgrade BASE_IMAGE in ai-coder-core.sh to
-# node:20-bookworm-slim (Debian Bookworm = Python 3.11).
+# Python-based require Python >=3.10. The base image is node:20-bookworm-slim
+# (Debian Bookworm = Python 3.11), so pip: entries are fully supported.
 #
 # Known pip-installable servers (all require Python >=3.10):
-#   pip:mcp-server-git    | git      | mcp-server-git            | --repository {workspace}
-#   pip:mcp-server-fetch  | fetch    | mcp-server-fetch          |
-#   pip:mcp-server-time   | time     | mcp-server-time           |
+#   pip:mcp-server-git    | git      | mcp-server-git            | --repository {workspace}  <- enabled above
+pip:mcp-server-fetch  | fetch    | mcp-server-fetch          |
+pip:mcp-server-time   | time     | mcp-server-time           |
 # ----------------------------------------------------------------------------

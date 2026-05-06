@@ -31,7 +31,7 @@ PROXY_PREF_FILE="$HOME/.ai-coder-proxy"
 if [ -z "$DOWNLOAD_PROXY" ] && [ -f "$PROXY_PREF_FILE" ]; then
     DOWNLOAD_PROXY=$(cat "$PROXY_PREF_FILE" 2>/dev/null || true)
 fi
-BASE_IMAGE="node:20-bullseye-slim"
+BASE_IMAGE="node:24-bookworm-slim"
 
 # --- [ ENVIRONMENT & SHELL ] --------------------------------------------------
 export MSYS_NO_PATHCONV=1
@@ -371,18 +371,20 @@ make_npm_proxy_cmds() {
 
 make_pip_proxy_cmds() {
     # Returns the full command prefix to place between "RUN " and the package names.
-    # When no proxy is configured: just "pip3 install".
-    # When proxy is configured: unset proxy env vars first (old urllib3/pip in
-    # Debian bullseye tries TLS-in-TLS when https_proxy is set, even with http://
-    # scheme, causing "check_hostname requires server_hostname"). Clearing the env
-    # vars and passing --proxy http:// explicitly forces a plain CONNECT tunnel.
+    # When no proxy is configured: just "pip3 install --break-system-packages".
+    # --break-system-packages is required on Debian Bookworm (PEP 668) to allow
+    # system-wide pip installs inside Docker containers.
+    # When proxy is configured: unset proxy env vars first (urllib3/pip tries
+    # TLS-in-TLS when https_proxy is set, even with http:// scheme, causing
+    # "check_hostname requires server_hostname"). Clearing the env vars and
+    # passing --proxy http:// explicitly forces a plain CONNECT tunnel.
     if [ -z "${DOWNLOAD_PROXY:-}" ]; then
-        echo "pip3 install"
+        echo "pip3 install --break-system-packages"
         return
     fi
     local build_proxy; build_proxy=$(resolve_proxy_to_ip "$DOWNLOAD_PROXY")
     local pip_proxy; pip_proxy=$(echo "$build_proxy" | sed 's|^https://|http://|')
-    echo "env -u https_proxy -u HTTPS_PROXY -u http_proxy -u HTTP_PROXY pip3 install --proxy $pip_proxy --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org"
+    echo "env -u https_proxy -u HTTPS_PROXY -u http_proxy -u HTTP_PROXY pip3 install --break-system-packages --proxy $pip_proxy --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org"
 }
 
 download_model() {
