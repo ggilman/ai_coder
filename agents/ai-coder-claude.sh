@@ -34,6 +34,11 @@ $(make_mcp_servers_json "/$WORKSPACE_DIR" standard "$PACKAGES_DIR/mcp-common.txt
 EOF
 }
 
+configure_workbench() {
+    mkdir -p "$HOME/.claude-config"
+    [ -f "$HOME/.claude-config.json" ] || echo '{}' > "$HOME/.claude-config.json"
+}
+
 start_workbench() {
     echo -e "${ICON_GEAR} Mapping Spoke for [$PROJECT_ID]..."
     run_workbench \
