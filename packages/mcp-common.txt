@@ -3,7 +3,14 @@
 # that support MCP (Claude, Gemini, OpenCode). Not used for Aider.
 #
 # Format (pipe-delimited, one server per line):
-#   npm-package | server-key | command | arg1 arg2 ...
+#   npm-package | server-key | command | arg1 arg2 ... | ENV_VAR1,ENV_VAR2 | net
+#
+# The optional 5th field lists env var NAMES (from the host shell) whose
+# values are expanded and embedded in the generated MCP config at startup.
+#
+# The optional 6th field (net): set to "online" to skip the server when
+# network isolation is active (ai-coder --setup → isolate containers).
+# Leave blank for servers that work fully offline (local file I/O only).
 #
 # Use {workspace} as a placeholder for the container workspace path.
 # Lines starting with # are ignored. Blank lines are ignored.
@@ -23,13 +30,34 @@ pip:mcp-server-git                          | git        | mcp-server-git       
 # Helps agents plan and reason through complex tasks (refactors, conflict resolution, etc.)
 @modelcontextprotocol/server-sequential-thinking | thinking | mcp-server-sequential-thinking  |
 
+# Shell command execution — run cmake, make, ctest, bash scripts directly from the agent.
+# Configured via env vars. ALLOWED_COMMANDS=all and ALLOWED_FLAGS=all permit any command/flag.
+# ALLOW_SHELL_OPERATORS=true enables &&, ||, |, > etc.
+pip:cli-mcp-server                          | shell      | cli-mcp-server                   | | ALLOWED_DIR={workspace},ALLOWED_COMMANDS=all,ALLOWED_FLAGS=all,ALLOW_SHELL_OPERATORS=true,COMMAND_TIMEOUT=120
+
+# Conan C++ package manager — manage conanfile.py deps, search Conan Center, check CVEs.
+# Official conan-io MCP server. conan itself is also installed via pip.
+# Requires internet to query Conan Center Index.
+pip:conan-mcp conan                         | conan      | conan-mcp                        | |                                                                                     | online
+
+# Context7 — fetches accurate, version-pinned library docs on demand.
+# Usage: add "use context7" to any prompt (CMake docs, Boost, OpenCV, bash manpages, etc.)
+# Pre-installed as npm package; run directly (not via npx -y which downloads at runtime).
+# Requires internet to reach the Upstash Context7 API.
+@upstash/context7-mcp                       | context7   | context7-mcp                     | |                                                                                     | online
+
+# Brave Search — web search, news, and AI-summarized results.
+# Requires a free API key: https://brave.com/search/api
+# Set BRAVE_API_KEY in your shell environment before launching ai-coder.
+# Pre-installed as npm package; run directly (not via npx -y which downloads at runtime).
+# Requires internet to reach the Brave Search API.
+@brave/brave-search-mcp-server              | brave-search | brave-search-mcp-server         | | BRAVE_API_KEY                                                                       | online
+
 # ----------------------------------------------------------------------------
-# NOTE: All official MCP servers from modelcontextprotocol/servers that are
-# Python-based require Python >=3.10. The base image is node:20-bookworm-slim
-# (Debian Bookworm = Python 3.11), so pip: entries are fully supported.
+# NOTE: The base image is node:24-bookworm-slim (Debian Bookworm = Python 3.11).
+# pip: entries are fully supported with --break-system-packages.
 #
-# Known pip-installable servers (all require Python >=3.10):
-#   pip:mcp-server-git    | git      | mcp-server-git            | --repository {workspace}  <- enabled above
+# Additional pip servers (all require Python >=3.10):
 pip:mcp-server-fetch  | fetch    | mcp-server-fetch          |
 pip:mcp-server-time   | time     | mcp-server-time           |
 # ----------------------------------------------------------------------------

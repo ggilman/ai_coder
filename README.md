@@ -93,7 +93,29 @@ GPU_MODE=single ./ai-coder
 
 ## Customising the Workbench Image
 
-The packages installed into each workbench container are defined in plain text files under the `packages/` directory. One package per line; lines starting with `#` are ignored.
+### When does a rebuild apply changes?
+
+A rebuild (`./ai-coder --rebuild` followed by `./ai-coder`) is only needed when the Docker image itself must change. Many settings take effect immediately on the next launch without any rebuild.
+
+| Operation | Rebuild required? | Notes |
+| --- | :---: | --- |
+| Add / remove an apt package (`apt-*.txt`) | **Yes** | Packages are installed during the image build |
+| Add / remove an MCP server (`mcp-*.txt`) — new npm or pip package | **Yes** | Packages are `npm install -g` / `pip install`'d during the image build |
+| Change MCP server args or `{workspace}` substitution | No | Config is regenerated fresh on every launch |
+| Change an MCP env var value (e.g. `BRAVE_API_KEY`) | No | Value is read from your shell at launch time |
+| Change model family or VRAM tier | No | Model is loaded by the engine container at runtime |
+| Change `config/ai-coder-model.conf` settings | No | Read at launch time |
+| Add a new model family config (`config/families/*.conf`) | No | Read at launch time |
+| Change GPU mode (`--setup`) | No | Passed as flags when the engine container starts |
+| Change proxy, network isolation, or git identity (`--setup`) | No | Applied at container start time |
+| Upgrade `BASE_IMAGE` in `ai-coder-core.sh` | **Yes** | The base layer must be pulled and rebuilt |
+| Change the Dockerfile template in `build_standard_image` | **Yes** | Modifies the image build instructions |
+| Change an agent's `configure_workbench` function | No | Config files are written to a host-mounted volume at launch |
+| Change an agent's `start_workbench` / `run_workbench` flags | No | Flags are applied when the container is started |
+
+### APT Packages
+
+The apt packages installed into each workbench container are defined in plain text files under the `packages/` directory. One package per line; lines starting with `#` are ignored.
 
 | File | Used by |
 | --- | --- |
@@ -109,6 +131,104 @@ To add a package, edit the relevant file and then force a rebuild:
 echo "htop" >> packages/apt-common.txt
 ./ai-coder --rebuild
 ./ai-coder
+```
+
+### MCP Servers
+
+MCP (Model Context Protocol) servers extend what the AI agent can do — web search, shell execution, database access, git operations, and more. They are configured in pipe-delimited text files under `packages/`.
+
+| File | Used by |
+| --- | --- |
+| `packages/mcp-common.txt` | All MCP-capable agents (Claude, OpenCode, Gemini) |
+| `packages/mcp-claude.txt` | Claude image only |
+| `packages/mcp-opencode.txt` | OpenCode image only |
+| `packages/mcp-gemini.txt` | Gemini CLI image only |
+
+#### File format
+
+```
+npm-package | server-key | command | arg1 arg2 ... | ENV_VAR1,ENV_VAR2
+```
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `npm-package` | Yes | npm package name to install (`npm install -g`). Prefix with `pip:` for PyPI packages. |
+| `server-key` | Yes | Unique JSON key used to identify this server in the generated config. |
+| `command` | Yes | The executable to run (e.g. `mcp-server-git`, `npx`). |
+| `arg1 arg2 ...` | No | Space-separated arguments. Use `{workspace}` as a placeholder for the container workspace path. |
+| `ENV_VAR1,ENV_VAR2` | No | Comma-separated list of env var references. Two forms are supported: **bare name** (`MY_KEY`) expands the value from your host shell; **`NAME=value`** sets a literal value (supports `{workspace}` substitution). |
+
+Lines starting with `#` and blank lines are ignored.
+
+#### Currently installed servers (`mcp-common.txt`)
+
+| Server | Key | What it does |
+| --- | --- | --- |
+| `mcp-server-git` | `git` | Git operations (status, diff, add, commit) within the workspace |
+| `@modelcontextprotocol/server-filesystem` | `filesystem` | Reliable whole-file read/write across the workspace |
+| `@modelcontextprotocol/server-memory` | `memory` | Persistent knowledge graph — survives across sessions within the container lifetime |
+| `@modelcontextprotocol/server-sequential-thinking` | `thinking` | Structured multi-step problem decomposition |
+| `cli-mcp-server` | `shell` | Execute shell commands (cmake, make, ctest, bash scripts) scoped to the workspace |
+| `conan-mcp` | `conan` | Manage C++ Conan dependencies, search Conan Center, check CVEs |
+| `@upstash/context7-mcp` | `context7` | Fetch accurate, version-pinned library docs on demand — add `use context7` to any prompt |
+| `@brave/brave-search-mcp-server` | `brave-search` | Web search and news — requires `BRAVE_API_KEY` in your shell environment |
+| `mcp-server-fetch` | `fetch` | HTTP fetch for retrieving web pages and API responses |
+| `mcp-server-time` | `time` | Current time and timezone conversion |
+
+#### Adding an npm MCP server
+
+```
+# packages/mcp-common.txt
+@some-org/some-mcp-server | my-tool | some-mcp-server | --some-arg {workspace}
+```
+
+Then rebuild:
+
+```bash
+./ai-coder --rebuild && ./ai-coder
+```
+
+#### Adding a pip MCP server
+
+Prefix the package name with `pip:`:
+
+```
+pip:some-mcp-package | my-tool | some-mcp-server | --flag
+```
+
+#### Adding a server that needs an API key
+
+Pass the environment variable **name** in the 5th field. Set the variable in your shell before launching:
+
+```
+@some-org/some-mcp-server | my-tool | npx | -y @some-org/some-mcp-server | MY_API_KEY
+```
+
+```bash
+export MY_API_KEY=your-key-here
+./ai-coder
+```
+
+The value is read from your environment at launch and embedded in the generated config. It is never stored on disk by ai-coder itself.
+
+#### Adding a binary MCP server (e.g. Gitea MCP)
+
+Some servers ship as compiled binaries rather than npm/pip packages. For those:
+
+1. Download the binary and place it somewhere on your host (e.g. `~/.ai-coder/gitea-mcp`).
+2. Mount it into the container by adding a `-v` flag to `run_workbench` in the relevant agent script (e.g. `agents/ai-coder-opencode.sh`).
+3. Add the entry to the appropriate `mcp-*.txt` file using a placeholder package name and the binary as the command.
+
+See the documented example in `packages/mcp-opencode.txt` for the full Gitea MCP setup.
+
+#### Agent-specific servers
+
+To add a server only for one agent, edit that agent's file instead of `mcp-common.txt`:
+
+```bash
+# OpenCode only
+echo "@some-org/server | key | cmd | args" >> packages/mcp-opencode.txt
+./ai-coder --rebuild && ./ai-coder
 ```
 
 ## Config Persistence
@@ -127,8 +247,21 @@ echo "htop" >> packages/apt-common.txt
 | ai-coder | Network isolation preference | `~/.ai-coder-netconfig` |
 | ai-coder | Setup completion sentinel | `~/.ai-coder-setup` |
 | ai-coder | Git identity (name + email) | `~/.ai-coder-gitconfig` |
+| ai-coder | **Session env vars** (API keys, secrets) | `~/.ai-coder-env` |
 
 All paths are volume-mounted into the workbench container, so settings survive container restarts without rebuilding the image. The `~/.claude-config.json` file is pre-created with `{}` on first launch if it does not already exist.
+
+### Session environment file (`~/.ai-coder-env`)
+
+If `~/.ai-coder-env` exists, it is sourced automatically at the start of every `ai-coder` launch. This is the recommended place for API keys and other secrets that should be available to the agent session but are not appropriate for your shell profile.
+
+Example `~/.ai-coder-env`:
+```bash
+export BRAVE_API_KEY=your-key-here
+export SOME_OTHER_API_KEY=another-key
+```
+
+The file is plain bash, so any valid shell syntax works. Variables set here are available to all MCP server config generation (e.g. the `BRAVE_API_KEY` env var field in `mcp-common.txt`). The path can be overridden with the `AI_CODER_ENV_FILE` environment variable.
 
 ## Setup
 
@@ -198,6 +331,8 @@ No internet connection is required on the target machine.
 - **Model Loading Issues**: Run `./ai-status.sh` to check GPU availability and VRAM.
 - **Tool call errors in Claude Code** (`missing parameter`): Claude Code requires llama.cpp's native Anthropic endpoint. The workbench connects directly to the engine at port 8080 (`/v1/messages`) to avoid format conversion errors.
 - **Connectivity Issues**: Ensure `DOWNLOAD_PROXY` is set correctly. The scripts use `nslookup` to resolve proxy hostnames to IPs so Docker build containers can reach the proxy.
+- **Brave Search not working**: Ensure `BRAVE_API_KEY` is exported in your shell before running `./ai-coder`. Get a free key at [brave.com/search/api](https://brave.com/search/api).
+
 - **Shell Compatibility**: The scripts support both **WSL2** and **Git Bash** on Windows.
 - **Packages changed but image not rebuilt**: Run `./ai-coder --rebuild` then `./ai-coder`.
 - **Claude Code "Error editing file"**: Caused by CRLF line endings in project files on Windows. Fix with:

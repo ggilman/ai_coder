@@ -2,10 +2,27 @@
 # mcp-opencode.txt — extra MCP servers for the OpenCode workbench only
 #
 # Format (pipe-delimited, one server per line):
-#   npm-package | server-key | command | arg1 arg2 ...
+#   npm-package | server-key | command | arg1 arg2 ... | ENV_VAR1,ENV_VAR2 | net
+#
+# Set 6th field to "online" to skip the server when network isolation is active.
 #
 # Use {workspace} as a placeholder for the container workspace path.
 # Lines starting with # are ignored. Blank lines are ignored.
 # ============================================================
 
-# Add OpenCode-specific MCP servers here
+# ----------------------------------------------------------------------------
+# Gitea MCP — full access to your self-hosted Gitea instance.
+# Issues, PRs, branches, releases, CI/CD triggers, file CRUD — 60+ tools.
+#
+# INSTALLATION: gitea-mcp is a Go binary (not npm/pip). To enable it:
+#   1. Download the Linux amd64 binary from:
+#      https://gitea.com/gitea/gitea-mcp/releases/latest
+#      e.g. wget -O ~/.ai-coder/gitea-mcp https://gitea.com/gitea/gitea-mcp/releases/download/v1.1.0/gitea-mcp-linux-amd64
+#           chmod +x ~/.ai-coder/gitea-mcp
+#   2. Mount it into the container: add to run_workbench in ai-coder-opencode.sh:
+#      -v "$(to_host_path "$HOME/.ai-coder/gitea-mcp"):/usr/local/bin/gitea-mcp"
+#   3. Set env vars: GITEA_HOST=https://your.gitea.host  GITEA_ACCESS_TOKEN=<token>
+#   4. Uncomment the entry below:
+#
+# gitea-mcp-binary | gitea | gitea-mcp | -t stdio | GITEA_HOST,GITEA_ACCESS_TOKEN
+# ----------------------------------------------------------------------------

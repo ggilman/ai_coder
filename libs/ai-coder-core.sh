@@ -52,10 +52,13 @@ IS_GITBASH=$(expr "$(uname -s)" : '.*MINGW.*' >/dev/null 2>&1 && echo "true" || 
 # Model storage: resolve to Windows home so Git Bash and WSL share the same folder.
 # Git Bash $HOME is already the Windows home (/c/Users/...).
 # In WSL, query the Windows USERPROFILE via cmd.exe and convert with wslpath.
+# WIN_HOME is also used as the base for other cross-shell shared paths (e.g. .ai-coder-env).
+WIN_HOME="$HOME"
 if [ "$IS_WSL" = "true" ]; then
     _win_home=$(cmd.exe /c "echo %USERPROFILE%" 2>/dev/null | tr -d '\r\n')
     if [ -n "$_win_home" ]; then
-        MODEL_STORAGE_DIR="$(wslpath "$_win_home")/ai-models"
+        WIN_HOME="$(wslpath "$_win_home")"
+        MODEL_STORAGE_DIR="$WIN_HOME/ai-models"
     else
         MODEL_STORAGE_DIR="${MODEL_STORAGE_DIR:-$HOME/ai-models}"
     fi
@@ -113,8 +116,11 @@ read_mcp_pip_packages() {
 # Emit indented mcpServers JSON entries from one or more server list files.
 # Usage: make_mcp_servers_json <workspace-path> <mode> <file1> [file2 ...]
 # mode: "standard" (Claude / Gemini format) or "opencode"
-# File format (pipe-delimited): npm-package | server-key | command | arg1 arg2 ...
+# File format (pipe-delimited): npm-pkg | server-key | command | arg1 arg2 ... | ENV_VAR1,ENV_VAR2 | net
 # Use {workspace} in args as a placeholder for <workspace-path>.
+# The optional 5th field lists env var *names* (comma-separated) whose values are
+# expanded from the calling environment and embedded in the generated config.
+# The optional 6th field: set to "online" to skip the server when NETWORK_INTERNAL=true.
 make_mcp_servers_json() {
     local workspace="$1" mode="${2:-standard}"
     shift 2
@@ -122,10 +128,12 @@ make_mcp_servers_json() {
     local file
     for file in "$@"; do
         [ -f "$file" ] || continue
-        while IFS='|' read -r pkg key cmd args_str; do
+        while IFS='|' read -r pkg key cmd args_str env_vars_str net_req; do
             pkg=$(printf '%s' "$pkg"  | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed 's/^pip://')
             [[ "$pkg" =~ ^# ]] && continue
             [ -z "$pkg" ] && continue
+            net_req=$(printf '%s' "${net_req:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            [ "$net_req" = "online" ] && [ "${NETWORK_INTERNAL:-false}" = "true" ] && continue
             key=$(printf '%s' "$key"  | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
             cmd=$(printf '%s' "$cmd"  | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
             args_str=$(printf '%s' "$args_str" | tr -d '\r' | \
@@ -137,14 +145,43 @@ make_mcp_servers_json() {
             if [ "${#arr[@]}" -gt 0 ]; then
                 local joined; joined=$(printf ',%s' "${arr[@]}"); args_json="[${joined:1}]"
             fi
+            # Build optional env JSON from 5th field (comma-separated name=value or bare name pairs)
+            # Bare names expand from the calling environment; name={workspace} substitutes the workspace path.
+            env_vars_str=$(printf '%s' "${env_vars_str:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*//')
+            local env_json="" env_parts=() env_name env_override
+            if [ -n "$env_vars_str" ]; then
+                IFS=',' read -ra env_names <<< "$env_vars_str"
+                for env_name in "${env_names[@]}"; do
+                    env_name=$(printf '%s' "$env_name" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                    [ -z "$env_name" ] && continue
+                    # Support NAME=value syntax in the 5th field (with {workspace} substitution)
+                    if [[ "$env_name" == *=* ]]; then
+                        local ev_key ev_val
+                        ev_key="${env_name%%=*}"
+                        ev_val="${env_name#*=}"
+                        ev_val=$(printf '%s' "$ev_val" | sed "s|{workspace}|$workspace|g")
+                        env_parts+=("\"$ev_key\": \"$ev_val\"")
+                    else
+                        local env_val="${!env_name:-}"
+                        env_parts+=("\"$env_name\": \"$env_val\"")
+                    fi
+                done
+                if [ "${#env_parts[@]}" -gt 0 ]; then
+                    local env_joined; env_joined=$(printf ',%s' "${env_parts[@]}")
+                    # OpenCode uses "environment"; standard Claude/Gemini format uses "env"
+                    local env_field="env"
+                    [ "$mode" = "opencode" ] && env_field="environment"
+                    env_json=", \"$env_field\": {${env_joined:1}}"
+                fi
+            fi
             if [ "$mode" = "opencode" ]; then
                 # opencode requires command as a JSON array (cmd + args merged) and an "enabled" key
                 local oc_arr=("\"$cmd\"") oc_a
                 for oc_a in "${arr[@]}"; do oc_arr+=("$oc_a"); done
                 local oc_joined; oc_joined=$(printf ',%s' "${oc_arr[@]}"); local oc_cmd_json="[${oc_joined:1}]"
-                entries+=("    \"$key\": {\"type\": \"local\", \"command\": $oc_cmd_json, \"enabled\": true}")
+                entries+=("    \"$key\": {\"type\": \"local\", \"command\": $oc_cmd_json, \"enabled\": true$env_json}")
             else
-                entries+=("    \"$key\": {\"command\": \"$cmd\", \"args\": $args_json}")
+                entries+=("    \"$key\": {\"command\": \"$cmd\", \"args\": $args_json$env_json}")
             fi
         done < "$file"
     done

@@ -90,6 +90,18 @@ if [ ! -f "$HOME/.ai-coder-setup" ]; then
     exit 1
 fi
 
+# Load optional user environment file — a convenient place for secrets like
+# API keys (e.g. BRAVE_API_KEY) that should be available for this session only
+# and are not appropriate for your shell profile. Variables set here are
+# available to all agent config generation (MCP servers, etc.).
+# Resolves to the Windows home directory so the same file is shared between
+# Git Bash and WSL (e.g. C:\Users\ggilm\.ai-coder-env).
+AI_CODER_ENV_FILE="${AI_CODER_ENV_FILE:-$WIN_HOME/.ai-coder-env}"
+if [ -f "$AI_CODER_ENV_FILE" ]; then
+    # shellcheck source=/dev/null
+    source "$AI_CODER_ENV_FILE"
+fi
+
 # Handle --menu flag: clears both family and tool preferences so both menus
 # are shown again on the next step of this run.
 if [[ "${1:-}" == "--menu" ]]; then
