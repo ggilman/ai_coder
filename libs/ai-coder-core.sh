@@ -545,6 +545,15 @@ build_standard_image() {
         proxy_args=(--build-arg "PROXY_URL=$build_proxy")
     fi
 
+    local dotnet_feed_step=""
+    if echo "$apt_pkgs" | grep -qE '(^| )dotnet-'; then
+        dotnet_feed_step='RUN apt-get update -qq \
+    && apt-get install -y --no-install-recommends wget ca-certificates \
+    && http_proxy="${PROXY_URL}" https_proxy="${PROXY_URL}" HTTPS_PROXY="${PROXY_URL}" \
+       wget -q https://packages.microsoft.com/config/debian/11/packages-microsoft-prod.deb \
+       -O /tmp/msft.deb && dpkg -i /tmp/msft.deb && rm /tmp/msft.deb'
+    fi
+
     cat > "$LOCAL_STACK_DIR/$df_name" <<DOCKERFILE
 FROM $BASE_IMAGE
 ARG PROXY_URL
@@ -554,6 +563,7 @@ RUN if [ -n "\${PROXY_URL}" ]; then \
       sed -i 's|http://|https://|g' /etc/apt/sources.list && \
       printf 'Acquire::https::Proxy "%s";\nAcquire::https::Verify-Peer "false";\nAcquire::https::Verify-Host "false";\n' "\${apt_proxy}" > /etc/apt/apt.conf.d/01proxy; \
     fi
+${dotnet_feed_step}
 RUN apt-get update && apt-get install -y \
     ${apt_pkgs} \
     --no-install-recommends --fix-missing && rm -rf /var/lib/apt/lists/*
