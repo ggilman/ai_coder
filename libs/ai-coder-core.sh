@@ -220,6 +220,20 @@ ensure_gpu_config() {
     GPU_MODE=$(read_pref "$HOME/.ai-coder-gpuconf" gpu_mode single)
 }
 
+# Write a ~/.gitconfig-container file that gets mounted into containers as
+# /root/.gitconfig so git commands in any repo (including newly init'd ones)
+# pick up the correct author identity.
+ensure_container_gitconfig() {
+    local gitcfg="$HOME/.gitconfig-container"
+    if [ -n "${GIT_USER_EMAIL:-}" ] || [ -n "${GIT_USER_NAME:-}" ]; then
+        cat > "$gitcfg" <<GITCFG
+[user]
+    email = ${GIT_USER_EMAIL:-developer@localhost}
+    name = ${GIT_USER_NAME:-Developer}
+GITCFG
+    fi
+}
+
 # Write identity into the local repo's .git/config (host-side).
 # The workspace volume mount means the container sees this immediately.
 # Skips gracefully if not inside a git repo or if already configured.
@@ -611,12 +625,17 @@ run_workbench() {
     # communication if no_proxy isn't perfectly honoured by every client.
     local _wb_http_proxy="${DOWNLOAD_PROXY:-}"
     [ "${NETWORK_INTERNAL:-false}" = "true" ] && _wb_http_proxy=""
+    local gitcfg_mount=()
+    if [ -f "$HOME/.gitconfig-container" ]; then
+        gitcfg_mount=(-v "$(to_host_path "$HOME/.gitconfig-container"):/root/.gitconfig:ro")
+    fi
     docker run -d --name "$WORKBENCH" --network "$wb_network" --privileged \
         -e "http_proxy=${_wb_http_proxy}" -e "https_proxy=${_wb_http_proxy}" \
         -e "HTTP_PROXY=${_wb_http_proxy}" -e "HTTPS_PROXY=${_wb_http_proxy}" \
         -e "no_proxy=$no_proxy_hosts" -e "NO_PROXY=$no_proxy_hosts" \
         -v "$(to_host_path "$(pwd)"):/$WORKSPACE_DIR" \
         --workdir "/$WORKSPACE_DIR" \
+        "${gitcfg_mount[@]}" \
         "${extra_flags[@]}" \
         "$IMAGE_NAME" /bin/bash -c "$entrypoint"
 }

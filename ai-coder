@@ -163,6 +163,7 @@ if [ "${BUILD_ONLY:-false}" = "true" ]; then
 fi
 
 ensure_git_identity
+ensure_container_gitconfig
 ensure_network_config
 ensure_gpu_config
 docker network create "$HUB_NETWORK" 2>/dev/null || true
