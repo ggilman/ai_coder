@@ -22,7 +22,13 @@ build_image() {
 }
 
 configure_workbench() {
-    mkdir -p "$HOME/.claude-config"
+    # Docker runs Claude as root so files written back to the mounted ~/.claude-config
+    # end up root-owned on the WSL host. Reclaim ownership before writing config.
+    if [ ! -d "$HOME/.claude-config" ]; then
+        mkdir -p "$HOME/.claude-config"
+    elif [ ! -w "$HOME/.claude-config" ]; then
+        sudo chown -R "$USER" "$HOME/.claude-config"
+    fi
     # Always rewrite so mcpServers paths reflect the current project workspace.
     # Auth tokens are stored in ~/.claude/ (the directory), not this JSON file.
     cat > "$HOME/.claude-config.json" <<EOF
@@ -31,6 +37,46 @@ configure_workbench() {
 $(make_mcp_servers_json "/$WORKSPACE_DIR" standard "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-claude.txt")
   }
 }
+EOF
+    # Write global instructions so Claude uses MCP tools for file I/O.
+    # This avoids the str_replace exact-match failures that occur when editing
+    # files with whitespace variance or after merge conflicts add marker lines.
+    cat > "$HOME/.claude-config/CLAUDE.md" <<'EOF'
+# File Editing Instructions
+
+When reading or writing files, **always prefer the MCP filesystem tools**
+(`read_file`, `write_file`, `edit_file`) over the built-in
+`str_replace_based_edit_tool` or `create_file`.
+
+## Choosing the right tool
+
+| Situation | Tool to use |
+|-----------|-------------|
+| Read a file | MCP `read_file` |
+| Replace a specific block (e.g. a function, a conflict) | MCP `edit_file` |
+| Create a new file or fully regenerate a file | MCP `write_file` |
+| Small precise edit in a normal file | MCP `edit_file` |
+
+Avoid `str_replace_based_edit_tool` — it requires an exact character-for-character
+match and fails when whitespace, indentation, or line endings differ even slightly.
+
+## Workflow for merge conflicts
+
+Conflict marker blocks (`<<<<<<<` / `=======` / `>>>>>>>`) are always unique
+within a file and make ideal anchors for `edit_file`. Do NOT rewrite the whole
+file for a conflict — use a targeted replacement:
+
+1. Run `git status` (shell) to identify conflicted files
+2. Use MCP `read_file` to read the full file and locate the conflict block
+3. Use MCP `edit_file` with:
+   - `oldText` = the entire conflict block verbatim, from the `<<<<<<<` line
+     through to and including the `>>>>>>>` line
+   - `newText` = the resolved content only (no markers)
+4. Repeat for each conflict block in the file
+5. Run `git add <file>` then `git commit` (shell) to finalise
+
+If `edit_file` fails for any reason, fall back to MCP `write_file` with the
+fully resolved file content.
 EOF
 }
 

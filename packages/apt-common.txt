@@ -27,6 +27,9 @@ g++
 make
 cmake
 
+# .NET SDK (LTS)
+dotnet-sdk-8.0
+
 # Data & files
 jq
 sqlite3

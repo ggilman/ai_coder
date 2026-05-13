@@ -26,7 +26,12 @@ RUN gemini --version"
 configure_workbench() {
     # Store gemini config in the host home dir so auth tokens and session state
     # persist across projects and container restarts, matching Claude's pattern.
-    mkdir -p "$HOME/.gemini-config"
+    # Docker runs as root so mounted dir files can become root-owned on the WSL host.
+    if [ ! -d "$HOME/.gemini-config" ]; then
+        mkdir -p "$HOME/.gemini-config"
+    elif [ ! -w "$HOME/.gemini-config" ]; then
+        sudo chown -R "$USER" "$HOME/.gemini-config"
+    fi
     # Always rewrite settings.json so mcpServers paths reflect the current project.
     # Auth is injected via GEMINI_API_KEY env var, so no tokens are stored here.
     cat > "$HOME/.gemini-config/settings.json" <<EOF
