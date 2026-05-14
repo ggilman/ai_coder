@@ -158,6 +158,7 @@ fi
 # --- [ IGNITION ] -------------------------------------------------------------
 
 check_docker || { echo -e "${RED}✘ Docker initialization failed${NC}"; exit 1; }
+ensure_gpu_config
 detect_model || true
 download_model || {
     echo -e "${RED}✘ Model download failed${NC}"
@@ -177,7 +178,6 @@ fi
 ensure_git_identity
 ensure_container_gitconfig
 ensure_network_config
-ensure_gpu_config
 docker network create "$HUB_NETWORK" 2>/dev/null || true
 if [ "${NETWORK_INTERNAL:-false}" = "true" ]; then
     docker network create --internal "$HUB_ISOLATED_NET" 2>/dev/null || true

@@ -494,20 +494,9 @@ detect_model() {
         echo -e "${ICON_OK} Target Model: ${CYAN}${MODEL_FILE}${NC}"
         return 0
     fi
-    
-    echo -e "${YELLOW}⚠ Target model not found: $MODEL_FILE${NC}"
-    echo -e "${CYAN}Scanning for available ${MODEL_FAMILY} GGUF models...${NC}"
-    local found_model; found_model=$(find "$MODEL_STORAGE_DIR" -maxdepth 1 -type f -name "*.gguf" 2>/dev/null | grep -Ei "$MODEL_FILE_PATTERN" | head -1)
-    if [ -n "$found_model" ]; then
-        MODEL_FILE=$(basename "$found_model")
-        echo -e "${GREEN}✔ Using available model: ${CYAN}${MODEL_FILE}${NC}"
-        return 0
-    fi
-    
-    if [ "$MODEL_STRICT_FAMILY" = "true" ]; then
-        echo -e "${RED}✘ No ${MODEL_FAMILY} models found in $MODEL_STORAGE_DIR${NC}"; return 1
-    fi
-    return 1
+
+    echo -e "${YELLOW}⚠ Target model not found locally — will download: ${CYAN}${MODEL_FILE}${NC}"
+    return 0
 }
 
 pull_base_image_via_proxy() {
@@ -721,7 +710,7 @@ start_hub_engine() {
         "$LLAMA_IMAGE" \
         -m "/models/$MODEL_FILE" --host 0.0.0.0 --port 8080 \
         --parallel "$MODEL_MAX_SLOTS" -ngl 99 -c "$MODEL_CTX_SIZE" --flash-attn on \
-        -ctk q8_0 -ctv q8_0 \
+        -ctk "${MODEL_KV_TYPE:-q8_0}" -ctv "${MODEL_KV_TYPE:-q8_0}" \
         --repeat-penalty 1.1 --repeat-last-n 128 \
         "${_ts_args[@]}" > /dev/null || {
         echo -e "${RED}✘ Failed to start engine container${NC}"; return 1
