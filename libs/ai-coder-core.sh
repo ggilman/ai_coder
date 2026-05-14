@@ -595,7 +595,12 @@ RUN if [ -n "\${PROXY_URL}" ]; then \
       sed -i 's|http://|https://|g' /etc/apt/sources.list && \
       printf 'Acquire::https::Proxy "%s";\nAcquire::https::Verify-Peer "false";\nAcquire::https::Verify-Host "false";\n' "\${apt_proxy}" > /etc/apt/apt.conf.d/01proxy; \
     fi
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y wget ca-certificates gnupg apt-transport-https --no-install-recommends && \
+    wget -qO- https://packages.microsoft.com/keys/microsoft.asc | \
+      gpg --dearmor > /usr/share/keyrings/microsoft-archive-keyring.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
+      > /etc/apt/sources.list.d/microsoft-prod.list && \
+    apt-get update && apt-get install -y \
     ${apt_pkgs} \
     --no-install-recommends --fix-missing && rm -rf /var/lib/apt/lists/*
 ENV http_proxy=\${PROXY_URL} https_proxy=\${PROXY_URL} HTTP_PROXY=\${PROXY_URL} HTTPS_PROXY=\${PROXY_URL} \
