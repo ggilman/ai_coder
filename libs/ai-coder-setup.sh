@@ -135,6 +135,27 @@ cmd_setup() {
         esac
     fi
 
+    echo -e "\n${CYAN}Host port exposure — publish the engine on localhost:8080?${NC}"
+    echo -e "${DIM}  Allows external applications (e.g. Open WebUI) to connect directly.${NC}"
+    echo -e "${DIM}  Leave disabled if you only need the AI coding tools inside Docker.${NC}"
+    _cur_expose=$(read_pref "$HOME/.ai-coder-portconfig" expose_host_port no)
+    echo -e "${DIM}  Current: ${_cur_expose}${NC}"
+    echo -n "  Expose engine on localhost:8080? [y/N]: "
+    read -r _expose_input
+    case "${_expose_input,,}" in
+        y|yes)
+            printf 'expose_host_port=yes\n' > "$HOME/.ai-coder-portconfig"
+            echo -e "${ICON_OK} Engine will be published on ${CYAN}localhost:8080${NC}."
+            ;;
+        n|no)
+            printf 'expose_host_port=no\n' > "$HOME/.ai-coder-portconfig"
+            echo -e "${DIM}  Engine port not exposed to host.${NC}"
+            ;;
+        *)
+            echo -e "${DIM}  Host port exposure unchanged (${_cur_expose}).${NC}"
+            ;;
+    esac
+
     echo -e "\n${CYAN}Git identity for commits inside containers:${NC}"
     _cur_git_email=$(read_pref "$HOME/.ai-coder-gitconfig" email)
     _cur_git_name=$(read_pref "$HOME/.ai-coder-gitconfig" name)

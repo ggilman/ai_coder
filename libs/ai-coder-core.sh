@@ -253,7 +253,7 @@ ensure_network_config() {
 # Sets GPU_MODE in the calling environment ("multi" or "single").
 # Silently skips the prompt when only one GPU is present.
 ensure_gpu_config() {
-    GPU_MODE=$(read_pref "$HOME/.ai-coder-gpuconf" gpu_mode single)
+    GPU_MODE=$(read_pref "$HOME/.ai-coder-gpuconf" gpu_mode multi)
 }
 
 # Write a ~/.gitconfig-container file that gets mounted into containers as
@@ -709,7 +709,14 @@ start_hub_engine() {
     local _hub_net="$HUB_NETWORK"
     [ "${NETWORK_INTERNAL:-false}" = "true" ] && _hub_net="$HUB_ISOLATED_NET"
 
+    local _port_args=()
+    if [ "$(read_pref "$HOME/.ai-coder-portconfig" expose_host_port no)" = "yes" ]; then
+        _port_args=(-p 8080:8080)
+        echo -e "${ICON_GEAR} Engine port: ${GREEN}published on localhost:8080${NC}"
+    fi
+
     docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$_hub_net" --gpus "$_gpus_flag" --restart on-failure:3 \
+        "${_port_args[@]}" \
         -v "$(to_host_path "$MODEL_STORAGE_DIR"):/models" \
         "$LLAMA_IMAGE" \
         -m "/models/$MODEL_FILE" --host 0.0.0.0 --port 8080 \
