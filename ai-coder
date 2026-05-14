@@ -183,7 +183,23 @@ if [ "${NETWORK_INTERNAL:-false}" = "true" ]; then
     docker network create --internal "$HUB_ISOLATED_NET" 2>/dev/null || true
 fi
 
-if [ -z "$(docker ps -q -f name=^/${GLOBAL_ENGINE_NAME}$ 2>/dev/null)" ]; then
+_engine_running=""
+[ -n "$(docker ps -q -f name=^/${GLOBAL_ENGINE_NAME}$ 2>/dev/null)" ] && _engine_running="yes"
+
+if [ -n "$_engine_running" ]; then
+    # Restart if GPU mode changed since the engine was last started.
+    _eng_gpu=$(read_pref "$HOME/.ai-coder-engine-state" gpu_mode "")
+    _eng_model=$(read_pref "$HOME/.ai-coder-engine-state" model "")
+    if [ -n "$_eng_gpu" ] && [ "$_eng_gpu" != "${GPU_MODE:-multi}" ]; then
+        echo -e "${YELLOW}◈ GPU mode changed (${_eng_gpu} → ${GPU_MODE:-multi}) — restarting engine...${NC}"
+        _engine_running=""
+    elif [ -n "$_eng_model" ] && [ "$_eng_model" != "${MODEL_FILE:-}" ]; then
+        echo -e "${YELLOW}◈ Model changed (${_eng_model} → ${MODEL_FILE:-}) — restarting engine...${NC}"
+        _engine_running=""
+    fi
+fi
+
+if [ -z "$_engine_running" ]; then
     docker rm "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
     start_hub_engine || { echo -e "${RED}✘ Hub startup failed${NC}"; exit 1; }
 elif [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ] && \

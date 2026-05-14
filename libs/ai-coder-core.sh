@@ -682,8 +682,13 @@ start_hub_engine() {
     # matrix multiplications on GPU 0 only.
     local _gpus_flag="all"
     local _ts_args=()
+    local _cuda_env=()
     if [ "${GPU_MODE:-multi}" = "single" ]; then
         _gpus_flag="device=0"
+        # Also set CUDA_VISIBLE_DEVICES so llama.cpp only sees GPU 0 even if
+        # Docker's --gpus device=0 flag doesn't fully restrict access (e.g.
+        # Docker Desktop / WSL2 passthrough quirks).
+        _cuda_env=(-e CUDA_VISIBLE_DEVICES=0)
         echo -e "${ICON_GEAR} GPU Mode: ${YELLOW}Single (GPU 0 only)${NC}"
     else
         local _vram_raw; _vram_raw=$($SMI --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null) || true
@@ -710,7 +715,7 @@ start_hub_engine() {
     fi
 
     docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$_hub_net" --gpus "$_gpus_flag" --restart on-failure:3 \
-        "${_port_args[@]}" \
+        "${_port_args[@]}" "${_cuda_env[@]}" \
         -v "$(to_host_path "$MODEL_STORAGE_DIR"):/models" \
         "$LLAMA_IMAGE" \
         -m "/models/$MODEL_FILE" --host 0.0.0.0 --port 8080 \
@@ -720,6 +725,10 @@ start_hub_engine() {
         "${_ts_args[@]}" > /dev/null || {
         echo -e "${RED}✘ Failed to start engine container${NC}"; return 1
     }
+
+    # Record the GPU mode used so ai-coder can detect changes and restart.
+    printf 'gpu_mode=%s\nmodel=%s\n' "${GPU_MODE:-multi}" "${MODEL_FILE:-}" \
+        > "$HOME/.ai-coder-engine-state"
 
     if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
         mkdir -p "$HOME/.ai-coder"
