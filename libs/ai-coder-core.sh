@@ -256,6 +256,20 @@ ensure_gpu_config() {
     GPU_MODE=$(read_pref "$HOME/.ai-coder-gpuconf" gpu_mode single)
 }
 
+# Write a ~/.gitconfig-container file that gets mounted into containers as
+# /root/.gitconfig so git commands in any repo (including newly init'd ones)
+# pick up the correct author identity.
+ensure_container_gitconfig() {
+    local gitcfg="$HOME/.gitconfig-container"
+    if [ -n "${GIT_USER_EMAIL:-}" ] || [ -n "${GIT_USER_NAME:-}" ]; then
+        cat > "$gitcfg" <<GITCFG
+[user]
+    email = ${GIT_USER_EMAIL:-developer@localhost}
+    name = ${GIT_USER_NAME:-Developer}
+GITCFG
+    fi
+}
+
 # Write identity into the local repo's .git/config (host-side).
 # The workspace volume mount means the container sees this immediately.
 # Skips gracefully if not inside a git repo or if already configured.
