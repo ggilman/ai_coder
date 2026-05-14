@@ -159,6 +159,7 @@ fi
 
 check_docker || { echo -e "${RED}✘ Docker initialization failed${NC}"; exit 1; }
 ensure_gpu_config
+ensure_ctx_config
 detect_model || true
 download_model || {
     echo -e "${RED}✘ Model download failed${NC}"

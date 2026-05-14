@@ -63,36 +63,49 @@ cmd_setup() {
         rc_file="$HOME/.zshrc"
     fi
 
-    echo -e "\n${CYAN}Shell alias — add '${ALIAS_NAME}' shortcut to $rc_file?${NC}"
+    echo -e "\n${CYAN}Shell alias — '${ALIAS_NAME}' shortcut in $rc_file${NC}"
     echo -e "${DIM}  Skip if you prefer to add ai-coder to your PATH manually.${NC}"
-    echo -n "  Add alias? [Y/n]: "
+    _alias_exists=false
+    grep -q "alias $ALIAS_NAME=" "$rc_file" 2>/dev/null && _alias_exists=true
+    echo -e "${DIM}  Current: $([ "$_alias_exists" = "true" ] && echo "set" || echo "not set")${NC}"
+    echo -n "  Add alias? [y/n, Enter to keep]: "
     read -r _alias_input
-    touch "$rc_file"
-    sed -i.bak "/alias $ALIAS_NAME=/d" "$rc_file"
     case "${_alias_input,,}" in
-        n|no)
-            echo -e "${DIM}  Alias not added. Any previous alias has been removed from $rc_file.${NC}"
-            ;;
-        *)
+        y|yes)
+            touch "$rc_file"
+            sed -i.bak "/alias $ALIAS_NAME=/d" "$rc_file"
             echo "alias $ALIAS_NAME='$(realpath "$0")'" >> "$rc_file"
             echo -e "${ICON_OK} Alias '${ALIAS_NAME}' added to $rc_file. Run: ${CYAN}source $rc_file${NC}"
             ;;
+        n|no)
+            touch "$rc_file"
+            sed -i.bak "/alias $ALIAS_NAME=/d" "$rc_file"
+            echo -e "${DIM}  Alias removed from $rc_file.${NC}"
+            ;;
+        *)
+            echo -e "${DIM}  Alias unchanged.${NC}"
+            ;;
     esac
 
-    echo -e "\n${CYAN}Proxy configuration (leave blank for none / to clear existing):${NC}"
-    if [ -f "$HOME/.ai-coder-proxy" ]; then
-        _cur_proxy=$(cat "$HOME/.ai-coder-proxy" 2>/dev/null || true)
-        echo -e "${DIM}  Current proxy: ${_cur_proxy}${NC}"
-    fi
+    echo -e "\n${CYAN}Proxy configuration:${NC}"
+    _cur_proxy=$(cat "$HOME/.ai-coder-proxy" 2>/dev/null || true)
+    [ -n "$_cur_proxy" ] && echo -e "${DIM}  Current: ${_cur_proxy}${NC}" || echo -e "${DIM}  Current: none${NC}"
+    echo -e "${DIM}  Enter a URL to set, '-' to clear, or leave blank to keep.${NC}"
     echo -n "  Proxy URL: "
     read -r _proxy_input
-    if [ -n "$_proxy_input" ]; then
-        echo "$_proxy_input" > "$HOME/.ai-coder-proxy"
-        echo -e "${ICON_OK} Proxy saved: ${CYAN}${_proxy_input}${NC}"
-    else
-        rm -f "$HOME/.ai-coder-proxy"
-        echo -e "${DIM}  No proxy set.${NC}"
-    fi
+    case "$_proxy_input" in
+        "")
+            echo -e "${DIM}  Proxy unchanged.${NC}"
+            ;;
+        -)
+            rm -f "$HOME/.ai-coder-proxy"
+            echo -e "${DIM}  Proxy cleared.${NC}"
+            ;;
+        *)
+            echo "$_proxy_input" > "$HOME/.ai-coder-proxy"
+            echo -e "${ICON_OK} Proxy saved: ${CYAN}${_proxy_input}${NC}"
+            ;;
+    esac
 
     echo -e "\n${CYAN}Network isolation — block all internet access from containers?${NC}"
     echo -e "${DIM}  (Recommended for regulated environments. Leave blank to keep current setting.)${NC}"
@@ -134,6 +147,27 @@ cmd_setup() {
                 ;;
         esac
     fi
+
+    echo -e "\n${CYAN}Context window level — how many tokens of context should the model keep?${NC}"
+    echo -e "${DIM}  4k / 8k / 16k / 32k / 64k / 128k (default) / 256k${NC}"
+    echo -e "${DIM}  Larger = more context, but higher VRAM usage and slower responses.${NC}"
+    _cur_ctx=$(read_pref "$HOME/.ai-coder-ctxconfig" ctx_level 128k)
+    echo -e "${DIM}  Current: ${_cur_ctx}${NC}"
+    echo -n "  Context level [${_cur_ctx}]: "
+    read -r _ctx_input
+    _ctx_input="${_ctx_input:-}"
+    case "${_ctx_input}" in
+        4k|8k|16k|32k|64k|128k|256k)
+            printf 'ctx_level=%s\n' "$_ctx_input" > "$HOME/.ai-coder-ctxconfig"
+            echo -e "${ICON_OK} Context level set to ${GREEN}${_ctx_input}${NC}."
+            ;;
+        "")
+            echo -e "${DIM}  Context level unchanged (${_cur_ctx}).${NC}"
+            ;;
+        *)
+            echo -e "${YELLOW}⚠ Unknown level '${_ctx_input}' — keeping ${_cur_ctx}.${NC}"
+            ;;
+    esac
 
     echo -e "\n${CYAN}Host port exposure — publish the engine on localhost:8080?${NC}"
     echo -e "${DIM}  Allows external applications (e.g. Open WebUI) to connect directly.${NC}"

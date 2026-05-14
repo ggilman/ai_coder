@@ -256,6 +256,24 @@ ensure_gpu_config() {
     GPU_MODE=$(read_pref "$HOME/.ai-coder-gpuconf" gpu_mode multi)
 }
 
+# Sets MODEL_CTX_LEVEL (and derives MODEL_CTX_SIZE) from the saved preference.
+# Falls back to the default defined in ai-coder-model.conf when no pref is saved.
+ensure_ctx_config() {
+    local _level; _level=$(read_pref "$HOME/.ai-coder-ctxconfig" ctx_level "")
+    [ -n "$_level" ] && MODEL_CTX_LEVEL="$_level"
+    # Re-derive MODEL_CTX_SIZE from the (possibly updated) level.
+    case "${MODEL_CTX_LEVEL:-128k}" in
+        4k)   MODEL_CTX_SIZE=4096   ;;
+        8k)   MODEL_CTX_SIZE=8192   ;;
+        16k)  MODEL_CTX_SIZE=16384  ;;
+        32k)  MODEL_CTX_SIZE=32768  ;;
+        64k)  MODEL_CTX_SIZE=65536  ;;
+        128k) MODEL_CTX_SIZE=131072 ;;
+        256k) MODEL_CTX_SIZE=262144 ;;
+        *)    MODEL_CTX_SIZE=131072 ;;
+    esac
+}
+
 # Write a ~/.gitconfig-container file that gets mounted into containers as
 # /root/.gitconfig so git commands in any repo (including newly init'd ones)
 # pick up the correct author identity.
