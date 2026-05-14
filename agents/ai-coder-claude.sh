@@ -87,12 +87,14 @@ configure_workbench() {
 
 start_workbench() {
     echo -e "${ICON_GEAR} Mapping Spoke for [$PROJECT_ID]..."
+    local _model_id="${MODEL_FILE%.gguf}"
     run_workbench \
         -v "$(to_host_path "$HOME/.npm-cache"):/root/.npm" \
         -v "$(to_host_path "$HOME/.claude-config"):/root/.claude" \
         -v "$(to_host_path "$HOME/.claude-config.json"):/root/.claude.json" \
         -e ANTHROPIC_BASE_URL="http://$GLOBAL_ENGINE_NAME:8080" \
-        -e ANTHROPIC_API_KEY="sk-local-bypass"
+        -e ANTHROPIC_API_KEY="sk-local-bypass" \
+        -e ANTHROPIC_MODEL="$_model_id"
 }
 
 execute_tool() {
