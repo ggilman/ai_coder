@@ -29,15 +29,37 @@ configure_workbench() {
     elif [ ! -w "$HOME/.claude-config" ]; then
         sudo chown -R "$USER" "$HOME/.claude-config"
     fi
-    # Always rewrite so mcpServers paths reflect the current project workspace.
-    # Auth tokens are stored in ~/.claude/ (the directory), not this JSON file.
-    cat > "$HOME/.claude-config.json" <<EOF
+    # Update mcpServers in ~/.claude-config.json while preserving any other keys
+    # Claude Code writes there (e.g. telemetry consent, preferences).
+    # Writing the new block to a temp file then merging via python3 avoids clobbering
+    # saved settings on every launch.
+    local _cfg="$HOME/.claude-config.json"
+    local _tmp; _tmp=$(mktemp)
+    cat > "$_tmp" <<EOF
 {
   "mcpServers": {
 $(make_mcp_servers_json "/$WORKSPACE_DIR" standard "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-claude.txt")
   }
 }
 EOF
+    if [ -f "$_cfg" ] && command -v python3 >/dev/null 2>&1; then
+        python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    new = json.load(f)
+try:
+    with open(sys.argv[2]) as f:
+        old = json.load(f)
+    new = {**old, **new}
+except Exception:
+    pass
+with open(sys.argv[2], 'w') as f:
+    json.dump(new, f, indent=2)
+" "$_tmp" "$_cfg" || cp "$_tmp" "$_cfg"
+    else
+        cp "$_tmp" "$_cfg"
+    fi
+    rm -f "$_tmp"
     # Write global instructions so Claude uses MCP tools for file I/O.
     # This avoids the str_replace exact-match failures that occur when editing
     # files with whitespace variance or after merge conflicts add marker lines.
@@ -78,11 +100,6 @@ file for a conflict — use a targeted replacement:
 If `edit_file` fails for any reason, fall back to MCP `write_file` with the
 fully resolved file content.
 EOF
-}
-
-configure_workbench() {
-    mkdir -p "$HOME/.claude-config"
-    [ -f "$HOME/.claude-config.json" ] || echo '{}' > "$HOME/.claude-config.json"
 }
 
 start_workbench() {
