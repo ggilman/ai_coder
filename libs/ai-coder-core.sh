@@ -102,14 +102,28 @@ read_mcp_packages() {
 }
 
 # Read MCP pip package names from one or more server list files.
-# Usage: read_mcp_pip_packages <file1> [file2 ...]
+# Usage: read_mcp_pip_packages [--offline|--online] <file1> [file2 ...]
+#   --offline  Only return packages whose net_req field is blank (work without internet).
+#   --online   Only return packages whose net_req field is "online".
+#   (default)  Return all pip packages regardless of net_req.
 # Only returns entries whose package field starts with "pip:" (strips the prefix).
 read_mcp_pip_packages() {
+    local net_filter="all"
+    if [[ "${1:-}" == "--offline" ]]; then net_filter="offline"; shift; fi
+    if [[ "${1:-}" == "--online"  ]]; then net_filter="online";  shift; fi
     local file
     for file in "$@"; do
         [ -f "$file" ] || continue
         grep -v '^\s*#' "$file" | grep -v '^\s*$' | tr -d '\r' | \
-            awk -F'|' '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); if (substr($1,1,4) == "pip:") printf "%s ", substr($1,5)}'
+            awk -F'|' -v nf="$net_filter" '{
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1)
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", $6)
+                if (substr($1,1,4) != "pip:") next
+                is_online = ($6 == "online") ? 1 : 0
+                if (nf == "offline" && is_online) next
+                if (nf == "online"  && !is_online) next
+                printf "%s ", substr($1,5)
+            }'
     done
 }
 

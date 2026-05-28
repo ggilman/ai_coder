@@ -13,10 +13,14 @@ build_image() {
     local pip_proxy_cmds; pip_proxy_cmds=$(make_pip_proxy_cmds)
     local apt_pkgs; apt_pkgs="$(read_package_list "$PACKAGES_DIR/apt-common.txt") $(read_package_list "$PACKAGES_DIR/apt-gemini.txt")"
     local mcp_pkgs; mcp_pkgs=$(read_mcp_packages "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-gemini.txt")
-    local mcp_pip_pkgs; mcp_pip_pkgs=$(read_mcp_pip_packages "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-gemini.txt")
+    local mcp_pip_pkgs; mcp_pip_pkgs=$(read_mcp_pip_packages --offline "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-gemini.txt")
+    local mcp_pip_online; mcp_pip_online=$(read_mcp_pip_packages --online "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-gemini.txt")
     local pip_cmd=""
     if [ -n "$(echo "$mcp_pip_pkgs" | tr -d ' ')" ]; then
         pip_cmd=$'\nRUN '"${pip_proxy_cmds} ${mcp_pip_pkgs}"
+    fi
+    if [ -n "$(echo "$mcp_pip_online" | tr -d ' ')" ]; then
+        pip_cmd+=$'\nRUN '"${pip_proxy_cmds} ${mcp_pip_online} || true"
     fi
     build_standard_image "Dockerfile.gemini" "$apt_pkgs" "$pm_proxy_cmds" \
         "RUN npm install -g @google/gemini-cli ${mcp_pkgs}${pip_cmd}
