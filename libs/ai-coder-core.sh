@@ -624,7 +624,12 @@ ARG PROXY_URL
 ENV DEBIAN_FRONTEND=noninteractive
 RUN if [ -n "\${PROXY_URL}" ]; then \
       apt_proxy=\$(echo "\${PROXY_URL}" | sed 's|^https://|http://|') && \
-      sed -i 's|http://|https://|g' /etc/apt/sources.list && \
+      if [ -f /etc/apt/sources.list ]; then \
+        sed -i 's|http://|https://|g' /etc/apt/sources.list; \
+      fi && \
+      if [ -d /etc/apt/sources.list.d ]; then \
+        find /etc/apt/sources.list.d -name '*.list' -exec sed -i 's|http://|https://|g' {} +; \
+      fi && \
       printf 'Acquire::https::Proxy "%s";\nAcquire::https::Verify-Peer "false";\nAcquire::https::Verify-Host "false";\n' "\${apt_proxy}" > /etc/apt/apt.conf.d/01proxy; \
     fi
 RUN apt-get update && apt-get install -y wget ca-certificates gnupg apt-transport-https --no-install-recommends && \
