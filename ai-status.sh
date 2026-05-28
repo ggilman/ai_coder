@@ -58,15 +58,31 @@ get_gpu_stats() {
 }
 
 # Checks engine slot status via curl (empty string on failure)
+# WSL2 workaround: docker exec output is lost when captured via $() command
+# substitution, and 'timeout' wrapping docker exec also drops output.
+# We use a fixed temp file and curl's --max-time instead of the timeout binary.
+_ENGINE_TMP="/tmp/ai_status_engine_$$"
+
 get_engine_health() {
-    timeout "$HEALTH_TIMEOUT" docker exec "$ENGINE_NAME" curl -s http://localhost:8080/slots 2>/dev/null || echo ""
+    # set -o pipefail (active globally) causes docker exec redirects to drop output.
+    # Disable pipefail locally for this call only.
+    local _old_opts; _old_opts=$(set +o | grep pipefail)
+    set +o pipefail
+    docker exec "$ENGINE_NAME" curl -s --max-time "$HEALTH_TIMEOUT" http://localhost:8080/slots \
+        > "$_ENGINE_TMP" 2>/dev/null || true
+    eval "$_old_opts"
 }
 
 # Fetches the loaded model name from the engine's /v1/models endpoint
 get_model_name() {
-    local resp
-    resp=$(timeout "$HEALTH_TIMEOUT" docker exec "$ENGINE_NAME" curl -s http://localhost:8080/v1/models 2>/dev/null) || true
-    echo "$resp" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4 || true
+    local _mtmp="/tmp/ai_status_model_$$"
+    local _old_opts; _old_opts=$(set +o | grep pipefail)
+    set +o pipefail
+    docker exec "$ENGINE_NAME" curl -s --max-time "$HEALTH_TIMEOUT" http://localhost:8080/v1/models \
+        > "$_mtmp" 2>/dev/null || true
+    eval "$_old_opts"
+    grep -o '"id":"[^"]*"' "$_mtmp" 2>/dev/null | head -1 | cut -d'"' -f4 || true
+    rm -f "$_mtmp"
 }
 
 # Draws the dashboard header
@@ -159,7 +175,9 @@ main() {
         draw_separator
 
         # Display engine health
-        slots_raw=$(get_engine_health)
+        get_engine_health
+        slots_raw=$(cat "$_ENGINE_TMP" 2>/dev/null || true)
+        rm -f "$_ENGINE_TMP"
         if [ -n "$slots_raw" ]; then
             total_slots=$(echo "$slots_raw" | { grep -o '"id"' || true; } | wc -l | xargs)
             active_slots=$(echo "$slots_raw" | { grep -o '"is_processing":true' || true; } | wc -l | xargs)
