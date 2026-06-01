@@ -102,14 +102,28 @@ read_mcp_packages() {
 }
 
 # Read MCP pip package names from one or more server list files.
-# Usage: read_mcp_pip_packages <file1> [file2 ...]
+# Usage: read_mcp_pip_packages [--offline|--online] <file1> [file2 ...]
+#   --offline  Only return packages whose net_req field is blank (work without internet).
+#   --online   Only return packages whose net_req field is "online".
+#   (default)  Return all pip packages regardless of net_req.
 # Only returns entries whose package field starts with "pip:" (strips the prefix).
 read_mcp_pip_packages() {
+    local net_filter="all"
+    if [[ "${1:-}" == "--offline" ]]; then net_filter="offline"; shift; fi
+    if [[ "${1:-}" == "--online"  ]]; then net_filter="online";  shift; fi
     local file
     for file in "$@"; do
         [ -f "$file" ] || continue
         grep -v '^\s*#' "$file" | grep -v '^\s*$' | tr -d '\r' | \
-            awk -F'|' '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); if (substr($1,1,4) == "pip:") printf "%s ", substr($1,5)}'
+            awk -F'|' -v nf="$net_filter" '{
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1)
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", $6)
+                if (substr($1,1,4) != "pip:") next
+                is_online = ($6 == "online") ? 1 : 0
+                if (nf == "offline" && is_online) next
+                if (nf == "online"  && !is_online) next
+                printf "%s ", substr($1,5)
+            }'
     done
 }
 
@@ -610,7 +624,12 @@ ARG PROXY_URL
 ENV DEBIAN_FRONTEND=noninteractive
 RUN if [ -n "\${PROXY_URL}" ]; then \
       apt_proxy=\$(echo "\${PROXY_URL}" | sed 's|^https://|http://|') && \
-      sed -i 's|http://|https://|g' /etc/apt/sources.list && \
+      if [ -f /etc/apt/sources.list ]; then \
+        sed -i 's|http://|https://|g' /etc/apt/sources.list; \
+      fi && \
+      if [ -d /etc/apt/sources.list.d ]; then \
+        find /etc/apt/sources.list.d -name '*.list' -exec sed -i 's|http://|https://|g' {} +; \
+      fi && \
       printf 'Acquire::https::Proxy "%s";\nAcquire::https::Verify-Peer "false";\nAcquire::https::Verify-Host "false";\n' "\${apt_proxy}" > /etc/apt/apt.conf.d/01proxy; \
     fi
 RUN apt-get update && apt-get install -y wget ca-certificates gnupg apt-transport-https --no-install-recommends && \

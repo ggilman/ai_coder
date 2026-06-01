@@ -104,7 +104,10 @@ fi
 
 # Handle --menu flag: clears both family and tool preferences so both menus
 # are shown again on the next step of this run.
+_prev_family=""; _prev_tool=""
 if [[ "${1:-}" == "--menu" ]]; then
+    _prev_family=$(cat "$FAMILY_PREF_FILE" 2>/dev/null || true)
+    _prev_tool=$(cat "$PREF_FILE" 2>/dev/null || true)
     rm -f "$FAMILY_PREF_FILE" "$PREF_FILE"
     shift
 fi
@@ -112,7 +115,7 @@ fi
 # --- [ FAMILY SELECTION ] ----------------------------------------------------
 # Show the family menu on first run or after --menu clears the preference.
 if [ ! -f "$FAMILY_PREF_FILE" ] || [ -z "$(cat "$FAMILY_PREF_FILE" 2>/dev/null)" ]; then
-    show_family_menu
+    show_family_menu "$_prev_family"
 fi
 
 FAMILY_PREF=$(cat "$FAMILY_PREF_FILE")
@@ -127,7 +130,7 @@ source "$FAMILY_CONF"
 # --- [ TOOL SELECTION ] ------------------------------------------------------
 # Show the tool menu on first run or after --menu clears the preference.
 if [ ! -f "$PREF_FILE" ] || [ -z "$(cat "$PREF_FILE")" ]; then
-    show_menu
+    show_menu "$_prev_tool"
 fi
 
 TOOL_PREF=$(cat "$PREF_FILE")
