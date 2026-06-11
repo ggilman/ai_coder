@@ -507,12 +507,28 @@ download_model() {
     [ -z "$model_url" ] && { echo -e "${RED}✘ Missing download URL for $MODEL_FILE${NC}"; return 1; }
 
     local model_path="$MODEL_STORAGE_DIR/$MODEL_FILE"
+    local part_path="${model_path}.part"
+
+    # Remove any leftover partial download from a previous interrupted attempt.
+    if [ -f "$part_path" ]; then
+        echo -e "${YELLOW}⚠ Removing incomplete previous download: $(basename "$part_path")${NC}"
+        rm -f "$part_path"
+    fi
+
     echo -e "${ICON_GEAR} Downloading ${model_hint}..."
     echo -e "${CYAN}Downloading to: $model_path${NC}"
     [ -n "${DOWNLOAD_PROXY:-}" ] && echo -e "${CYAN}Using proxy: $DOWNLOAD_PROXY${NC}"
 
-    _download_file "$model_url" "$model_path" || { echo -e "${RED}✘ Download failed${NC}"; return 1; }
-    echo -e "${GREEN}✔ Model downloaded successfully${NC}"
+    # Download to a .part file so an interrupted transfer never leaves a file
+    # that looks like a complete model.
+    if _download_file "$model_url" "$part_path"; then
+        mv "$part_path" "$model_path"
+        echo -e "${GREEN}✔ Model downloaded successfully${NC}"
+    else
+        rm -f "$part_path"
+        echo -e "${RED}✘ Download failed${NC}"
+        return 1
+    fi
 }
 
 detect_model() {
