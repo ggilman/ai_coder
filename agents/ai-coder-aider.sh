@@ -7,6 +7,10 @@ IMAGE_NAME="aider-engineer-v1"
 TOOL_NAME="Aider"
 
 build_image() {
+    if [ -n "$(docker images -q "$IMAGE_NAME" 2>/dev/null)" ]; then
+        echo -e "${ICON_OK} Aider Image: ready."
+        return 0
+    fi
     echo -e "${ICON_GEAR} Building Aider Image..."
     local pm_proxy_cmds=""
     if [ -n "${DOWNLOAD_PROXY:-}" ]; then

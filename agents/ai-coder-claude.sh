@@ -7,6 +7,10 @@ IMAGE_NAME="claude-engineer-v4-9"
 TOOL_NAME="Claude"
 
 build_image() {
+    if [ -n "$(docker images -q "$IMAGE_NAME" 2>/dev/null)" ]; then
+        echo -e "${ICON_OK} Coder Image: ready."
+        return 0
+    fi
     echo -e "${ICON_GEAR} Building Coder Image..."
     local pm_proxy_cmds; pm_proxy_cmds=$(make_npm_proxy_cmds)
     local pip_proxy_cmds; pip_proxy_cmds=$(make_pip_proxy_cmds)
@@ -34,9 +38,7 @@ configure_workbench() {
         sudo chown -R "$USER" "$HOME/.claude-config"
     fi
     # Update mcpServers in ~/.claude-config.json while preserving any other keys
-    # Claude Code writes there (e.g. telemetry consent, preferences).
-    # Writing the new block to a temp file then merging via python3 avoids clobbering
-    # saved settings on every launch.
+    # Claude Code writes there (e.g. telemetry consent, dark mode, preferences).
     local _cfg="$HOME/.claude-config.json"
     local _tmp; _tmp=$(mktemp)
     cat > "$_tmp" <<EOF
@@ -46,7 +48,32 @@ $(make_mcp_servers_json "/$WORKSPACE_DIR" standard "$PACKAGES_DIR/mcp-common.txt
   }
 }
 EOF
-    if [ -f "$_cfg" ] && command -v python3 >/dev/null 2>&1; then
+    # Merge strategy: update mcpServers while preserving all other Claude settings.
+    # Git Bash: write a .ps1 script with paths baked in as literals, run via
+    #   powershell.exe -File. PowerShell handles Windows paths natively with no
+    #   MSYS_NO_PATHCONV / path-conversion complications.
+    # WSL/Linux: python3 (always present, already proven to work).
+    # Last resort: plain cp — overwrites existing settings.
+    local _merged=false
+    if [ "$IS_GITBASH" = "true" ] && [ -f "$_cfg" ]; then
+        local _ps1; _ps1=$(mktemp --suffix=.ps1)
+        local _w_src; _w_src=$(cygpath -w "$_tmp")
+        local _w_dst; _w_dst=$(cygpath -w "$_cfg")
+        local _w_ps1; _w_ps1=$(cygpath -w "$_ps1")
+        # Bash expands $_w_src / $_w_dst into the heredoc as literal Windows paths.
+        # \$variable syntax produces PowerShell $variable in the file.
+        cat > "$_ps1" <<PS1EOF
+\$u = Get-Content -Raw -LiteralPath '$_w_src' | ConvertFrom-Json
+\$e = try { Get-Content -Raw -LiteralPath '$_w_dst' | ConvertFrom-Json } catch { [PSCustomObject]@{} }
+foreach (\$p in \$u.PSObject.Properties) {
+    \$e | Add-Member -Force -MemberType NoteProperty -Name \$p.Name -Value \$p.Value
+}
+\$e | ConvertTo-Json -Depth 20 | Set-Content -Encoding UTF8 -LiteralPath '$_w_dst'
+PS1EOF
+        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$_w_ps1" 2>/dev/null \
+            && _merged=true
+        rm -f "$_ps1"
+    elif [ -f "$_cfg" ] && python3 -c "" >/dev/null 2>&1; then
         python3 -c "
 import json, sys
 with open(sys.argv[1]) as f:
@@ -59,10 +86,9 @@ except Exception:
     pass
 with open(sys.argv[2], 'w') as f:
     json.dump(new, f, indent=2)
-" "$_tmp" "$_cfg" || cp "$_tmp" "$_cfg"
-    else
-        cp "$_tmp" "$_cfg"
+" "$_tmp" "$_cfg" && _merged=true
     fi
+    [ "$_merged" = "false" ] && cp "$_tmp" "$_cfg"
     rm -f "$_tmp"
     # Write global instructions so Claude uses MCP tools for file I/O.
     # This avoids the str_replace exact-match failures that occur when editing
