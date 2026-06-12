@@ -74,7 +74,7 @@ cmd_setup() {
         y|yes)
             touch "$rc_file"
             sed -i.bak "/alias $ALIAS_NAME=/d" "$rc_file"
-            echo "alias $ALIAS_NAME='$(realpath "$0")'" >> "$rc_file"
+            echo "alias $ALIAS_NAME='\"$(realpath "$0")\"'" >> "$rc_file"
             echo -e "${ICON_OK} Alias '${ALIAS_NAME}' added to $rc_file. Run: ${CYAN}source $rc_file${NC}"
             ;;
         n|no)

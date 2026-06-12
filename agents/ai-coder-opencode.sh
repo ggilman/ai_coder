@@ -7,6 +7,10 @@ IMAGE_NAME="opencode-engineer-v2"
 TOOL_NAME="OpenCode"
 
 build_image() {
+    if [ -n "$(docker images -q "$IMAGE_NAME" 2>/dev/null)" ]; then
+        echo -e "${ICON_OK} OpenCode Image: ready."
+        return 0
+    fi
     echo -e "${ICON_GEAR} Building OpenCode Image..."
     local pm_proxy_cmds; pm_proxy_cmds=$(make_npm_proxy_cmds)
     local pip_proxy_cmds; pip_proxy_cmds=$(make_pip_proxy_cmds)

@@ -349,7 +349,16 @@ check_docker() {
             fi
         else
             if [ -n "$DOCKER_BIN" ]; then
-                start "" "$DOCKER_BIN" || { echo -e "${RED}✘ Failed to start Docker${NC}"; return 1; }
+                # Use powershell.exe Start-Process rather than Git Bash's `start` shim.
+                # The `start` shim invokes cmd.exe which hijacks the console and detaches
+                # Git Bash from its own terminal window. PowerShell launches the process
+                # detached without touching the calling terminal.
+                # cygpath converts the MSYS path to a Windows path for PowerShell.
+                local _start_bin="$DOCKER_BIN"
+                [ "$IS_GITBASH" = "true" ] && _start_bin=$(cygpath -w "$DOCKER_BIN")
+                powershell.exe -Command "Start-Process '$_start_bin'" >/dev/null 2>&1 || {
+                    echo -e "${RED}✘ Failed to start Docker${NC}"; return 1
+                }
             else
                 echo -e "${RED}✘ Docker Desktop not found — start it manually and retry.${NC}"; return 1
             fi
@@ -434,7 +443,15 @@ _await_download() {
     local dl_pid="$1" file_path="$2"
     while kill -0 "$dl_pid" 2>/dev/null; do
         local sz; sz=$(stat -c%s "$file_path" 2>/dev/null || echo 0)
-        printf "\r  Downloaded: %-12s" "$(numfmt --to=iec-i --suffix=B "$sz")"
+        # numfmt is not available in Git Bash — use awk for portable human-readable sizes.
+        local human_sz; human_sz=$(awk -v b="$sz" 'BEGIN{
+            s=b+0; u="B"
+            if(s>=1073741824){s=s/1073741824; u="GiB"}
+            else if(s>=1048576){s=s/1048576; u="MiB"}
+            else if(s>=1024){s=s/1024; u="KiB"}
+            printf "%.1f%s", s, u
+        }')
+        printf "\r  Downloaded: %-12s" "$human_sz"
         sleep 2
     done
     printf "\n"
@@ -490,12 +507,28 @@ download_model() {
     [ -z "$model_url" ] && { echo -e "${RED}✘ Missing download URL for $MODEL_FILE${NC}"; return 1; }
 
     local model_path="$MODEL_STORAGE_DIR/$MODEL_FILE"
+    local part_path="${model_path}.part"
+
+    # Remove any leftover partial download from a previous interrupted attempt.
+    if [ -f "$part_path" ]; then
+        echo -e "${YELLOW}⚠ Removing incomplete previous download: $(basename "$part_path")${NC}"
+        rm -f "$part_path"
+    fi
+
     echo -e "${ICON_GEAR} Downloading ${model_hint}..."
     echo -e "${CYAN}Downloading to: $model_path${NC}"
     [ -n "${DOWNLOAD_PROXY:-}" ] && echo -e "${CYAN}Using proxy: $DOWNLOAD_PROXY${NC}"
 
-    _download_file "$model_url" "$model_path" || { echo -e "${RED}✘ Download failed${NC}"; return 1; }
-    echo -e "${GREEN}✔ Model downloaded successfully${NC}"
+    # Download to a .part file so an interrupted transfer never leaves a file
+    # that looks like a complete model.
+    if _download_file "$model_url" "$part_path"; then
+        mv "$part_path" "$model_path"
+        echo -e "${GREEN}✔ Model downloaded successfully${NC}"
+    else
+        rm -f "$part_path"
+        echo -e "${RED}✘ Download failed${NC}"
+        return 1
+    fi
 }
 
 detect_model() {
@@ -656,8 +689,17 @@ DOCKERFILE
 exec_in_container() {
     # Usage: exec_in_container [extra docker exec flags...] <container> <cmd> [args...]
     # Handles winpty on Git Bash automatically.
-    # Explicitly set PATH so npm/pip global bins are found regardless of shell init.
-    local cmd_args=(docker exec -it -w "/$WORKSPACE_DIR" -e PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "$@")
+    # NOTE: do NOT pass -e PATH=... here. On Git Bash, MSYS converts the colon-
+    # separated value into Windows-style paths through the winpty boundary, which
+    # the Linux container cannot use. docker exec inherits the container's
+    # image-set PATH (which already includes /usr/local/bin for npm globals) and
+    # that is sufficient.
+    # On Git Bash, MSYS converts /foo paths to Windows paths when winpty is the
+    # intermediary, even with MSYS_NO_PATHCONV=1. The // prefix suppresses MSYS
+    # conversion (treated as a UNC prefix); Linux normalises //foo → /foo.
+    local _wd="/$WORKSPACE_DIR"
+    [ "$IS_GITBASH" = "true" ] && _wd="//$WORKSPACE_DIR"
+    local cmd_args=(docker exec -it -w "$_wd" "$@")
     if [ "$IS_GITBASH" = "true" ]; then
         winpty "${cmd_args[@]}"
     else
@@ -684,12 +726,17 @@ run_workbench() {
     # communication if no_proxy isn't perfectly honoured by every client.
     local _wb_http_proxy="${DOWNLOAD_PROXY:-}"
     [ "${NETWORK_INTERNAL:-false}" = "true" ] && _wb_http_proxy=""
+    # On Git Bash, MSYS may still convert /$WORKSPACE_DIR to a Windows path for
+    # --workdir even with MSYS_NO_PATHCONV=1. The // prefix suppresses conversion
+    # and Linux containers normalise //foo → /foo.
+    local _wb_workdir="/$WORKSPACE_DIR"
+    [ "$IS_GITBASH" = "true" ] && _wb_workdir="//$WORKSPACE_DIR"
     docker run -d --name "$WORKBENCH" --network "$wb_network" --privileged \
         -e "http_proxy=${_wb_http_proxy}" -e "https_proxy=${_wb_http_proxy}" \
         -e "HTTP_PROXY=${_wb_http_proxy}" -e "HTTPS_PROXY=${_wb_http_proxy}" \
         -e "no_proxy=$no_proxy_hosts" -e "NO_PROXY=$no_proxy_hosts" \
         -v "$(to_host_path "$(pwd)"):/$WORKSPACE_DIR" \
-        --workdir "/$WORKSPACE_DIR" \
+        --workdir "$_wb_workdir" \
         "${extra_flags[@]}" \
         "$IMAGE_NAME" /bin/bash -c "$entrypoint" > /dev/null
 }
