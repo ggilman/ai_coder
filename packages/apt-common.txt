@@ -35,6 +35,7 @@ jq
 sqlite3
 unzip
 zip
+xxd
 
 # Media & documents
 ffmpeg
