@@ -651,7 +651,10 @@ build_standard_image() {
         proxy_args=(--build-arg "PROXY_URL=$build_proxy")
     fi
 
-    cat > "$LOCAL_STACK_DIR/$df_name" <<DOCKERFILE
+    local _build_dir; _build_dir=$(mktemp -d)
+    trap 'rm -rf "$_build_dir"' RETURN
+
+    cat > "$_build_dir/$df_name" <<DOCKERFILE
 FROM $BASE_IMAGE
 ARG PROXY_URL
 ENV DEBIAN_FRONTEND=noninteractive
@@ -680,8 +683,8 @@ ${install_cmds}
 DOCKERFILE
 
     docker build -t "$IMAGE_NAME" "${proxy_args[@]}" \
-        -f "$(to_host_path "$LOCAL_STACK_DIR")/$df_name" \
-        "$(to_host_path "$LOCAL_STACK_DIR")" || {
+        -f "$(to_host_path "$_build_dir")/$df_name" \
+        "$(to_host_path "$_build_dir")" || {
         echo -e "${RED}✘ Docker build failed${NC}"; return 1
     }
 }

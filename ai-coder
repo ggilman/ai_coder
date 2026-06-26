@@ -148,7 +148,7 @@ LOCAL_STACK_DIR="$(pwd)/.ai-coder/${TOOL_PREF}"
 source "$CHILD_SCRIPT"
 
 # Ensure local stack dir exists (needed before core logic starts using it)
-mkdir -p "$MODEL_STORAGE_DIR" "$LOCAL_STACK_DIR"
+mkdir -p "$MODEL_STORAGE_DIR"
 
 # Set WORKBENCH variable
 WORKBENCH="${WORKBENCH_PREFIX}-${PROJECT_ID}"
