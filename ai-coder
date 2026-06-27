@@ -148,10 +148,30 @@ LOCAL_STACK_DIR="$(pwd)/.ai-coder/${TOOL_PREF}"
 source "$CHILD_SCRIPT"
 
 # Ensure local stack dir exists (needed before core logic starts using it)
-mkdir -p "$MODEL_STORAGE_DIR" "$LOCAL_STACK_DIR"
+mkdir -p "$MODEL_STORAGE_DIR"
 
 # Set WORKBENCH variable
 WORKBENCH="${WORKBENCH_PREFIX}-${PROJECT_ID}"
+
+# --- [ CLEANUP TRAP ] --------------------------------------------------------
+# Runs on normal exit, Ctrl-C (INT), and SIGTERM so containers are always
+# stopped regardless of how the user exits.
+_cleanup_done=false
+cleanup() {
+    $_cleanup_done && return
+    _cleanup_done=true
+    trap - EXIT INT TERM
+    echo -e "${CYAN}◈ Stopping workbench [$WORKBENCH]...${NC}"
+    docker stop "$WORKBENCH" 2>/dev/null || true
+    docker rm   "$WORKBENCH" 2>/dev/null || true
+    remaining_spokes=$(docker ps -q --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null | wc -l)
+    if [ "$remaining_spokes" -eq 0 ]; then
+        stop_hub
+    else
+        echo -e "${CYAN}◈ ${remaining_spokes} spoke(s) still running — Hub remains active.${NC}"
+    fi
+}
+trap cleanup EXIT INT TERM
 
 # Process commands
 if [ "$#" -gt 0 ]; then
@@ -264,15 +284,4 @@ fi
 
 echo -e "${ICON_GEAR} Attaching to workbench..."
 execute_tool
-
-# --- [ POST-EXIT CLEANUP ] ----------------------------------------------------
-echo -e "${CYAN}◈ Stopping workbench [$WORKBENCH]...${NC}"
-docker stop "$WORKBENCH" 2>/dev/null || true
-docker rm   "$WORKBENCH" 2>/dev/null || true
-
-remaining_spokes=$(docker ps -q --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null | wc -l)
-if [ "$remaining_spokes" -eq 0 ]; then
-    stop_hub
-else
-    echo -e "${CYAN}◈ ${remaining_spokes} spoke(s) still running — Hub remains active.${NC}"
-fi
+# Cleanup is handled by the EXIT trap (see above).
