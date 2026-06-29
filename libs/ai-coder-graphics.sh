@@ -8,15 +8,15 @@
 readonly _AI_CODER_GRAPHICS_LOADED=1
 
 # --- [ ANSI COLORS ] ----------------------------------------------------------
-readonly NC='\033[0m'
-readonly BOLD='\033[1m'
-readonly DIM='\033[2m'
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly CYAN='\033[0;36m'
-readonly WHITE='\033[1;37m'
-readonly BG_BLUE='\033[44m'
+readonly NC=$'\e[0m'
+readonly BOLD=$'\e[1m'
+readonly DIM=$'\e[2m'
+readonly RED=$'\e[0;31m'
+readonly GREEN=$'\e[0;32m'
+readonly YELLOW=$'\e[1;33m'
+readonly CYAN=$'\e[0;36m'
+readonly WHITE=$'\e[1;37m'
+readonly BG_BLUE=$'\e[44m'
 
 # --- [ STATUS ICONS ] ---------------------------------------------------------
 readonly ICON_OK=" ${GREEN}✔${NC} "

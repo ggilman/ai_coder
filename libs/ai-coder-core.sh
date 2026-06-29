@@ -299,8 +299,8 @@ ensure_git_identity() {
     local git_name;  git_name=$(read_pref  "$GIT_IDENTITY_FILE" name)
     [ -z "$git_email" ] && git_email=$(git config --global user.email 2>/dev/null || true)
     [ -z "$git_name"  ] && git_name=$(git config  --global user.name  2>/dev/null || true)
-    GIT_USER_EMAIL="${git_email:-}"
-    GIT_USER_NAME="${git_name:-}"
+    export GIT_USER_EMAIL="${git_email:-}"
+    export GIT_USER_NAME="${git_name:-}"
 }
 
 # --- [ NETWORK CONFIG ] -------------------------------------------------------
@@ -342,13 +342,16 @@ ensure_ctx_config() {
 # pick up the correct author identity.
 ensure_container_gitconfig() {
     local gitcfg="$HOME/.gitconfig-container"
-    if [ -n "${GIT_USER_EMAIL:-}" ] || [ -n "${GIT_USER_NAME:-}" ]; then
-        cat > "$gitcfg" <<GITCFG
+    local email="${GIT_USER_EMAIL:-developer@localhost}"
+    local name="${GIT_USER_NAME:-Developer}"
+    # Escape backslashes for Git config file format
+    email="${email//\\/\\\\}"
+    name="${name//\\/\\\\}"
+    cat > "$gitcfg" <<GITCFG
 [user]
-    email = ${GIT_USER_EMAIL:-developer@localhost}
-    name = ${GIT_USER_NAME:-Developer}
+    email = ${email}
+    name = ${name}
 GITCFG
-    fi
 }
 
 # Write identity into the local repo's .git/config (host-side).
@@ -365,7 +368,7 @@ apply_git_identity() {
     # Normalize CRLF→LF on checkout inside the container (Windows host mounts files with CRLF).
     # 'input' strips CR on add but never introduces CR on checkout — safe for all platforms.
     git -C "$(pwd)" config --local core.autocrlf input 2>/dev/null || true
-    [ -n "${GIT_USER_NAME:-}" ] && echo -e "${ICON_OK} Git identity: ${CYAN}${GIT_USER_NAME} <${GIT_USER_EMAIL}>${NC}"
+    [ -n "${GIT_USER_NAME:-}" ] && printf "%s%s %s <%s>%s\n" "${ICON_OK}" " Git identity:" "${CYAN}${GIT_USER_NAME}${NC}" "<${GIT_USER_EMAIL}>" "${NC}"
 }
 
 # --- [ CORE LOGIC ] -----------------------------------------------------------
@@ -715,6 +718,11 @@ build_standard_image() {
         proxy_args=(--build-arg "PROXY_URL=$build_proxy")
     fi
 
+    local git_args=()
+    if [ -n "${GIT_USER_NAME:-}" ] && [ -n "${GIT_USER_EMAIL:-}" ]; then
+        git_args=(--build-arg "GIT_USER_NAME=${GIT_USER_NAME}" --build-arg "GIT_USER_EMAIL=${GIT_USER_EMAIL}")
+    fi
+
     local _build_dir; _build_dir=$(mktemp -d)
     trap 'rm -rf "$_build_dir"; trap - RETURN' RETURN
 
@@ -728,7 +736,13 @@ build_standard_image() {
     cat > "$_build_dir/$df_name" <<DOCKERFILE
 FROM $BASE_IMAGE
 ARG PROXY_URL
+ARG GIT_USER_NAME
+ARG GIT_USER_EMAIL
 ENV DEBIAN_FRONTEND=noninteractive
+RUN if [ -n "\${GIT_USER_NAME}" ] && [ -n "\${GIT_USER_EMAIL}" ]; then \
+      git config --global user.name "\${GIT_USER_NAME}" && \
+      git config --global user.email "\${GIT_USER_EMAIL}"; \
+    fi
 RUN if [ -n "\${PROXY_URL}" ]; then \
       apt_proxy=\$(echo "\${PROXY_URL}" | sed 's|^https://|http://|') && \
       if [ -f /etc/apt/sources.list ]; then \
@@ -752,7 +766,7 @@ ${pm_proxy_cmds}
 ${install_cmds}
 DOCKERFILE
 
-    docker build -t "$IMAGE_NAME" "${proxy_args[@]}" \
+    docker build -t "$IMAGE_NAME" "${proxy_args[@]}" "${git_args[@]}" \
         -f "$(to_host_path "$_build_dir")/$df_name" \
         "$(to_host_path "$_build_dir")" || {
         echo -e "${RED}✘ Docker build failed${NC}"; return 1

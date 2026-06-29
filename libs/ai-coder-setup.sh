@@ -143,7 +143,7 @@ cmd_setup() {
 
     echo -e "\n${CYAN}Proxy configuration:${NC}"
     _cur_proxy=$(cat "$HOME/.ai-coder-proxy" 2>/dev/null || true)
-    [ -n "$_cur_proxy" ] && echo -e "${DIM}  Current: ${_cur_proxy}${NC}" || echo -e "${DIM}  Current: none${NC}"
+    [ -n "$_cur_proxy" ] && printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_proxy" "$NC" || printf "%s%s%s\n" "$DIM" "  Current: none" "$NC"
     echo -e "${DIM}  Enter a URL to set, '-' to clear, or leave blank to keep.${NC}"
     echo -n "  Proxy URL: "
     read -r _proxy_input
@@ -157,14 +157,14 @@ cmd_setup() {
             ;;
         *)
             echo "$_proxy_input" > "$HOME/.ai-coder-proxy"
-            echo -e "${ICON_OK} Proxy saved: ${CYAN}${_proxy_input}${NC}"
+            printf "%s  Proxy saved: %s%s%s\n" "${ICON_OK}" "${CYAN}" "$_proxy_input" "${NC}"
             ;;
     esac
 
     echo -e "\n${CYAN}Network isolation — block all internet access from containers?${NC}"
     echo -e "${DIM}  (Recommended for regulated environments. Leave blank to keep current setting.)${NC}"
     _cur_iso=$(read_pref "$HOME/.ai-coder-netconfig" isolated no)
-    echo -e "${DIM}  Current: ${_cur_iso}${NC}"
+    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_iso" "$NC"
     echo -n "  Isolate containers? [y/N]: "
     read -r _iso_input
     case "${_iso_input,,}" in
@@ -177,7 +177,7 @@ cmd_setup() {
             echo -e "${DIM}  Network isolation disabled.${NC}"
             ;;
         *)
-            echo -e "${DIM}  Network isolation unchanged (${_cur_iso}).${NC}"
+            printf "%s  Network isolation unchanged (%s)%s\n" "$DIM" "$_cur_iso" "$NC"
             ;;
     esac
 
@@ -187,7 +187,7 @@ cmd_setup() {
     if [ "${_gpu_count:-1}" -gt 1 ]; then
         echo -e "\n${CYAN}GPU mode — ${_gpu_count} GPUs detected. Use all for inference?${NC}"
         _cur_gpu=$(read_pref "$HOME/.ai-coder-gpuconf" gpu_mode multi)
-        echo -e "${DIM}  Current: ${_cur_gpu}${NC}"
+        printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_gpu" "$NC"
         echo -n "  Use all GPUs? [Y/n]: "
         read -r _gpu_input
         case "${_gpu_input,,}" in
@@ -206,20 +206,20 @@ cmd_setup() {
     echo -e "${DIM}  4k / 8k / 16k / 32k / 64k / 128k (default) / 256k${NC}"
     echo -e "${DIM}  Larger = more context, but higher VRAM usage and slower responses.${NC}"
     _cur_ctx=$(read_pref "$HOME/.ai-coder-ctxconfig" ctx_level 128k)
-    echo -e "${DIM}  Current: ${_cur_ctx}${NC}"
+    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_ctx" "$NC"
     echo -n "  Context level [${_cur_ctx}]: "
     read -r _ctx_input
     _ctx_input="${_ctx_input:-}"
     case "${_ctx_input}" in
         4k|8k|16k|32k|64k|128k|256k)
             printf 'ctx_level=%s\n' "$_ctx_input" > "$HOME/.ai-coder-ctxconfig"
-            echo -e "${ICON_OK} Context level set to ${GREEN}${_ctx_input}${NC}."
+            printf "%s%s Context level set to %s%s%s\n" "${ICON_OK}" "" "${GREEN}" "$_ctx_input" "${NC}."
             ;;
         "")
-            echo -e "${DIM}  Context level unchanged (${_cur_ctx}).${NC}"
+            printf "%s  Context level unchanged (%s)%s\n" "$DIM" "$_cur_ctx" "$NC"
             ;;
         *)
-            echo -e "${YELLOW}⚠ Unknown level '${_ctx_input}' — keeping ${_cur_ctx}.${NC}"
+            printf "%s⚠ Unknown level '%s' — keeping %s%s\n" "$YELLOW" "$_ctx_input" "$_cur_ctx" "$NC"
             ;;
     esac
 
@@ -227,7 +227,7 @@ cmd_setup() {
     echo -e "${DIM}  Allows external applications (e.g. Open WebUI) to connect directly.${NC}"
     echo -e "${DIM}  Leave disabled if you only need the AI coding tools inside Docker.${NC}"
     _cur_expose=$(read_pref "$HOME/.ai-coder-portconfig" expose_host_port no)
-    echo -e "${DIM}  Current: ${_cur_expose}${NC}"
+    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_expose" "$NC"
     echo -n "  Expose engine on localhost:8080? [y/N]: "
     read -r _expose_input
     case "${_expose_input,,}" in
@@ -240,7 +240,7 @@ cmd_setup() {
             echo -e "${DIM}  Engine port not exposed to host.${NC}"
             ;;
         *)
-            echo -e "${DIM}  Host port exposure unchanged (${_cur_expose}).${NC}"
+            printf "%s  Host port exposure unchanged (%s)%s\n" "$DIM" "$_cur_expose" "$NC"
             ;;
     esac
 
@@ -249,7 +249,7 @@ cmd_setup() {
     _cur_git_name=$(read_pref "$HOME/.ai-coder-gitconfig" name)
     [ -z "$_cur_git_email" ] && _cur_git_email=$(git config --global user.email 2>/dev/null || true)
     [ -z "$_cur_git_name" ]  && _cur_git_name=$(git config --global user.name 2>/dev/null || true)
-    [ -n "$_cur_git_email" ] && echo -e "${DIM}  Current: ${_cur_git_name} <${_cur_git_email}>${NC}"
+    [ -n "$_cur_git_email" ] && printf "%s%s %s <%s>%s\n" "$DIM" "  Current:" "$_cur_git_name" "$_cur_git_email" "$NC"
     echo -n "  Email (leave blank to keep): "
     read -r _git_email_input
     echo -n "  Name  (leave blank to keep): "
