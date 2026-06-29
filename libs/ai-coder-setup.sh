@@ -98,9 +98,11 @@ cmd_update() {
 
     # Record the installed release hash so future update checks have a baseline to compare
     local new_hash; new_hash=$(_fetch_release_hash) || true
-    [ -n "$new_hash" ] && printf '%s\n' "$new_hash" > "$HOME/.ai-coder-release-hash"
+    [ -n "$new_hash" ] && printf '%s\\n' "$new_hash" > "$HOME/.ai-coder-release-hash"
 
-    echo -e "${ICON_OK} Updated successfully${NC}"
+    printf 'rebuild_required=true\\n' > "$HOME/.ai-coder-rebuild-needed"
+
+    echo -e \"${ICON_OK} Updated successfully${NC}\"
 
     # Reset timestamp so the next run doesn't immediately re-check
     printf 'last_check=%s\n' "$(date +%s 2>/dev/null || echo 0)" > "$HOME/.ai-coder-update-check"
@@ -256,10 +258,13 @@ cmd_setup() {
     read -r _git_name_input
     _final_git_email="${_git_email_input:-$_cur_git_email}"
     _final_git_name="${_git_name_input:-$_cur_git_name}"
-    if [ -n "$_final_git_email" ] || [ -n "$_final_git_name" ]; then
-        printf 'email=%s\nname=%s\n' "$_final_git_email" "$_final_git_name" > "$HOME/.ai-coder-gitconfig"
-        echo -e "${ICON_OK} Git identity saved."
-    else
+    if [ -n \"$_final_git_email\" ] || [ -n \"$_final_git_name\" ]; then
+        if [[ \"$_final_git_email\" != \"$_cur_git_email\" || \"$_final_git_name\" != \"$_cur_git_name\" ]]; then
+            printf 'rebuild_required=true\\n' > \"$HOME/.ai-coder-rebuild-needed\"
+            echo -e \"${YELLOW}  Note: Git identity changed. A rebuild (ai --rebuild) is required to bake this into the image.${NC}\"
+        fi
+        printf 'email=%s\\nname=%s\\n' \"$_final_git_email\" \"$_final_git_name\" > \"$HOME/.ai-coder-gitconfig\"
+        echo -e \"${ICON_OK} Git identity saved.\"\n    else
         echo -e "${DIM}  No git identity set — commits will use container defaults.${NC}"
     fi
 

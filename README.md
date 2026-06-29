@@ -101,7 +101,7 @@ GPU_MODE=single ./ai-coder
 
 ### When does a rebuild apply changes?
 
-A rebuild (`./ai-coder --rebuild` followed by `./ai-coder`) is only needed when the Docker image itself must change. Many settings take effect immediately on the next launch without any rebuild.
+A rebuild (`./ai-coder --rebuild` followed by `./ai-coder`) is only needed when the Docker image itself must change. Many settings take effect immediately on the next launch without any rebuild (except for Git identity).
 
 | Operation | Rebuild required? | Notes |
 | --- | :---: | --- |
@@ -113,7 +113,7 @@ A rebuild (`./ai-coder --rebuild` followed by `./ai-coder`) is only needed when 
 | Change `config/ai-coder-model.conf` settings | No | Read at launch time |
 | Add a new model family config (`config/families/*.conf`) | No | Read at launch time |
 | Change GPU mode (`--setup`) | No | Passed as flags when the engine container starts |
-| Change proxy, network isolation, or git identity (`--setup`) | No | Applied at container start time |
+| Change proxy or network isolation (`--setup`) | No | Applied at container start time |\n| Change git identity (`--setup`) | **Yes** | Requires an `--rebuild` to bake into the image |
 | Upgrade `BASE_IMAGE` in `ai-coder-core.sh` | **Yes** | The base layer must be pulled and rebuilt |
 | Change the Dockerfile template in `build_standard_image` | **Yes** | Modifies the image build instructions |
 | Change an agent's `configure_workbench` function | No | Config files are written to a host-mounted volume at launch |

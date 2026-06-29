@@ -116,9 +116,18 @@ fi
 # --- [ MAIN ENTRY ] -----------------------------------------------------------
 
 # Guard: require --setup to have been run at least once before launching.
+# Guard: require --setup to have run at least once before launching.
 if [ ! -f "$HOME/.ai-coder-setup" ]; then
     echo -e "${YELLOW}◈ First-time setup required. Run:${NC}"
     echo -e "  ${CYAN}$(realpath "$0") --setup${NC}"
+    exit 1
+fi
+
+if [ -f "$HOME/.ai-coder-rebuild-needed" ]; then
+    echo -e "${YELLOW}◈ Git identity change detected.${NC}"
+    echo -e "${DIM}  A rebuild is required to bake the new identity into your workbench images.${NC}"
+    echo -e "  Run: ${CYAN}$(basename "$0") --rebuild${NC} then ${CYAN}$(basename "$0")${NC}"
+    rm -f "$HOME/.ai-coder-rebuild-needed"
     exit 1
 fi
 
