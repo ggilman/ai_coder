@@ -833,6 +833,7 @@ start_hub_engine() {
         -m "/models/$MODEL_FILE" --host 0.0.0.0 --port 8080 \
         --parallel "$MODEL_MAX_SLOTS" -ngl 99 -c "$MODEL_CTX_SIZE" --flash-attn on \
         -ctk "${MODEL_KV_TYPE:-q8_0}" -ctv "${MODEL_KV_TYPE:-q8_0}" \
+        --batch-size 4096 --defrag-thold 0.1 \
         --repeat-penalty 1.1 --repeat-last-n 128 \
         --jinja \
         "${_ts_args[@]}" > /dev/null || {

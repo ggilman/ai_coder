@@ -5,4 +5,5 @@ test_*
 ai_coder.zip
 bundle/
 .bundle-work/
+.claude/
 
