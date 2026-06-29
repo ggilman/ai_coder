@@ -212,27 +212,26 @@ make_mcp_servers_json() {
 _fetch_release_hash() {
     local api_url="https://api.github.com/repos/ggilman/ai_coder/git/refs/heads/release"
     local http_proxy=""
-    [ -n "${DOWNLOAD_PROXY:-}" ] && http_proxy=$(echo "$DOWNLOAD_PROXY" | sed 's|^https://|http://|')
+[ -n "${DOWNLOAD_PROXY:-}" ] && http_proxy=$(resolve_proxy_to_ip "$(echo "$DOWNLOAD_PROXY" | sed "s|^https://|http://|")")
     if command -v curl >/dev/null 2>&1; then
         local curl_args=(-fsSL --connect-timeout 4)
         [ -n "$http_proxy" ] && curl_args+=(--proxy "$http_proxy")
         curl "${curl_args[@]}" "$api_url" 2>/dev/null \
-            | grep -oE '"sha"[[:space:]]*:[[:space:]]*"[a-f0-9]{40}"' \
-            | head -1 | grep -oE '[a-f0-9]{40}' || true
+            | grep '"sha"' | grep -oE '[a-f0-9]{40}' | head -1 || true
+
     elif command -v wget >/dev/null 2>&1; then
         local wget_proxy_args=()
         [ -n "$http_proxy" ] && wget_proxy_args=(-e "use_proxy=yes" -e "http_proxy=$http_proxy" -e "https_proxy=$http_proxy")
         wget -qO- --timeout=4 "${wget_proxy_args[@]}" "$api_url" 2>/dev/null \
-            | grep -oE '"sha"[[:space:]]*:[[:space:]]*"[a-f0-9]{40}"' \
-            | head -1 | grep -oE '[a-f0-9]{40}' || true
+            | grep '"sha"' | grep -oE '[a-f0-9]{40}' | head -1 || true
+
     fi
 }
-
 check_for_update() {
     local install_dir; install_dir="$(dirname "$SCRIPT_DIR")"
     local pref_file="$HOME/.ai-coder-update-check"
     local hash_file="$HOME/.ai-coder-release-hash"
-    local interval=86400  # 24 hours
+    local interval=86400 # 24 hours
 
     local last_check; last_check=$(read_pref "$pref_file" last_check 0)
     local now; now=$(date +%s 2>/dev/null || echo 0)
@@ -282,7 +281,12 @@ resolve_proxy_to_ip() {
         ip=$(nslookup "$host" 2>/dev/null | tr -d '\r' | awk '/^Address:/{ip=$2} END{print ip}' | head -1)
     fi
     if [ -n "$ip" ]; then
-        echo "$proxy_url" | sed "s|$host|$ip|"
+        # If the IP address contains a colon, it's likely IPv6 and needs brackets
+        if [[ "$ip" == *:* ]]; then
+            echo "$proxy_url" | sed "s|$host|[$ip]|"
+        else
+            echo "$proxy_url" | sed "s|$host|$ip|"
+        fi
     else
         echo "$proxy_url"
     fi
@@ -460,7 +464,7 @@ _download_file() {
     local win_curl=""
     [ "$IS_WSL" = "true" ] && win_curl=$(command -v curl.exe 2>/dev/null || true)
     local http_proxy=""
-    [ -n "${DOWNLOAD_PROXY:-}" ] && http_proxy=$(echo "$DOWNLOAD_PROXY" | sed 's|^https://|http://|')
+    [ -n "${DOWNLOAD_PROXY:-}" ] && http_proxy=$(resolve_proxy_to_ip "$(echo "$DOWNLOAD_PROXY" | sed 's|^https://|http://|')")
 
     if [ "$IS_GITBASH" = "true" ] && command -v powershell.exe >/dev/null 2>&1; then
         local win_out; win_out=$(cygpath -w "$dest")
