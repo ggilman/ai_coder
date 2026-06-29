@@ -278,13 +278,15 @@ The file is plain bash, so any valid shell syntax works. Variables set here are 
 
 ### Install (`install.sh`)
 
-Run this one-liner to download and install ai-coder:
+Run this one-liner to download and install ai-coder (installs to `~/ai-coder` by default):
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/ggilman/ai_coder/release/install.sh | bash
-```
+```bash\ncurl -fsSL https://raw.githubusercontent.com/ggilman/ai_coder/release/install.sh | bash\n```
 
-This installs to `~/ai-coder` by default. To choose a different location, pass the path after `--`:
+If you are behind a proxy, use the `-x` flag with `curl`:
+
+```bash\ncurl -x http://your-proxy:8080 -fsSL https://raw.githubusercontent.com/ggilman/ai_coder/release/install.sh | bash\n```
+
+To choose a different location, pass the path after `--`:
 
 ```bash
 # Install to a specific directory

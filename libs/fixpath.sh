@@ -33,7 +33,5 @@ fixpath() {
         else
             echo "Error: No matching mount record found in /proc/self/mountinfo."
         fi
-    else
-        echo "No action needed. You are not in a Docker bind mount (Current: $PWD)."
     fi
 }
