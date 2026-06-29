@@ -53,6 +53,11 @@ pip:conan-mcp conan                         | conan      | conan-mcp            
 # Requires internet to reach the Brave Search API.
 @brave/brave-search-mcp-server              | brave-search | brave-search-mcp-server         | | BRAVE_API_KEY                                                                       | online
 
+# GitHub — issues, PRs, code search, file CRUD, releases, 40+ tools.
+# Set GITHUB_PERSONAL_ACCESS_TOKEN in ~/.ai-coder-env (fine-grained token works).
+# Requires internet to reach the GitHub API.
+@modelcontextprotocol/server-github         | github       | mcp-server-github               | | GITHUB_PERSONAL_ACCESS_TOKEN                                                        | online
+
 # ----------------------------------------------------------------------------
 # NOTE: The base image is node:24-bookworm-slim (Debian Bookworm = Python 3.11).
 # pip: entries are fully supported with --break-system-packages.

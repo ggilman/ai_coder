@@ -5,6 +5,7 @@
 
 # 3D modelling (used by claude-code for CAD tasks)
 openscad
+xvfb
 
 # Android debug bridge
 android-tools-adb

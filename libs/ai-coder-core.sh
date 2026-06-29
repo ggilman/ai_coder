@@ -652,7 +652,7 @@ build_standard_image() {
     fi
 
     local _build_dir; _build_dir=$(mktemp -d)
-    trap 'rm -rf "$_build_dir"' RETURN
+    trap 'rm -rf "$_build_dir"; trap - RETURN' RETURN
 
     cat > "$_build_dir/$df_name" <<DOCKERFILE
 FROM $BASE_IMAGE
@@ -809,6 +809,7 @@ start_hub_engine() {
         --parallel "$MODEL_MAX_SLOTS" -ngl 99 -c "$MODEL_CTX_SIZE" --flash-attn on \
         -ctk "${MODEL_KV_TYPE:-q8_0}" -ctv "${MODEL_KV_TYPE:-q8_0}" \
         --repeat-penalty 1.1 --repeat-last-n 128 \
+        --jinja \
         "${_ts_args[@]}" > /dev/null || {
         echo -e "${RED}✘ Failed to start engine container${NC}"; return 1
     }

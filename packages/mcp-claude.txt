@@ -10,4 +10,7 @@
 # Lines starting with # are ignored. Blank lines are ignored.
 # ============================================================
 
-# Add Claude-specific MCP servers here
+# OpenSCAD — create, validate, and render .scad files directly from the agent.
+# Tools: render to STL/PNG, validate syntax, list variables/modules, export.
+# Not on PyPI; installed from source. Requires openscad + xvfb (both in apt-claude.txt).
+pip:git+https://github.com/quellant/openscad-mcp.git | openscad | openscad-mcp | |

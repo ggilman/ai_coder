@@ -26,6 +26,10 @@ The environment uses a **Hub & Spoke** model:
 | `agents/ai-coder-opencode.sh` | OpenCode overrides (sourced automatically when OpenCode is selected) |
 | `agents/ai-coder-aider.sh` | Aider overrides (sourced automatically when Aider is selected) |
 | `agents/ai-coder-gemini.sh` | Gemini CLI overrides (sourced automatically when Gemini is selected) |
+| `agents/ai-coder-hub.sh` | Hub-only mode — starts the engine without a coding tool; press any key to stop |
+| `agents/ai-coder-webui.sh` | Open WebUI mode — starts the engine + Open WebUI chat interface at `localhost:3000` |
+| `libs/ai-coder-menus.sh` | Interactive family and tool selection menus (sourced by `ai-coder`) |
+| `libs/ai-coder-setup.sh` | Setup wizard and `--fix-project` command (sourced by `ai-coder`) |
 | `ai-status.sh` | System health dashboard |
 | `offline/bundle.sh` | Offline bundle creator — packages scripts, Docker images, and a model for air-gapped deployment |
 | `offline/unbundle.sh` | Offline bundle installer — loads a bundle onto an isolated target machine |
@@ -147,7 +151,7 @@ MCP (Model Context Protocol) servers extend what the AI agent can do — web sea
 #### File format
 
 ```
-npm-package | server-key | command | arg1 arg2 ... | ENV_VAR1,ENV_VAR2
+npm-package | server-key | command | arg1 arg2 ... | ENV_VAR1,ENV_VAR2 | net
 ```
 
 | Field | Required | Description |
@@ -157,6 +161,7 @@ npm-package | server-key | command | arg1 arg2 ... | ENV_VAR1,ENV_VAR2
 | `command` | Yes | The executable to run (e.g. `mcp-server-git`, `npx`). |
 | `arg1 arg2 ...` | No | Space-separated arguments. Use `{workspace}` as a placeholder for the container workspace path. |
 | `ENV_VAR1,ENV_VAR2` | No | Comma-separated list of env var references. Two forms are supported: **bare name** (`MY_KEY`) expands the value from your host shell; **`NAME=value`** sets a literal value (supports `{workspace}` substitution). |
+| `net` | No | Set to `online` to skip this server when network isolation is active. Leave blank for servers that work fully offline. |
 
 Lines starting with `#` and blank lines are ignored.
 
@@ -245,15 +250,17 @@ echo "@some-org/server | key | cmd | args" >> packages/mcp-opencode.txt
 | ai-coder | GPU mode preference (single/multi) | `~/.ai-coder-gpuconf` |
 | ai-coder | Saved proxy URL | `~/.ai-coder-proxy` |
 | ai-coder | Network isolation preference | `~/.ai-coder-netconfig` |
+| ai-coder | Context window level (4k–256k) | `~/.ai-coder-ctxconfig` |
+| ai-coder | Host port exposure preference | `~/.ai-coder-portconfig` |
 | ai-coder | Setup completion sentinel | `~/.ai-coder-setup` |
 | ai-coder | Git identity (name + email) | `~/.ai-coder-gitconfig` |
-| ai-coder | **Session env vars** (API keys, secrets) | `~/.ai-coder-env` |
+| ai-coder | **Session env vars** (API keys, secrets) | `~/.ai-coder-env` (WSL: Windows home) |
 
 All paths are volume-mounted into the workbench container, so settings survive container restarts without rebuilding the image. The `~/.claude-config.json` file is pre-created with `{}` on first launch if it does not already exist.
 
 ### Session environment file (`~/.ai-coder-env`)
 
-If `~/.ai-coder-env` exists, it is sourced automatically at the start of every `ai-coder` launch. This is the recommended place for API keys and other secrets that should be available to the agent session but are not appropriate for your shell profile.
+If `~/.ai-coder-env` exists, it is sourced automatically at the start of every `ai-coder` launch. This is the recommended place for API keys and other secrets that should be available to the agent session but are not appropriate for your shell profile. **On WSL**, the file is read from the Windows home directory (e.g. `C:\Users\<you>\.ai-coder-env`) so it is shared between Git Bash and WSL sessions.
 
 Example `~/.ai-coder-env`:
 ```bash
@@ -267,7 +274,7 @@ The file is plain bash, so any valid shell syntax works. Variables set here are 
 
 ### Setup (`--setup`)
 
-**`--setup` must be run once before first launch.** It walks through five configuration steps:
+**`--setup` must be run once before first launch.** It walks through up to seven configuration steps:
 
 ```bash
 ./ai-coder --setup
@@ -277,14 +284,18 @@ The file is plain bash, so any valid shell syntax works. Variables set here are 
 2. **Proxy** — enter an HTTP proxy URL (saved to `~/.ai-coder-proxy`), or leave blank for none.
 3. **Network isolation** — optionally block all internet access from containers (`~/.ai-coder-netconfig`).
 4. **GPU mode** — only shown when 2+ GPUs are detected; choose multi (all GPUs) or single (`~/.ai-coder-gpuconf`).
-5. **Git identity** — name and email used for commits made inside the container (`~/.ai-coder-gitconfig`). Falls back to your host global git config if already set.
+5. **Context window level** — how many tokens of context the model retains (4k–256k, default 128k). Saved to `~/.ai-coder-ctxconfig`. Higher values use more VRAM and slow responses.
+6. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps (e.g. Open WebUI) can connect directly. Saved to `~/.ai-coder-portconfig`.
+7. **Git identity** — name and email used for commits made inside the container (`~/.ai-coder-gitconfig`). Falls back to your host global git config if already set.
 
 After completing setup, if you added the alias:
 
 ```bash
 source ~/.bash_profile   # Git Bash
 # or
-source ~/.bashrc         # WSL / Linux
+source ~/.bashrc         # WSL / Linux (bash)
+# or
+source ~/.zshrc          # WSL / Linux (zsh)
 ```
 
 To change any setting, run `--setup` again.
@@ -330,7 +341,7 @@ No internet connection is required on the target machine.
 
 - **Model Loading Issues**: Run `./ai-status.sh` to check GPU availability and VRAM.
 - **Tool call errors in Claude Code** (`missing parameter`): Claude Code requires llama.cpp's native Anthropic endpoint. The workbench connects directly to the engine at port 8080 (`/v1/messages`) to avoid format conversion errors.
-- **Connectivity Issues**: Ensure `DOWNLOAD_PROXY` is set correctly. The scripts use `nslookup` to resolve proxy hostnames to IPs so Docker build containers can reach the proxy.
+- **Connectivity Issues**: Ensure `DOWNLOAD_PROXY` is set correctly. The scripts use `getent`/`nslookup` to resolve proxy hostnames to IPs so Docker build containers can reach the proxy.
 - **Brave Search not working**: Ensure `BRAVE_API_KEY` is exported in your shell before running `./ai-coder`. Get a free key at [brave.com/search/api](https://brave.com/search/api).
 
 - **Shell Compatibility**: The scripts support both **WSL2** and **Git Bash** on Windows.

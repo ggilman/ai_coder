@@ -26,9 +26,21 @@ gcc
 g++
 make
 cmake
+ninja-build
+pkgconf
 
-# .NET SDK (LTS)
+# C/C++ extended toolchain
+clang
+clang-format
+clang-tidy
+cppcheck
+gdb
+libssl-dev
+libffi-dev
+
+# .NET SDK (LTS = 8, Current = 9)
 dotnet-sdk-8.0
+dotnet-sdk-9.0
 
 # Data & files
 jq
