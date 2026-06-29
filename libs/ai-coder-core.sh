@@ -211,12 +211,18 @@ make_mcp_servers_json() {
 
 _fetch_release_hash() {
     local api_url="https://api.github.com/repos/ggilman/ai_coder/git/refs/heads/release"
+    local http_proxy=""
+    [ -n "${DOWNLOAD_PROXY:-}" ] && http_proxy=$(echo "$DOWNLOAD_PROXY" | sed 's|^https://|http://|')
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL --connect-timeout 4 "$api_url" 2>/dev/null \
+        local curl_args=(-fsSL --connect-timeout 4)
+        [ -n "$http_proxy" ] && curl_args+=(--proxy "$http_proxy")
+        curl "${curl_args[@]}" "$api_url" 2>/dev/null \
             | grep -oE '"sha"[[:space:]]*:[[:space:]]*"[a-f0-9]{40}"' \
             | head -1 | grep -oE '[a-f0-9]{40}' || true
     elif command -v wget >/dev/null 2>&1; then
-        wget -qO- --timeout=4 "$api_url" 2>/dev/null \
+        local wget_proxy_args=()
+        [ -n "$http_proxy" ] && wget_proxy_args=(-e "use_proxy=yes" -e "http_proxy=$http_proxy" -e "https_proxy=$http_proxy")
+        wget -qO- --timeout=4 "${wget_proxy_args[@]}" "$api_url" 2>/dev/null \
             | grep -oE '"sha"[[:space:]]*:[[:space:]]*"[a-f0-9]{40}"' \
             | head -1 | grep -oE '[a-f0-9]{40}' || true
     fi
@@ -232,11 +238,11 @@ check_for_update() {
     local now; now=$(date +%s 2>/dev/null || echo 0)
     if [ $(( now - last_check )) -lt $interval ]; then return; fi
 
-    # Write timestamp before the network call so a slow/failed check doesn't retry every run
-    printf 'last_check=%s\n' "$now" > "$pref_file"
-
     local remote_hash; remote_hash=$(_fetch_release_hash)
     [ -z "$remote_hash" ] && return
+
+    # Write timestamp after successful network call so a failed check doesn't block retries
+    printf 'last_check=%s\n' "$now" > "$pref_file"
 
     local local_hash=""
     [ -f "$hash_file" ] && local_hash=$(tr -d '[:space:]' < "$hash_file")
