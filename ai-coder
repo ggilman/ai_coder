@@ -56,18 +56,33 @@ if [[ "${1:-}" == "--fix-project" ]]; then
 fi
 
 if [[ "${1:-}" == "--rebuild" ]]; then
-    agents_dir="$(dirname "$(realpath "$0")")/agents"
+    # Collect every image name defined in any agent script (current version).
+    # tr -d '\r' guards against CRLF on Windows-mounted filesystems.
+    # Also sweep for any leftover images from previous version numbers by
+    # matching the naming convention patterns used across all agent generations.
+    _agents_dir="$(dirname "$SCRIPT_DIR")/agents"
     _removed=0
-    for f in "$agents_dir"/ai-coder-*.sh; do
+    declare -A _seen_imgs=()
+    for f in "$_agents_dir"/ai-coder-*.sh; do
         [ -f "$f" ] || continue
-        _img=$(grep -m1 '^IMAGE_NAME=' "$f" | cut -d'"' -f2)
+        _img=$(grep -m1 '^IMAGE_NAME=' "$f" | cut -d'"' -f2 | tr -d '\r')
         [ -z "$_img" ] && continue
+        _seen_imgs["$_img"]=1
+    done
+    # Also include any Docker images whose name matches the historical naming
+    # conventions: *-engineer-* and local-* (old naming from early versions).
+    while IFS= read -r _img; do
+        [ -n "$_img" ] && _seen_imgs["$_img"]=1
+    done < <(docker images --format '{{.Repository}}' 2>/dev/null | grep -E '(-engineer-|^local-(claude|opencode|gemini|aider))' || true)
+    for _img in "${!_seen_imgs[@]}"; do
         if docker image inspect "$_img" >/dev/null 2>&1; then
             echo -e "${CYAN}◈ Removing [$_img]...${NC}"
-            docker rmi "$_img" 2>/dev/null && \
-                echo -e "${GREEN}✔ Removed${NC}" || \
+            if docker rmi "$_img" 2>/dev/null; then
+                echo -e "${GREEN}✔ Removed${NC}"
+                _removed=$((_removed + 1))
+            else
                 echo -e "${YELLOW}  Could not remove — container may be running${NC}"
-            _removed=$((_removed + 1))
+            fi
         fi
     done
     [ "$_removed" -eq 0 ] && \
