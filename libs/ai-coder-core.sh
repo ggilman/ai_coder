@@ -826,6 +826,14 @@ start_hub_engine() {
         echo -e "${ICON_GEAR} Engine port: ${GREEN}published on localhost:8080${NC}"
     fi
 
+    local _jinja_args=()
+    if [ "${MODEL_JINJA:-true}" = "true" ]; then
+        _jinja_args=(--jinja)
+        echo -e "${ICON_GEAR} Jinja template: ${GREEN}enabled${NC}"
+    else
+        echo -e "${ICON_GEAR} Jinja template: ${YELLOW}disabled (model uses non-JSON tool call format)${NC}"
+    fi
+
     docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$_hub_net" --gpus "$_gpus_flag" --restart on-failure:3 \
         "${_port_args[@]}" "${_cuda_env[@]}" \
         -v "$(to_host_path "$MODEL_STORAGE_DIR"):/models" \
@@ -835,7 +843,7 @@ start_hub_engine() {
         -ctk "${MODEL_KV_TYPE:-q8_0}" -ctv "${MODEL_KV_TYPE:-q8_0}" \
         --batch-size 4096 --defrag-thold 0.1 \
         --repeat-penalty 1.1 --repeat-last-n 128 \
-        --jinja \
+        "${_jinja_args[@]}" \
         "${_ts_args[@]}" > /dev/null || {
         echo -e "${RED}✘ Failed to start engine container${NC}"; return 1
     }

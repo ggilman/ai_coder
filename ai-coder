@@ -5,6 +5,9 @@
 # ==============================================================================
 set -euo pipefail
 
+source "$(dirname "$(realpath "$0")")/libs/fixpath.sh"
+fixpath
+
 ALIAS_NAME="ai"
 PREF_FILE="$HOME/.ai-coder-pref"
 FAMILY_PREF_FILE="$HOME/.ai-coder-family"
