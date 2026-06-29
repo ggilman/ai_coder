@@ -809,6 +809,7 @@ run_workbench() {
         -e "HTTP_PROXY=${_wb_http_proxy}" -e "HTTPS_PROXY=${_wb_http_proxy}" \
         -e "no_proxy=$no_proxy_hosts" -e "NO_PROXY=$no_proxy_hosts" \
         -v "$(to_host_path "$(pwd)"):/$WORKSPACE_DIR" \
+        -v "$(to_host_path "$HOME/.gitconfig-container"):/root/.gitconfig:ro" \
         --workdir "$_wb_workdir" \
         "${extra_flags[@]}" \
         "$IMAGE_NAME" /bin/bash -c "$entrypoint" > /dev/null
