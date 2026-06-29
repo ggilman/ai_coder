@@ -13,6 +13,7 @@ The environment uses a **Hub & Spoke** model:
 
 | File | Purpose |
 | --- | --- |
+| `install.sh` | Bootstrap installer — downloads and installs ai-coder from the `release` branch |
 | `ai-coder` | Unified launcher — entry point for all AI coding tools |
 | `libs/ai-coder-core.sh` | Shared infrastructure library (sourced by `ai-coder`) |
 | `libs/ai-coder-graphics.sh` | Shared ANSI color and icon palette (sourced by core and status) |
@@ -65,6 +66,7 @@ A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run
 | `--menu` | Reset model family **and** tool preferences; show both selection menus |
 | `--status` | Show the real-time GPU and engine status dashboard |
 | `--setup` | First-time and re-configuration wizard: alias, proxy, network isolation, GPU mode, git identity |
+| `--update` | Download and install the latest release from GitHub |
 | `--fix-project` | Normalize line endings in the current project folder for AI editing (run once per project) |
 | `--clean` | Stop and remove all Hub and Spoke containers |
 | `--rebuild` | Remove all workbench images to force a full rebuild on next run |
@@ -253,6 +255,8 @@ echo "@some-org/server | key | cmd | args" >> packages/mcp-opencode.txt
 | ai-coder | Context window level (4k–256k) | `~/.ai-coder-ctxconfig` |
 | ai-coder | Host port exposure preference | `~/.ai-coder-portconfig` |
 | ai-coder | Setup completion sentinel | `~/.ai-coder-setup` |
+| ai-coder | Installed release hash (used for update checks) | `~/.ai-coder-release-hash` |
+| ai-coder | Last update-check timestamp | `~/.ai-coder-update-check` |
 | ai-coder | Git identity (name + email) | `~/.ai-coder-gitconfig` |
 | ai-coder | **Session env vars** (API keys, secrets) | `~/.ai-coder-env` (WSL: Windows home) |
 
@@ -269,6 +273,46 @@ export SOME_OTHER_API_KEY=another-key
 ```
 
 The file is plain bash, so any valid shell syntax works. Variables set here are available to all MCP server config generation (e.g. the `BRAVE_API_KEY` env var field in `mcp-common.txt`). The path can be overridden with the `AI_CODER_ENV_FILE` environment variable.
+
+## Installation
+
+### Install (`install.sh`)
+
+Run this one-liner to download and install ai-coder:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ggilman/ai_coder/release/install.sh | bash
+```
+
+This installs to `~/ai-coder` by default. To choose a different location, pass the path after `--`:
+
+```bash
+# Install to a specific directory
+curl -fsSL https://raw.githubusercontent.com/ggilman/ai_coder/release/install.sh | bash -s -- ~/tools/ai-coder
+
+# Install into the current directory
+curl -fsSL https://raw.githubusercontent.com/ggilman/ai_coder/release/install.sh | bash -s -- .
+```
+
+After installation, run `--setup` to configure the tool:
+
+```bash
+~/ai-coder/ai-coder --setup
+```
+
+### Updating (`--update`)
+
+Once installed, keep ai-coder up to date with:
+
+```bash
+ai --update
+# or, without the alias:
+~/ai-coder/ai-coder --update
+```
+
+ai-coder also checks for updates automatically once per day on launch and prints a notice if a new version is available on the `release` branch.
+
+---
 
 ## Setup
 

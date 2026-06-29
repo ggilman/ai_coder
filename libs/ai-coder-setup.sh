@@ -53,6 +53,60 @@ cmd_fix_project() {
 }
 
 # ------------------------------------------------------------------------------
+# cmd_update — download and install the latest release from GitHub
+# ------------------------------------------------------------------------------
+cmd_update() {
+    local install_dir; install_dir="$(dirname "$SCRIPT_DIR")"
+    local tarball_url="https://github.com/ggilman/ai_coder/archive/refs/heads/release.tar.gz"
+    local tmp_dir; tmp_dir=$(mktemp -d)
+    trap 'rm -rf "$tmp_dir"' RETURN
+
+    echo -e "${ICON_GEAR} Downloading latest release..."
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --connect-timeout 15 "$tarball_url" | tar xz --strip-components=1 -C "$tmp_dir" || {
+            echo -e "${RED}✘ Download failed${NC}"; return 1
+        }
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- --timeout=30 "$tarball_url" | tar xz --strip-components=1 -C "$tmp_dir" || {
+            echo -e "${RED}✘ Download failed${NC}"; return 1
+        }
+    else
+        echo -e "${RED}✘ Neither curl nor wget is available${NC}"; return 1
+    fi
+
+    echo -e "${ICON_GEAR} Installing..."
+
+    # Wipe dirs that are entirely release-owned so deleted/renamed files don't linger
+    rm -rf "$install_dir/agents" "$install_dir/libs" "$install_dir/packages" "$install_dir/offline"
+
+    # Wipe release-owned top-level files
+    rm -f "$install_dir/ai-coder" "$install_dir/ai-status.sh" \
+          "$install_dir/LICENSE" "$install_dir/README.md" \
+          "$install_dir/.gitignore" "$install_dir/.gitattributes" "$install_dir/.editorconfig" \
+          "$install_dir/config/ai-coder-model.conf"
+
+    # For config/families: only remove files that exist in the new release so user-added
+    # custom family confs are preserved
+    if [ -d "$tmp_dir/config/families" ]; then
+        for _f in "$tmp_dir/config/families"/*; do
+            [ -f "$_f" ] && rm -f "$install_dir/config/families/$(basename "$_f")"
+        done
+    fi
+
+    cp -r "$tmp_dir/." "$install_dir/"
+    chmod +x "$install_dir/ai-coder" "$install_dir/ai-status.sh"
+
+    # Record the installed release hash so future update checks have a baseline to compare
+    local new_hash; new_hash=$(_fetch_release_hash) || true
+    [ -n "$new_hash" ] && printf '%s\n' "$new_hash" > "$HOME/.ai-coder-release-hash"
+
+    echo -e "${ICON_OK} Updated successfully${NC}"
+
+    # Reset timestamp so the next run doesn't immediately re-check
+    printf 'last_check=%s\n' "$(date +%s 2>/dev/null || echo 0)" > "$HOME/.ai-coder-update-check"
+}
+
+# ------------------------------------------------------------------------------
 # cmd_setup — first-time and re-configuration wizard
 # ------------------------------------------------------------------------------
 cmd_setup() {

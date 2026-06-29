@@ -209,6 +209,49 @@ make_mcp_servers_json() {
     done
 }
 
+_fetch_release_hash() {
+    local api_url="https://api.github.com/repos/ggilman/ai_coder/git/refs/heads/release"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --connect-timeout 4 "$api_url" 2>/dev/null \
+            | grep -oE '"sha"[[:space:]]*:[[:space:]]*"[a-f0-9]{40}"' \
+            | head -1 | grep -oE '[a-f0-9]{40}' || true
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- --timeout=4 "$api_url" 2>/dev/null \
+            | grep -oE '"sha"[[:space:]]*:[[:space:]]*"[a-f0-9]{40}"' \
+            | head -1 | grep -oE '[a-f0-9]{40}' || true
+    fi
+}
+
+check_for_update() {
+    local install_dir; install_dir="$(dirname "$SCRIPT_DIR")"
+    local pref_file="$HOME/.ai-coder-update-check"
+    local hash_file="$HOME/.ai-coder-release-hash"
+    local interval=86400  # 24 hours
+
+    local last_check; last_check=$(read_pref "$pref_file" last_check 0)
+    local now; now=$(date +%s 2>/dev/null || echo 0)
+    if [ $(( now - last_check )) -lt $interval ]; then return; fi
+
+    # Write timestamp before the network call so a slow/failed check doesn't retry every run
+    printf 'last_check=%s\n' "$now" > "$pref_file"
+
+    local remote_hash; remote_hash=$(_fetch_release_hash)
+    [ -z "$remote_hash" ] && return
+
+    local local_hash=""
+    [ -f "$hash_file" ] && local_hash=$(tr -d '[:space:]' < "$hash_file")
+
+    # No recorded hash: first run after install. Save remote hash and assume up to date.
+    if [ -z "$local_hash" ]; then
+        printf '%s\n' "$remote_hash" > "$hash_file"
+        return
+    fi
+
+    [ "$local_hash" = "$remote_hash" ] && return
+
+    echo -e "${YELLOW}◈ Update available — run: ${CYAN}$(realpath "$install_dir/ai-coder") --update${NC}"
+}
+
 # Read a key=value entry from a preference file. Returns the value, or $default if missing.
 read_pref() {
     local file="$1" key="$2" default="${3:-}"

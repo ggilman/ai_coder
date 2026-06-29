@@ -34,6 +34,7 @@ Commands:
   spawn              Execute command in active workbench
   --status           Show GPU and engine status dashboard
   --setup            First-time and re-configuration wizard (alias, proxy, isolation, GPU, git)
+  --update           Download and install the latest release from GitHub
   --fix-project      Fix line endings in the current project for AI editing (run from project folder)
   --clean            Stop and remove all containers
   --rebuild          Remove all workbench images to force a full rebuild on next run
@@ -42,6 +43,11 @@ Commands:
   --help             Show this message
 HELP
     exit 0
+fi
+
+if [[ "${1:-}" == "--update" ]]; then
+    cmd_update
+    exit $?
 fi
 
 if [[ "${1:-}" == "--status" ]]; then
@@ -115,6 +121,8 @@ if [ ! -f "$HOME/.ai-coder-setup" ]; then
     echo -e "  ${CYAN}$(realpath "$0") --setup${NC}"
     exit 1
 fi
+
+check_for_update
 
 # Load optional user environment file — a convenient place for secrets like
 # API keys (e.g. BRAVE_API_KEY) that should be available for this session only
