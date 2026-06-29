@@ -77,11 +77,19 @@ if [[ "${1:-}" == "--rebuild" ]]; then
     for _img in "${!_seen_imgs[@]}"; do
         if docker image inspect "$_img" >/dev/null 2>&1; then
             echo -e "${CYAN}◈ Removing [$_img]...${NC}"
+            # Stop and remove any containers using this image before trying rmi.
+            while IFS= read -r _cid; do
+                [ -z "$_cid" ] && continue
+                _cname=$(docker inspect --format '{{.Name}}' "$_cid" 2>/dev/null | tr -d '/')
+                echo -e "${YELLOW}  Stopping container [${_cname:-$_cid}]...${NC}"
+                docker stop "$_cid" 2>/dev/null || true
+                docker rm   "$_cid" 2>/dev/null || true
+            done < <(docker ps -aq --filter "ancestor=$_img" 2>/dev/null)
             if docker rmi "$_img" 2>/dev/null; then
                 echo -e "${GREEN}✔ Removed${NC}"
                 _removed=$((_removed + 1))
             else
-                echo -e "${YELLOW}  Could not remove — container may be running${NC}"
+                echo -e "${YELLOW}  Could not remove [$_img]${NC}"
             fi
         fi
     done
