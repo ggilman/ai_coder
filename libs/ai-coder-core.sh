@@ -161,7 +161,7 @@ make_mcp_servers_json() {
             fi
             # Build optional env JSON from 5th field (comma-separated name=value or bare name pairs)
             # Bare names expand from the calling environment; name={workspace} substitutes the workspace path.
-            env_vars_str=$(printf '%s' "${env_vars_str:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*//')
+            env_vars_str=$(printf '%s' "${env_vars_str:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
             local env_json="" env_parts=() env_name env_override
             if [ -n "$env_vars_str" ]; then
                 IFS=',' read -ra env_names <<< "$env_vars_str"
@@ -487,6 +487,21 @@ make_pip_proxy_cmds() {
     echo "env -u https_proxy -u HTTPS_PROXY -u http_proxy -u HTTP_PROXY pip3 install --break-system-packages --proxy $pip_proxy --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org"
 }
 
+build_pip_install_cmds() {
+    # Usage: build_pip_install_cmds <pip_proxy_cmds> <offline_pkgs> <online_pkgs>
+    # Returns Dockerfile RUN lines for offline pip packages (required) and online
+    # pip packages (best-effort, || true). Used by agent build_image() functions.
+    local pip_proxy_cmds="$1" mcp_pip_pkgs="$2" mcp_pip_online="$3"
+    local pip_cmd=""
+    if [ -n "$(echo "$mcp_pip_pkgs" | tr -d ' ')" ]; then
+        pip_cmd=$'\nRUN '"${pip_proxy_cmds} ${mcp_pip_pkgs}"
+    fi
+    if [ -n "$(echo "$mcp_pip_online" | tr -d ' ')" ]; then
+        pip_cmd+=$'\nRUN '"${pip_proxy_cmds} ${mcp_pip_online} || true"
+    fi
+    printf '%s' "$pip_cmd"
+}
+
 download_model() {
     if [ -n "${MODEL_FILE:-}" ] && [ -f "$MODEL_STORAGE_DIR/$MODEL_FILE" ]; then
         return 0
@@ -532,7 +547,7 @@ download_model() {
 }
 
 detect_model() {
-    local vram_list; vram_list=$($SMI --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null) || {
+    local vram_list; vram_list=$($SMI --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | tr -d '\r') || {
         echo -e "${RED}✘ nvidia-smi failed${NC}"; return 1
     }
 
@@ -654,6 +669,13 @@ build_standard_image() {
     local _build_dir; _build_dir=$(mktemp -d)
     trap 'rm -rf "$_build_dir"; trap - RETURN' RETURN
 
+    # Only bake proxy ENV vars into the image when a proxy is actually configured.
+    # An empty ENV http_proxy= would override any runtime-injected proxy via docker run -e.
+    local _proxy_env_block=""
+    if [ -n "${DOWNLOAD_PROXY:-}" ]; then
+        _proxy_env_block=$'ENV http_proxy=${PROXY_URL} https_proxy=${PROXY_URL} HTTP_PROXY=${PROXY_URL} HTTPS_PROXY=${PROXY_URL} \\\n    no_proxy=localhost,127.0.0.1 NO_PROXY=localhost,127.0.0.1'
+    fi
+
     cat > "$_build_dir/$df_name" <<DOCKERFILE
 FROM $BASE_IMAGE
 ARG PROXY_URL
@@ -676,8 +698,7 @@ RUN apt-get update && apt-get install -y wget ca-certificates gnupg apt-transpor
     apt-get update && apt-get install -y \
     ${apt_pkgs} \
     --no-install-recommends --fix-missing && rm -rf /var/lib/apt/lists/*
-ENV http_proxy=\${PROXY_URL} https_proxy=\${PROXY_URL} HTTP_PROXY=\${PROXY_URL} HTTPS_PROXY=\${PROXY_URL} \
-    no_proxy=localhost,127.0.0.1 NO_PROXY=localhost,127.0.0.1
+${_proxy_env_block}
 ${pm_proxy_cmds}
 ${install_cmds}
 DOCKERFILE
@@ -758,7 +779,11 @@ start_hub_engine() {
     for img in "${images_to_pull[@]}"; do
         if ! docker image inspect "$img" >/dev/null 2>&1; then
             echo -e "${CYAN}  Pulling $img ...${NC}"
-            docker pull "$img" || { echo -e "${RED}✘ Failed to pull $img${NC}"; return 1; }
+            if [ -n "${DOWNLOAD_PROXY:-}" ]; then
+                pull_base_image_via_proxy "$img" "$DOWNLOAD_PROXY" || { echo -e "${RED}✘ Failed to pull $img${NC}"; return 1; }
+            else
+                docker pull "$img" || { echo -e "${RED}✘ Failed to pull $img${NC}"; return 1; }
+            fi
         fi
     done
 
@@ -778,7 +803,7 @@ start_hub_engine() {
         _cuda_env=(-e CUDA_VISIBLE_DEVICES=0)
         echo -e "${ICON_GEAR} GPU Mode: ${YELLOW}Single (GPU 0 only)${NC}"
     else
-        local _vram_raw; _vram_raw=$($SMI --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null) || true
+        local _vram_raw; _vram_raw=$($SMI --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | tr -d '\r') || true
         local _split_vals=()
         for _v in $_vram_raw; do
             case "$_v" in *[!0-9]*) ;; *) _split_vals+=("$_v") ;; esac

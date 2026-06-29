@@ -4,22 +4,15 @@
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
-# show_family_menu — prompt user to select a model family
+# _run_selection_menu — shared numbered-list picker used by both menu functions
+# Usage: _run_selection_menu <prompt> <pref_file> <current_key> [name:key ...]
 # ------------------------------------------------------------------------------
-show_family_menu() {
-    local current_key="${1:-}"
-    local pairs=()
-    for f in "$FAMILIES_DIR"/*.conf; do
-        [ -f "$f" ] || continue
-        local name; name=$(grep -m1 '^MODEL_FAMILY=' "$f" | sed 's/^MODEL_FAMILY=//;s/"//g;s/\${[^:]*:-//;s/}//')
-        [ -n "$name" ] || continue
-        local key; key=$(basename "$f" .conf)
-        pairs+=("$name:$key")
-    done
-    IFS=$'\n' pairs=($(printf '%s\n' "${pairs[@]}" | sort)); unset IFS
-
+_run_selection_menu() {
+    local prompt="$1" pref_file="$2" current_key="$3"
+    shift 3
+    local pairs=("$@")
     while true; do
-        echo -e "\n${CYAN}Please select your preferred model family:${NC}"
+        echo -e "\n${CYAN}${prompt}${NC}"
         local i=1 default_choice=""
         for pair in "${pairs[@]}"; do
             local _key="${pair#*:}" _name="${pair%%:*}"
@@ -39,12 +32,29 @@ show_family_menu() {
         if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#pairs[@]} )); then
             local key="${pairs[$((choice-1))]#*:}"
             local name="${pairs[$((choice-1))]%%:*}"
-            echo "$key" > "$FAMILY_PREF_FILE"
+            echo "$key" > "$pref_file"
             echo -e "${ICON_OK} ${name} selected."
             return
         fi
         echo -e "${RED}Invalid selection.${NC}"
     done
+}
+
+# ------------------------------------------------------------------------------
+# show_family_menu — prompt user to select a model family
+# ------------------------------------------------------------------------------
+show_family_menu() {
+    local current_key="${1:-}"
+    local pairs=()
+    for f in "$FAMILIES_DIR"/*.conf; do
+        [ -f "$f" ] || continue
+        local name; name=$(grep -m1 '^MODEL_FAMILY=' "$f" | sed 's/^MODEL_FAMILY=//;s/"//g;s/\${[^:]*:-//;s/}//')
+        [ -n "$name" ] || continue
+        local key; key=$(basename "$f" .conf)
+        pairs+=("$name:$key")
+    done
+    IFS=$'\n' pairs=($(printf '%s\n' "${pairs[@]}" | sort)); unset IFS
+    _run_selection_menu "Please select your preferred model family:" "$FAMILY_PREF_FILE" "$current_key" "${pairs[@]}"
 }
 
 # ------------------------------------------------------------------------------
@@ -64,32 +74,5 @@ show_menu() {
         pairs+=("$name:$key")
     done
     IFS=$'\n' pairs=($(printf '%s\n' "${pairs[@]}" | sort)); unset IFS
-
-    while true; do
-        echo -e "\n${CYAN}Welcome to AI-Coder. Please select your preferred tool:${NC}"
-        local i=1 default_choice=""
-        for pair in "${pairs[@]}"; do
-            local _key="${pair#*:}" _name="${pair%%:*}"
-            if [ "$_key" = "$current_key" ]; then
-                echo -e "  $i) ${_name} ${DIM}◀ current${NC}"
-                default_choice=$i
-            else
-                echo "  $i) $_name"
-            fi
-            (( i++ ))
-        done
-        echo "  q) Quit"
-        [ -n "$default_choice" ] && echo -n "Selection [$default_choice]: " || echo -n "Selection: "
-        read -r choice
-        [ -z "$choice" ] && choice="${default_choice}"
-        if [[ "$choice" == "q" ]]; then exit 0; fi
-        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#pairs[@]} )); then
-            local key="${pairs[$((choice-1))]#*:}"
-            local name="${pairs[$((choice-1))]%%:*}"
-            echo "$key" > "$PREF_FILE"
-            echo -e "${ICON_OK} ${name} selected."
-            return
-        fi
-        echo -e "${RED}Invalid selection.${NC}"
-    done
+    _run_selection_menu "Welcome to AI-Coder. Please select your preferred tool:" "$PREF_FILE" "$current_key" "${pairs[@]}"
 }

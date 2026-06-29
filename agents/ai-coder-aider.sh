@@ -15,11 +15,12 @@ build_image() {
     local pm_proxy_cmds=""
     if [ -n "${DOWNLOAD_PROXY:-}" ]; then
         local build_proxy; build_proxy=$(resolve_proxy_to_ip "$DOWNLOAD_PROXY")
-        pm_proxy_cmds="RUN pip config set global.proxy $build_proxy && pip config set global.trusted-host pypi.org"
+        local pip_proxy; pip_proxy=$(echo "$build_proxy" | sed 's|^https://|http://|')
+        pm_proxy_cmds="RUN pip config set global.proxy $pip_proxy && pip config set global.trusted-host 'pypi.org pypi.python.org files.pythonhosted.org'"
     fi
     local apt_pkgs; apt_pkgs="$(read_package_list "$PACKAGES_DIR/apt-common.txt") $(read_package_list "$PACKAGES_DIR/apt-aider.txt")"
     build_standard_image "Dockerfile.aider" "$apt_pkgs" "$pm_proxy_cmds" \
-        "RUN python3 -m venv /opt/aider && /opt/aider/bin/pip install aider-chat
+        "RUN env -u https_proxy -u HTTPS_PROXY -u http_proxy -u HTTP_PROXY python3 -m venv /opt/aider && env -u https_proxy -u HTTPS_PROXY -u http_proxy -u HTTP_PROXY /opt/aider/bin/pip install aider-chat
 RUN /opt/aider/bin/aider --version"
 }
 

@@ -157,13 +157,19 @@ WORKBENCH="${WORKBENCH_PREFIX}-${PROJECT_ID}"
 # Runs on normal exit, Ctrl-C (INT), and SIGTERM so containers are always
 # stopped regardless of how the user exits.
 _cleanup_done=false
+_workbench_started=false
 cleanup() {
     $_cleanup_done && return
     _cleanup_done=true
     trap - EXIT INT TERM
-    echo -e "${CYAN}◈ Stopping workbench [$WORKBENCH]...${NC}"
-    docker stop "$WORKBENCH" 2>/dev/null || true
-    docker rm   "$WORKBENCH" 2>/dev/null || true
+    # Only stop the workbench container if this process started it.
+    # Guarding here prevents --build-only (or any early-exit path) from stopping
+    # a workbench that belongs to a concurrently running session in the same project.
+    if $_workbench_started; then
+        echo -e "${CYAN}◈ Stopping workbench [$WORKBENCH]...${NC}"
+        docker stop "$WORKBENCH" 2>/dev/null || true
+        docker rm   "$WORKBENCH" 2>/dev/null || true
+    fi
     remaining_spokes=$(docker ps -q --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null | wc -l)
     if [ "$remaining_spokes" -eq 0 ]; then
         stop_hub
@@ -207,32 +213,30 @@ if [ "${NETWORK_INTERNAL:-false}" = "true" ]; then
     docker network create --internal "$HUB_ISOLATED_NET" 2>/dev/null || true
 fi
 
-_engine_running=""
-[ -n "$(docker ps -q -f name=^/${GLOBAL_ENGINE_NAME}$ 2>/dev/null)" ] && _engine_running="yes"
+_engine_running=false
+[ -n "$(docker ps -q -f name=^/${GLOBAL_ENGINE_NAME}$ 2>/dev/null)" ] && _engine_running=true
+_need_engine_restart=false
 
-if [ -n "$_engine_running" ]; then
-    # Restart if GPU mode changed since the engine was last started.
+if $_engine_running; then
+    # Restart if GPU mode or model changed since the engine was last started.
     _eng_gpu=$(read_pref "$HOME/.ai-coder-engine-state" gpu_mode "")
     _eng_model=$(read_pref "$HOME/.ai-coder-engine-state" model "")
     if [ -n "$_eng_gpu" ] && [ "$_eng_gpu" != "${GPU_MODE:-multi}" ]; then
         echo -e "${YELLOW}◈ GPU mode changed (${_eng_gpu} → ${GPU_MODE:-multi}) — restarting engine...${NC}"
-        _engine_running=""
+        _need_engine_restart=true
     elif [ -n "$_eng_model" ] && [ "$_eng_model" != "${MODEL_FILE:-}" ]; then
         echo -e "${YELLOW}◈ Model changed (${_eng_model} → ${MODEL_FILE:-}) — restarting engine...${NC}"
-        _engine_running=""
+        _need_engine_restart=true
     fi
 fi
 
-if [ -z "$_engine_running" ]; then
+if ! $_engine_running || $_need_engine_restart; then
     docker rm "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
     start_hub_engine || { echo -e "${RED}✘ Hub startup failed${NC}"; exit 1; }
 elif [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ] && \
      [ -z "$(docker ps -q -f name=^/${GLOBAL_PROXY_NAME}$ 2>/dev/null)" ]; then
     # Engine is already up but proxy is missing (e.g. switched from a non-proxy
-    # agent). Start just the proxy portion via start_hub_engine which is
-    # idempotent for the engine (it will fail to recreate it but the proxy run
-    # is what matters). Simpler: call start_hub_engine which stops+removes both
-    # then restarts. Accept the brief engine restart cost.
+    # agent). Restart both so the proxy gets a clean start alongside the engine.
     docker rm "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
     start_hub_engine || { echo -e "${RED}✘ Hub startup failed${NC}"; exit 1; }
 fi
@@ -241,6 +245,7 @@ apply_git_identity
 configure_workbench
 
 ensure_workbench_running || { echo -e "${RED}✘ Workbench startup failed${NC}"; exit 1; }
+_workbench_started=true
 
 echo -ne "${CYAN}◈ Syncing VRAM Slots:${NC} "
 retry_count=0
@@ -249,6 +254,11 @@ engine_ready=false
 proxy_ready=false
 
 while [ "$retry_count" -lt "$max_retries" ]; do
+    # Bail early if the engine container has stopped (e.g. unsupported flag, missing model).
+    # --restart on-failure:3 retries transiently, but a clean exit means it won't come back.
+    if ! docker ps -q -f "name=^/${GLOBAL_ENGINE_NAME}$" 2>/dev/null | grep -q .; then
+        break
+    fi
     # Fire both checks in parallel to avoid waiting serially
     docker exec "$GLOBAL_ENGINE_NAME" curl -s -m 2 http://localhost:8080/v1/models 2>/dev/null | grep -q '"id"' &
     _engine_pid=$!
