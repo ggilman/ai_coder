@@ -1002,7 +1002,9 @@ start_hub_engine() {
     fi
 
     pull_image_if_missing "$LLAMA_IMAGE" || return 1
-    [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ] && { pull_image_if_missing "$LITELLM_IMAGE" || return 1; }
+    if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
+        pull_image_if_missing "$LITELLM_IMAGE" || return 1
+    fi
 
     local _gpus_flag _ts_args=() _cuda_env=()
     _resolve_engine_gpu_args
@@ -1040,7 +1042,9 @@ start_hub_engine() {
     write_pref "$STATE_FILE" engine_gpu_mode "${GPU_MODE:-multi}"
     write_pref "$STATE_FILE" engine_model "${MODEL_FILE:-}"
 
-    [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ] && { _start_litellm_proxy "$_hub_net" || return 1; }
+    if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
+        _start_litellm_proxy "$_hub_net" || return 1
+    fi
 }
 
 ensure_workbench_running() {

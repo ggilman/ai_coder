@@ -17,8 +17,9 @@ fixpath() {
             
             # Ensure we successfully parsed a valid a-z drive letter
             if [[ -n "$DRIVE_LETTER" && "$DRIVE_LETTER" =~ [a-z] ]]; then
-                # Reconstruct the absolute native WSL path
+                # Reconstruct the absolute native WSL path and decode \040 -> space
                 TARGET_DIR="/mnt/${DRIVE_LETTER}${ORIGINAL_MOUNT}"
+                TARGET_DIR="${TARGET_DIR//\\040/ }"
                 
                 # Verify the directory exists before attempting to switch
                 if [ -d "$TARGET_DIR" ]; then
