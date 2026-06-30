@@ -824,45 +824,26 @@ pull_base_image_via_proxy() {
     fi
 }
 
+pull_image_if_missing() {
+    local img="$1"
+    docker image inspect "$img" >/dev/null 2>&1 && return 0
+    echo -e "${CYAN}  Pulling $img ...${NC}"
+    if [ -n "${DOWNLOAD_PROXY:-}" ]; then
+        pull_base_image_via_proxy "$img" "$DOWNLOAD_PROXY" || { echo -e "${RED}✘ Failed to pull $img${NC}"; return 1; }
+    else
+        docker pull "$img" || { echo -e "${RED}✘ Failed to pull $img${NC}"; return 1; }
+    fi
+}
+
 # --- [ WORKBENCH HELPERS ] ----------------------------------------------------
 
-build_standard_image() {
-    # Args: <dockerfile-name> <apt-pkgs> <pm-proxy-cmds> <install-cmds>
-    # Handles base-image pull, dockerfile generation, and docker build.
-    local df_name="$1" apt_pkgs="$2" pm_proxy_cmds="$3" install_cmds="$4"
-
-    if [ -n "$(docker images -q "$IMAGE_NAME" 2>/dev/null)" ]; then return 0; fi
-
-    if ! docker image inspect "$BASE_IMAGE" >/dev/null 2>&1; then
-        if [ -n "${DOWNLOAD_PROXY:-}" ]; then
-            pull_base_image_via_proxy "$BASE_IMAGE" "$DOWNLOAD_PROXY" || return 1
-        else
-            docker pull "$BASE_IMAGE" || { echo -e "${RED}✘ Base image pull failed${NC}"; return 1; }
-        fi
-    fi
-
-    local proxy_args=()
-    if [ -n "${DOWNLOAD_PROXY:-}" ]; then
-        local build_proxy; build_proxy=$(resolve_proxy_to_ip "$DOWNLOAD_PROXY")
-        proxy_args=(--build-arg "PROXY_URL=$build_proxy")
-    fi
-
-    local git_args=()
-    if [ -n "${GIT_USER_NAME:-}" ] && [ -n "${GIT_USER_EMAIL:-}" ]; then
-        git_args=(--build-arg "GIT_USER_NAME=${GIT_USER_NAME}" --build-arg "GIT_USER_EMAIL=${GIT_USER_EMAIL}")
-    fi
-
-    local _build_dir; _build_dir=$(mktemp -d)
-    trap 'rm -rf "$_build_dir"; trap - RETURN' RETURN
-
-    # Only bake proxy ENV vars into the image when a proxy is actually configured.
-    # An empty ENV http_proxy= would override any runtime-injected proxy via docker run -e.
+_write_standard_dockerfile() {
+    local build_dir="$1" df_name="$2" apt_pkgs="$3" pm_proxy_cmds="$4" install_cmds="$5"
     local _proxy_env_block=""
     if [ -n "${DOWNLOAD_PROXY:-}" ]; then
         _proxy_env_block=$'ENV http_proxy=${PROXY_URL} https_proxy=${PROXY_URL} HTTP_PROXY=${PROXY_URL} HTTPS_PROXY=${PROXY_URL} \\\n    no_proxy=localhost,127.0.0.1 NO_PROXY=localhost,127.0.0.1'
     fi
-
-    cat > "$_build_dir/$df_name" <<DOCKERFILE
+    cat > "$build_dir/$df_name" <<DOCKERFILE
 FROM $BASE_IMAGE
 ARG PROXY_URL
 ARG GIT_USER_NAME
@@ -894,6 +875,27 @@ ${_proxy_env_block}
 ${pm_proxy_cmds}
 ${install_cmds}
 DOCKERFILE
+}
+
+build_standard_image() {
+    # Args: <dockerfile-name> <apt-pkgs> <pm-proxy-cmds> <install-cmds>
+    local df_name="$1" apt_pkgs="$2" pm_proxy_cmds="$3" install_cmds="$4"
+
+    if [ -n "$(docker images -q "$IMAGE_NAME" 2>/dev/null)" ]; then return 0; fi
+
+    pull_image_if_missing "$BASE_IMAGE" || return 1
+
+    local proxy_args=()
+    [ -n "${DOWNLOAD_PROXY:-}" ] && proxy_args=(--build-arg "PROXY_URL=$(resolve_proxy_to_ip "$DOWNLOAD_PROXY")")
+
+    local git_args=()
+    [ -n "${GIT_USER_NAME:-}" ] && [ -n "${GIT_USER_EMAIL:-}" ] && \
+        git_args=(--build-arg "GIT_USER_NAME=${GIT_USER_NAME}" --build-arg "GIT_USER_EMAIL=${GIT_USER_EMAIL}")
+
+    local _build_dir; _build_dir=$(mktemp -d)
+    trap 'rm -rf "$_build_dir"; trap - RETURN' RETURN
+
+    _write_standard_dockerfile "$_build_dir" "$df_name" "$apt_pkgs" "$pm_proxy_cmds" "$install_cmds"
 
     docker build -t "$IMAGE_NAME" "${proxy_args[@]}" "${git_args[@]}" \
         -f "$(to_host_path "$_build_dir")/$df_name" \
@@ -986,41 +988,17 @@ run_workbench() {
         "$IMAGE_NAME" /bin/bash -c "$entrypoint" > /dev/null
 }
 
-start_hub_engine() {
-    echo -e "${ICON_GEAR} Initializing Global GPU Hub..."
-    docker stop "$GLOBAL_ENGINE_NAME" 2>/dev/null || true
-    docker rm   "$GLOBAL_ENGINE_NAME" 2>/dev/null || true
-    if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
-        docker stop "$GLOBAL_PROXY_NAME" 2>/dev/null || true
-        docker rm   "$GLOBAL_PROXY_NAME" 2>/dev/null || true
-    fi
-
-    local images_to_pull=("$LLAMA_IMAGE")
-    [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ] && images_to_pull+=("$LITELLM_IMAGE")
-    for img in "${images_to_pull[@]}"; do
-        if ! docker image inspect "$img" >/dev/null 2>&1; then
-            echo -e "${CYAN}  Pulling $img ...${NC}"
-            if [ -n "${DOWNLOAD_PROXY:-}" ]; then
-                pull_base_image_via_proxy "$img" "$DOWNLOAD_PROXY" || { echo -e "${RED}✘ Failed to pull $img${NC}"; return 1; }
-            else
-                docker pull "$img" || { echo -e "${RED}✘ Failed to pull $img${NC}"; return 1; }
-            fi
-        fi
-    done
-
-    # GPU selection: honour GPU_MODE set by ensure_gpu_config / ai-coder-model.conf.
-    # "single" exposes only GPU 0 to the container; "multi" exposes all GPUs and
-    # passes --tensor-split so llama.cpp distributes compute (not just VRAM) across
-    # every card. Without --tensor-split, llama.cpp uses all VRAM but runs all
-    # matrix multiplications on GPU 0 only.
-    local _gpus_flag="all"
-    local _ts_args=()
-    local _cuda_env=()
+_resolve_engine_gpu_args() {
+    # Sets _gpus_flag, _ts_args, _cuda_env for the caller based on GPU_MODE.
+    # "single": exposes only GPU 0; also sets CUDA_VISIBLE_DEVICES to guard against
+    # Docker Desktop / WSL2 passthrough quirks where --gpus device=0 isn't fully enforced.
+    # "multi": exposes all GPUs and builds --tensor-split from per-GPU VRAM so llama.cpp
+    # distributes compute (not just VRAM) across every card.
+    _gpus_flag="all"
+    _ts_args=()
+    _cuda_env=()
     if [ "${GPU_MODE:-multi}" = "single" ]; then
         _gpus_flag="device=0"
-        # Also set CUDA_VISIBLE_DEVICES so llama.cpp only sees GPU 0 even if
-        # Docker's --gpus device=0 flag doesn't fully restrict access (e.g.
-        # Docker Desktop / WSL2 passthrough quirks).
         _cuda_env=(-e CUDA_VISIBLE_DEVICES=0)
         echo -e "${ICON_GEAR} GPU Mode: ${YELLOW}Single (GPU 0 only)${NC}"
     else
@@ -1035,9 +1013,40 @@ start_hub_engine() {
             echo -e "${ICON_GEAR} GPU Mode: ${GREEN}Multi — distributing across ${#_split_vals[@]} GPUs (split: ${CYAN}${_ts}${NC}${GREEN})${NC}"
         fi
     fi
+}
 
-    # When isolation is active, start Hub containers directly on the isolated
-    # network so they have no internet access. Otherwise use the standard hub network.
+_start_litellm_proxy() {
+    local hub_net="$1"
+    mkdir -p "$HOME/.ai-coder"
+    local config_content; config_content=$(get_litellm_config)
+    cat > "$HOME/.ai-coder/litellm_config.yaml" <<EOF
+$config_content
+EOF
+    docker run -d --name "$GLOBAL_PROXY_NAME" --network "$hub_net" -p 4000:4000 --restart always \
+        -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
+        -e "no_proxy=localhost,127.0.0.1,$GLOBAL_ENGINE_NAME" \
+        -v "$(to_host_path "$HOME/.ai-coder/litellm_config.yaml"):/app/config.yaml:ro" \
+        "$LITELLM_IMAGE" --config /app/config.yaml > /dev/null || {
+        echo -e "${RED}✘ Failed to start proxy container${NC}"; return 1
+    }
+}
+
+start_hub_engine() {
+    echo -e "${ICON_GEAR} Initializing Global GPU Hub..."
+
+    docker stop "$GLOBAL_ENGINE_NAME" 2>/dev/null || true
+    docker rm   "$GLOBAL_ENGINE_NAME" 2>/dev/null || true
+    if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
+        docker stop "$GLOBAL_PROXY_NAME" 2>/dev/null || true
+        docker rm   "$GLOBAL_PROXY_NAME" 2>/dev/null || true
+    fi
+
+    pull_image_if_missing "$LLAMA_IMAGE" || return 1
+    [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ] && { pull_image_if_missing "$LITELLM_IMAGE" || return 1; }
+
+    local _gpus_flag _ts_args=() _cuda_env=()
+    _resolve_engine_gpu_args
+
     local _hub_net="$HUB_NETWORK"
     [ "${NETWORK_INTERNAL:-false}" = "true" ] && _hub_net="$HUB_ISOLATED_NET"
 
@@ -1064,29 +1073,14 @@ start_hub_engine() {
         -ctk "${MODEL_KV_TYPE:-q8_0}" -ctv "${MODEL_KV_TYPE:-q8_0}" \
         --batch-size 4096 --defrag-thold 0.1 \
         --repeat-penalty 1.1 --repeat-last-n 128 \
-        "${_jinja_args[@]}" \
-        "${_ts_args[@]}" > /dev/null || {
+        "${_jinja_args[@]}" "${_ts_args[@]}" > /dev/null || {
         echo -e "${RED}✘ Failed to start engine container${NC}"; return 1
     }
 
-    # Record the GPU mode used so ai-coder can detect changes and restart.
     write_pref "$STATE_FILE" engine_gpu_mode "${GPU_MODE:-multi}"
     write_pref "$STATE_FILE" engine_model "${MODEL_FILE:-}"
 
-    if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
-        mkdir -p "$HOME/.ai-coder"
-        local config_content; config_content=$(get_litellm_config)
-        cat > "$HOME/.ai-coder/litellm_config.yaml" <<EOF
-$config_content
-EOF
-        docker run -d --name "$GLOBAL_PROXY_NAME" --network "$_hub_net" -p 4000:4000 --restart always \
-            -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
-            -e "no_proxy=localhost,127.0.0.1,$GLOBAL_ENGINE_NAME" \
-            -v "$(to_host_path "$HOME/.ai-coder/litellm_config.yaml"):/app/config.yaml:ro" \
-            "$LITELLM_IMAGE" --config /app/config.yaml > /dev/null || {
-            echo -e "${RED}✘ Failed to start proxy container${NC}"; return 1
-        }
-    fi
+    [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ] && { _start_litellm_proxy "$_hub_net" || return 1; }
 }
 
 ensure_workbench_running() {
