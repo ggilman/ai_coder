@@ -26,47 +26,7 @@ $(make_mcp_servers_json "/$WORKSPACE_DIR" standard "$PACKAGES_DIR/mcp-common.txt
   }
 }
 EOF
-    # Merge strategy: update mcpServers while preserving all other Claude settings.
-    # Git Bash: write a .ps1 script with paths baked in as literals, run via
-    #   powershell.exe -File. PowerShell handles Windows paths natively with no
-    #   MSYS_NO_PATHCONV / path-conversion complications.
-    # WSL/Linux: python3 (always present, already proven to work).
-    # Last resort: plain cp — overwrites existing settings.
-    local _merged=false
-    if [ "$IS_GITBASH" = "true" ] && [ -f "$_cfg" ]; then
-        local _ps1; _ps1=$(mktemp --suffix=.ps1)
-        local _w_src; _w_src=$(cygpath -w "$_tmp")
-        local _w_dst; _w_dst=$(cygpath -w "$_cfg")
-        local _w_ps1; _w_ps1=$(cygpath -w "$_ps1")
-        # Bash expands $_w_src / $_w_dst into the heredoc as literal Windows paths.
-        # \$variable syntax produces PowerShell $variable in the file.
-        cat > "$_ps1" <<PS1EOF
-\$u = Get-Content -Raw -LiteralPath '$_w_src' | ConvertFrom-Json
-\$e = try { Get-Content -Raw -LiteralPath '$_w_dst' | ConvertFrom-Json } catch { [PSCustomObject]@{} }
-foreach (\$p in \$u.PSObject.Properties) {
-    \$e | Add-Member -Force -MemberType NoteProperty -Name \$p.Name -Value \$p.Value
-}
-\$e | ConvertTo-Json -Depth 20 | Set-Content -Encoding UTF8 -LiteralPath '$_w_dst'
-PS1EOF
-        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$_w_ps1" 2>/dev/null \
-            && _merged=true
-        rm -f "$_ps1"
-    elif [ -f "$_cfg" ] && python3 -c "" >/dev/null 2>&1; then
-        python3 -c "
-import json, sys
-with open(sys.argv[1]) as f:
-    new = json.load(f)
-try:
-    with open(sys.argv[2]) as f:
-        old = json.load(f)
-    new = {**old, **new}
-except Exception:
-    pass
-with open(sys.argv[2], 'w') as f:
-    json.dump(new, f, indent=2)
-" "$_tmp" "$_cfg" && _merged=true
-    fi
-    [ "$_merged" = "false" ] && cp "$_tmp" "$_cfg"
+    merge_json_file "$_tmp" "$_cfg"
     rm -f "$_tmp"
     # Write global instructions so Claude uses MCP tools for file I/O.
     # This avoids the str_replace exact-match failures that occur when editing

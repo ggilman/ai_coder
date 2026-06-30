@@ -99,6 +99,51 @@ ensure_host_dir_writable() {
     fi
 }
 
+merge_json_file() {
+    # Merge all top-level keys from $1 (source) into $2 (destination).
+    # Source keys overwrite matching destination keys; unmatched destination keys
+    # are preserved. Falls back to plain cp if no JSON tool is available or the
+    # destination doesn't yet exist.
+    #
+    # Git Bash: PowerShell — handles Windows paths natively, no MSYS_NO_PATHCONV issues.
+    # WSL/Linux: python3 (always present).
+    # Last resort: cp — overwrites existing settings.
+    local src="$1" dst="$2"
+    local _merged=false
+    if [ "$IS_GITBASH" = "true" ] && [ -f "$dst" ]; then
+        local _ps1; _ps1=$(mktemp --suffix=.ps1)
+        local _w_src; _w_src=$(cygpath -w "$src")
+        local _w_dst; _w_dst=$(cygpath -w "$dst")
+        local _w_ps1; _w_ps1=$(cygpath -w "$_ps1")
+        cat > "$_ps1" <<PS1EOF
+\$u = Get-Content -Raw -LiteralPath '$_w_src' | ConvertFrom-Json
+\$e = try { Get-Content -Raw -LiteralPath '$_w_dst' | ConvertFrom-Json } catch { [PSCustomObject]@{} }
+foreach (\$p in \$u.PSObject.Properties) {
+    \$e | Add-Member -Force -MemberType NoteProperty -Name \$p.Name -Value \$p.Value
+}
+\$e | ConvertTo-Json -Depth 20 | Set-Content -Encoding UTF8 -LiteralPath '$_w_dst'
+PS1EOF
+        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$_w_ps1" 2>/dev/null \
+            && _merged=true
+        rm -f "$_ps1"
+    elif [ -f "$dst" ] && python3 -c "" >/dev/null 2>&1; then
+        python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    new = json.load(f)
+try:
+    with open(sys.argv[2]) as f:
+        old = json.load(f)
+    new = {**old, **new}
+except Exception:
+    pass
+with open(sys.argv[2], 'w') as f:
+    json.dump(new, f, indent=2)
+" "$src" "$dst" && _merged=true
+    fi
+    [ "$_merged" = "false" ] && cp "$src" "$dst"
+}
+
 # Read a package list file: one package per line, # comments stripped.
 read_package_list() {
     local file="$1"
