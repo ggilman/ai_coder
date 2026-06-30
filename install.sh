@@ -89,7 +89,10 @@ else
         | grep -oE '"sha"[[:space:]]*:[[:space:]]*"[a-f0-9]{40}"' \
         | head -1 | grep -oE '[a-f0-9]{40}') || true
 fi
-[ -n "$release_hash" ] && printf '%s\n' "$release_hash" > "$HOME/.ai-coder-release-hash"
+if [ -n "$release_hash" ]; then
+    mkdir -p "$INSTALL_DIR/user"
+    printf 'release_hash=%s\n' "$release_hash" > "$INSTALL_DIR/user/state.conf"
+fi
 
 # --- [ done ] -----------------------------------------------------------------
 

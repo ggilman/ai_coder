@@ -98,12 +98,12 @@ cmd_update() {
 
     # Record the installed release hash so future update checks have a baseline to compare
     local new_hash; new_hash=$(_fetch_release_hash) || true
-    [ -n "$new_hash" ] && printf '%s\n' "$new_hash" > "$HOME/.ai-coder-release-hash"
+    [ -n "$new_hash" ] && write_pref "$STATE_FILE" release_hash "$new_hash"
 
     echo -e "${ICON_OK} Updated successfully${NC}"
 
     # Reset timestamp so the next run doesn't immediately re-check
-    printf 'last_check=%s\n' "$(date +%s 2>/dev/null || echo 0)" > "$HOME/.ai-coder-update-check"
+    write_pref "$STATE_FILE" last_check "$(date +%s 2>/dev/null || echo 0)"
 }
 
 # ------------------------------------------------------------------------------
@@ -142,7 +142,7 @@ cmd_setup() {
     esac
 
     echo -e "\n${CYAN}Proxy configuration:${NC}"
-    _cur_proxy=$(cat "$HOME/.ai-coder-proxy" 2>/dev/null || true)
+    _cur_proxy=$(read_pref "$SETTINGS_FILE" proxy "")
     [ -n "$_cur_proxy" ] && printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_proxy" "$NC" || printf "%s%s%s\n" "$DIM" "  Current: none" "$NC"
     echo -e "${DIM}  Enter a URL to set, '-' to clear, or leave blank to keep.${NC}"
     echo -n "  Proxy URL: "
@@ -152,28 +152,28 @@ cmd_setup() {
             echo -e "${DIM}  Proxy unchanged.${NC}"
             ;;
         -)
-            rm -f "$HOME/.ai-coder-proxy"
+            write_pref "$SETTINGS_FILE" proxy ""
             echo -e "${DIM}  Proxy cleared.${NC}"
             ;;
         *)
-            echo "$_proxy_input" > "$HOME/.ai-coder-proxy"
+            write_pref "$SETTINGS_FILE" proxy "$_proxy_input"
             printf "%s  Proxy saved: %s%s%s\n" "${ICON_OK}" "${CYAN}" "$_proxy_input" "${NC}"
             ;;
     esac
 
     echo -e "\n${CYAN}Network isolation — block all internet access from containers?${NC}"
     echo -e "${DIM}  (Recommended for regulated environments. Leave blank to keep current setting.)${NC}"
-    _cur_iso=$(read_pref "$HOME/.ai-coder-netconfig" isolated no)
+    _cur_iso=$(read_pref "$SETTINGS_FILE" isolated no)
     printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_iso" "$NC"
     echo -n "  Isolate containers? [y/N]: "
     read -r _iso_input
     case "${_iso_input,,}" in
         y|yes)
-            printf 'isolated=yes\n' > "$HOME/.ai-coder-netconfig"
+            write_pref "$SETTINGS_FILE" isolated yes
             echo -e "${ICON_OK} Network isolation ${GREEN}enabled${NC}."
             ;;
         n|no)
-            printf 'isolated=no\n' > "$HOME/.ai-coder-netconfig"
+            write_pref "$SETTINGS_FILE" isolated no
             echo -e "${DIM}  Network isolation disabled.${NC}"
             ;;
         *)
@@ -186,17 +186,17 @@ cmd_setup() {
     _gpu_count=$($SMI --query-gpu=name --format=csv,noheader,nounits 2>/dev/null | grep -c '.' || echo 1)
     if [ "${_gpu_count:-1}" -gt 1 ]; then
         echo -e "\n${CYAN}GPU mode — ${_gpu_count} GPUs detected. Use all for inference?${NC}"
-        _cur_gpu=$(read_pref "$HOME/.ai-coder-gpuconf" gpu_mode multi)
+        _cur_gpu=$(read_pref "$SETTINGS_FILE" gpu_mode multi)
         printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_gpu" "$NC"
         echo -n "  Use all GPUs? [Y/n]: "
         read -r _gpu_input
         case "${_gpu_input,,}" in
             n|no)
-                printf 'gpu_mode=single\n' > "$HOME/.ai-coder-gpuconf"
+                write_pref "$SETTINGS_FILE" gpu_mode single
                 echo -e "${DIM}  GPU mode set to single.${NC}"
                 ;;
             *)
-                printf 'gpu_mode=multi\n' > "$HOME/.ai-coder-gpuconf"
+                write_pref "$SETTINGS_FILE" gpu_mode multi
                 echo -e "${ICON_OK} GPU mode set to ${GREEN}multi${NC}."
                 ;;
         esac
@@ -205,14 +205,14 @@ cmd_setup() {
     echo -e "\n${CYAN}Context window level — how many tokens of context should the model keep?${NC}"
     echo -e "${DIM}  4k / 8k / 16k / 32k / 64k / 128k (default) / 256k${NC}"
     echo -e "${DIM}  Larger = more context, but higher VRAM usage and slower responses.${NC}"
-    _cur_ctx=$(read_pref "$HOME/.ai-coder-ctxconfig" ctx_level 128k)
+    _cur_ctx=$(read_pref "$SETTINGS_FILE" ctx_level 128k)
     printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_ctx" "$NC"
     echo -n "  Context level [${_cur_ctx}]: "
     read -r _ctx_input
     _ctx_input="${_ctx_input:-}"
     case "${_ctx_input}" in
         4k|8k|16k|32k|64k|128k|256k)
-            printf 'ctx_level=%s\n' "$_ctx_input" > "$HOME/.ai-coder-ctxconfig"
+            write_pref "$SETTINGS_FILE" ctx_level "$_ctx_input"
             printf "%s%s Context level set to %s%s%s\n" "${ICON_OK}" "" "${GREEN}" "$_ctx_input" "${NC}."
             ;;
         "")
@@ -226,17 +226,17 @@ cmd_setup() {
     echo -e "\n${CYAN}Host port exposure — publish the engine on localhost:8080?${NC}"
     echo -e "${DIM}  Allows external applications (e.g. Open WebUI) to connect directly.${NC}"
     echo -e "${DIM}  Leave disabled if you only need the AI coding tools inside Docker.${NC}"
-    _cur_expose=$(read_pref "$HOME/.ai-coder-portconfig" expose_host_port no)
+    _cur_expose=$(read_pref "$SETTINGS_FILE" expose_host_port no)
     printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_expose" "$NC"
     echo -n "  Expose engine on localhost:8080? [y/N]: "
     read -r _expose_input
     case "${_expose_input,,}" in
         y|yes)
-            printf 'expose_host_port=yes\n' > "$HOME/.ai-coder-portconfig"
+            write_pref "$SETTINGS_FILE" expose_host_port yes
             echo -e "${ICON_OK} Engine will be published on ${CYAN}localhost:8080${NC}."
             ;;
         n|no)
-            printf 'expose_host_port=no\n' > "$HOME/.ai-coder-portconfig"
+            write_pref "$SETTINGS_FILE" expose_host_port no
             echo -e "${DIM}  Engine port not exposed to host.${NC}"
             ;;
         *)
@@ -245,8 +245,8 @@ cmd_setup() {
     esac
 
     echo -e "\n${CYAN}Git identity for commits inside containers:${NC}"
-    _cur_git_email=$(read_pref "$HOME/.ai-coder-gitconfig" email)
-    _cur_git_name=$(read_pref "$HOME/.ai-coder-gitconfig" name)
+    _cur_git_email=$(read_pref "$SETTINGS_FILE" git_email "")
+    _cur_git_name=$(read_pref  "$SETTINGS_FILE" git_name  "")
     [ -z "$_cur_git_email" ] && _cur_git_email=$(git config --global user.email 2>/dev/null || true)
     [ -z "$_cur_git_name" ]  && _cur_git_name=$(git config --global user.name 2>/dev/null || true)
     [ -n "$_cur_git_email" ] && printf "%s%s %s <%s>%s\n" "$DIM" "  Current:" "$_cur_git_name" "$_cur_git_email" "$NC"
@@ -258,15 +258,16 @@ cmd_setup() {
     _final_git_name="${_git_name_input:-$_cur_git_name}"
     if [ -n "$_final_git_email" ] || [ -n "$_final_git_name" ]; then
         if [[ "$_final_git_email" != "$_cur_git_email" || "$_final_git_name" != "$_cur_git_name" ]]; then
-            printf 'rebuild_required=true\n' > "$HOME/.ai-coder-rebuild-needed"
+            touch "$USER_DIR/.rebuild-needed"
             echo -e "${YELLOW}  Note: Git identity changed. A rebuild (ai --rebuild) is required to bake this into the image.${NC}"
         fi
-        printf 'email=%s\nname=%s\n' "$_final_git_email" "$_final_git_name" > "$HOME/.ai-coder-gitconfig"
+        write_pref "$SETTINGS_FILE" git_email "$_final_git_email"
+        write_pref "$SETTINGS_FILE" git_name  "$_final_git_name"
         echo -e "${ICON_OK} Git identity saved."
     else
         echo -e "${DIM}  No git identity set — commits will use container defaults.${NC}"
     fi
 
-    touch "$HOME/.ai-coder-setup"
+    touch "$USER_DIR/.setup-done"
     echo -e "\n${ICON_OK} Setup complete."
 }

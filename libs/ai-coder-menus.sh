@@ -5,11 +5,11 @@
 
 # ------------------------------------------------------------------------------
 # _run_selection_menu — shared numbered-list picker used by both menu functions
-# Usage: _run_selection_menu <prompt> <pref_file> <current_key> [name:key ...]
+# Usage: _run_selection_menu <prompt> <state_file> <pref_key> <current_key> [name:key ...]
 # ------------------------------------------------------------------------------
 _run_selection_menu() {
-    local prompt="$1" pref_file="$2" current_key="$3"
-    shift 3
+    local prompt="$1" state_file="$2" pref_key="$3" current_key="$4"
+    shift 4
     local pairs=("$@")
     while true; do
         echo -e "\n${CYAN}${prompt}${NC}"
@@ -32,7 +32,7 @@ _run_selection_menu() {
         if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#pairs[@]} )); then
             local key="${pairs[$((choice-1))]#*:}"
             local name="${pairs[$((choice-1))]%%:*}"
-            echo "$key" > "$pref_file"
+            write_pref "$state_file" "$pref_key" "$key"
             echo -e "${ICON_OK} ${name} selected."
             return
         fi
@@ -54,7 +54,7 @@ show_family_menu() {
         pairs+=("$name:$key")
     done
     IFS=$'\n' pairs=($(printf '%s\n' "${pairs[@]}" | sort)); unset IFS
-    _run_selection_menu "Please select your preferred model family:" "$FAMILY_PREF_FILE" "$current_key" "${pairs[@]}"
+    _run_selection_menu "Please select your preferred model family:" "$STATE_FILE" "family_pref" "$current_key" "${pairs[@]}"
 }
 
 # ------------------------------------------------------------------------------
@@ -74,5 +74,5 @@ show_menu() {
         pairs+=("$name:$key")
     done
     IFS=$'\n' pairs=($(printf '%s\n' "${pairs[@]}" | sort)); unset IFS
-    _run_selection_menu "Welcome to AI-Coder. Please select your preferred tool:" "$PREF_FILE" "$current_key" "${pairs[@]}"
+    _run_selection_menu "Welcome to AI-Coder. Please select your preferred tool:" "$STATE_FILE" "tool_pref" "$current_key" "${pairs[@]}"
 }

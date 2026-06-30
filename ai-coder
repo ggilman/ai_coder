@@ -9,8 +9,6 @@ source "$(dirname "$(realpath "$0")")/libs/fixpath.sh"
 fixpath
 
 ALIAS_NAME="ai"
-PREF_FILE="$HOME/.ai-coder-pref"
-FAMILY_PREF_FILE="$HOME/.ai-coder-family"
 FAMILIES_DIR="$(dirname "$(realpath "$0")")/config/families"
 
 # Load Core Library
@@ -24,6 +22,8 @@ source "$CORE_SCRIPT"
 # Load additional libraries
 source "$(dirname "$(realpath "$0")")/libs/ai-coder-setup.sh"
 source "$(dirname "$(realpath "$0")")/libs/ai-coder-menus.sh"
+
+_migrate_settings
 
 # Handle commands that don't require an agent selection
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
@@ -105,7 +105,7 @@ if [[ "${1:-}" == "--rebuild" ]]; then
     [ "$_removed" -eq 0 ] && \
         echo -e "${DIM}  No workbench images found — nothing to remove.${NC}" || \
         echo -e "${ICON_OK} Workbench images cleared. They will be rebuilt on next run."
-    rm -f "$HOME/.ai-coder-rebuild-needed"
+    rm -f "$USER_DIR/.rebuild-needed"
     exit 0
 fi
 
@@ -117,13 +117,13 @@ fi
 # --- [ MAIN ENTRY ] -----------------------------------------------------------
 
 # Guard: require --setup to have been run at least once before launching.
-if [ ! -f "$HOME/.ai-coder-setup" ]; then
+if [ ! -f "$USER_DIR/.setup-done" ]; then
     echo -e "${YELLOW}◈ First-time setup required. Run:${NC}"
     echo -e "  ${CYAN}$(realpath "$0") --setup${NC}"
     exit 1
 fi
 
-if [ -f "$HOME/.ai-coder-rebuild-needed" ]; then
+if [ -f "$USER_DIR/.rebuild-needed" ]; then
     echo -e "${YELLOW}◈ Git identity change detected.${NC}"
     echo -e "${DIM}  A rebuild is required to bake the new identity into your workbench images.${NC}"
     echo -e "  Run: ${CYAN}$(basename "$0") --rebuild${NC} then ${CYAN}$(basename "$0")${NC}"
@@ -148,41 +148,43 @@ fi
 # are shown again on the next step of this run.
 _prev_family=""; _prev_tool=""
 if [[ "${1:-}" == "--menu" ]]; then
-    _prev_family=$(cat "$FAMILY_PREF_FILE" 2>/dev/null || true)
-    _prev_tool=$(cat "$PREF_FILE" 2>/dev/null || true)
-    rm -f "$FAMILY_PREF_FILE" "$PREF_FILE"
+    _prev_family=$(read_pref "$STATE_FILE" family_pref "")
+    _prev_tool=$(read_pref   "$STATE_FILE" tool_pref   "")
+    write_pref "$STATE_FILE" family_pref ""
+    write_pref "$STATE_FILE" tool_pref   ""
     shift
 fi
 
 # --- [ FAMILY SELECTION ] ----------------------------------------------------
 # Show the family menu on first run or after --menu clears the preference.
-if [ ! -f "$FAMILY_PREF_FILE" ] || [ -z "$(cat "$FAMILY_PREF_FILE" 2>/dev/null)" ]; then
+FAMILY_PREF=$(read_pref "$STATE_FILE" family_pref "")
+if [ -z "$FAMILY_PREF" ]; then
     show_family_menu "$_prev_family"
+    FAMILY_PREF=$(read_pref "$STATE_FILE" family_pref "")
 fi
 
-FAMILY_PREF=$(cat "$FAMILY_PREF_FILE")
 FAMILY_CONF="$FAMILIES_DIR/${FAMILY_PREF}.conf"
 if [ ! -f "$FAMILY_CONF" ]; then
     echo -e "${RED}Error: Unknown model family '${FAMILY_PREF}'. Run with --menu to reselect.${NC}"
-    rm -f "$FAMILY_PREF_FILE"
+    write_pref "$STATE_FILE" family_pref ""
     exit 1
 fi
 source "$FAMILY_CONF"
 
 # --- [ TOOL SELECTION ] ------------------------------------------------------
 # Show the tool menu on first run or after --menu clears the preference.
-if [ ! -f "$PREF_FILE" ] || [ -z "$(cat "$PREF_FILE")" ]; then
+TOOL_PREF=$(read_pref "$STATE_FILE" tool_pref "")
+if [ -z "$TOOL_PREF" ]; then
     show_menu "$_prev_tool"
+    TOOL_PREF=$(read_pref "$STATE_FILE" tool_pref "")
 fi
-
-TOOL_PREF=$(cat "$PREF_FILE")
 
 # Resolve child script from agents directory
 AGENTS_DIR="$(dirname "$(realpath "$0")")/agents"
 CHILD_SCRIPT="$AGENTS_DIR/ai-coder-${TOOL_PREF}.sh"
 if [ ! -f "$CHILD_SCRIPT" ]; then
     echo -e "${RED}Error: Unknown tool '${TOOL_PREF}'. Run with --menu to reselect.${NC}"
-    rm -f "$PREF_FILE"
+    write_pref "$STATE_FILE" tool_pref ""
     exit 1
 fi
 LOCAL_STACK_DIR="$(pwd)/.ai-coder/${TOOL_PREF}"
@@ -261,8 +263,8 @@ _need_engine_restart=false
 
 if $_engine_running; then
     # Restart if GPU mode or model changed since the engine was last started.
-    _eng_gpu=$(read_pref "$HOME/.ai-coder-engine-state" gpu_mode "")
-    _eng_model=$(read_pref "$HOME/.ai-coder-engine-state" model "")
+    _eng_gpu=$(read_pref "$STATE_FILE" engine_gpu_mode "")
+    _eng_model=$(read_pref "$STATE_FILE" engine_model "")
     if [ -n "$_eng_gpu" ] && [ "$_eng_gpu" != "${GPU_MODE:-multi}" ]; then
         echo -e "${YELLOW}◈ GPU mode changed (${_eng_gpu} → ${GPU_MODE:-multi}) — restarting engine...${NC}"
         _need_engine_restart=true

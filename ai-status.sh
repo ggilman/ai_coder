@@ -200,7 +200,8 @@ main() {
 
             # Network isolation status
             _iso_val="no"
-            [ -f "$HOME/.ai-coder-netconfig" ] && _iso_val=$(grep '^isolated=' "$HOME/.ai-coder-netconfig" 2>/dev/null | cut -d= -f2- || echo "no")
+            _settings_file="$SCRIPT_DIR/user/settings.conf"
+            [ -f "$_settings_file" ] && _iso_val=$(grep '^isolated=' "$_settings_file" 2>/dev/null | cut -d= -f2- || echo "no")
             if [ "$_iso_val" = "yes" ]; then
                 net_text="  Network: ${YELLOW}⊘ Isolated${NC}${DIM} (ai-engineering-isolated)${NC}"
             else

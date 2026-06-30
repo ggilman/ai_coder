@@ -16,7 +16,7 @@ configure_workbench() { return 0; }
 start_workbench() { return 0; }
 
 execute_tool() {
-    if [ "$(read_pref "$HOME/.ai-coder-portconfig" expose_host_port no)" = "yes" ]; then
+    if [ "$(read_pref "$SETTINGS_FILE" expose_host_port no)" = "yes" ]; then
         echo -e "${ICON_OK} Hub is running — connect any OpenAI-compatible app to ${CYAN}http://localhost:8080${NC}"
     else
         echo -e "${ICON_OK} Hub is running — engine reachable by containers on the Docker network only."

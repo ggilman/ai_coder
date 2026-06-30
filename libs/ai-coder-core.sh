@@ -6,7 +6,11 @@ set -euo pipefail
 
 # --- [ GLOBAL CONFIGURATION ] -------------------------------------------------
 SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
-PACKAGES_DIR="$(dirname "$SCRIPT_DIR")/packages"
+INSTALL_DIR="$(dirname "$SCRIPT_DIR")"
+USER_DIR="$INSTALL_DIR/user"
+SETTINGS_FILE="$USER_DIR/settings.conf"
+STATE_FILE="$USER_DIR/state.conf"
+PACKAGES_DIR="$INSTALL_DIR/packages"
 DOCKER_BIN="${DOCKER_BIN:-}"
 # Resolve the default Docker Desktop path, handling both Git Bash (/c/...) and
 # backslash Windows paths (for WSL powershell.exe invocation).
@@ -26,10 +30,14 @@ WORKBENCH_PREFIX="coder"
 LITELLM_IMAGE="ghcr.io/berriai/litellm:main-latest"
 LLAMA_IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
 DOWNLOAD_PROXY="${DOWNLOAD_PROXY:-}"
-# If DOWNLOAD_PROXY was not set in the environment, fall back to the saved preference file.
-PROXY_PREF_FILE="$HOME/.ai-coder-proxy"
-if [ -z "$DOWNLOAD_PROXY" ] && [ -f "$PROXY_PREF_FILE" ]; then
-    DOWNLOAD_PROXY=$(cat "$PROXY_PREF_FILE" 2>/dev/null || true)
+# If DOWNLOAD_PROXY was not set in the environment, read from consolidated settings.
+# Fall back to the legacy per-file location during the one-time migration window.
+if [ -z "$DOWNLOAD_PROXY" ]; then
+    if [ -f "$SETTINGS_FILE" ]; then
+        DOWNLOAD_PROXY=$(grep '^proxy=' "$SETTINGS_FILE" 2>/dev/null | cut -d= -f2- || true)
+    elif [ -f "$HOME/.ai-coder-proxy" ]; then
+        DOWNLOAD_PROXY=$(cat "$HOME/.ai-coder-proxy" 2>/dev/null || true)
+    fi
 fi
 BASE_IMAGE="node:24-bookworm-slim"
 
@@ -231,11 +239,9 @@ _fetch_release_hash() {
 }
 check_for_update() {
     local install_dir; install_dir="$(dirname "$SCRIPT_DIR")"
-    local pref_file="$HOME/.ai-coder-update-check"
-    local hash_file="$HOME/.ai-coder-release-hash"
     local interval=86400 # 24 hours
 
-    local last_check; last_check=$(read_pref "$pref_file" last_check 0)
+    local last_check; last_check=$(read_pref "$STATE_FILE" last_check 0)
     local now; now=$(date +%s 2>/dev/null || echo 0)
     if [ $(( now - last_check )) -lt $interval ]; then return; fi
 
@@ -243,14 +249,13 @@ check_for_update() {
     [ -z "$remote_hash" ] && return
 
     # Write timestamp after successful network call so a failed check doesn't block retries
-    printf 'last_check=%s\n' "$now" > "$pref_file"
+    write_pref "$STATE_FILE" last_check "$now"
 
-    local local_hash=""
-    [ -f "$hash_file" ] && local_hash=$(tr -d '[:space:]' < "$hash_file")
+    local local_hash; local_hash=$(read_pref "$STATE_FILE" release_hash "")
 
     # No recorded hash: first run after install. Save remote hash and assume up to date.
     if [ -z "$local_hash" ]; then
-        printf '%s\n' "$remote_hash" > "$hash_file"
+        write_pref "$STATE_FILE" release_hash "$remote_hash"
         return
     fi
 
@@ -268,6 +273,63 @@ read_pref() {
     else
         echo "$default"
     fi
+}
+
+# Write or update a single key=value entry in a preference file.
+# Creates the file and its parent directory if needed. Clears the key when value is empty.
+write_pref() {
+    local file="$1" key="$2" value="$3"
+    mkdir -p "$(dirname "$file")"
+    if [ -f "$file" ] && grep -q "^${key}=" "$file" 2>/dev/null; then
+        grep -v "^${key}=" "$file" > "${file}.tmp" && mv "${file}.tmp" "$file" || rm -f "${file}.tmp"
+    fi
+    [ -n "$value" ] && printf '%s=%s\n' "$key" "$value" >> "$file"
+}
+
+# One-time migration from the old $HOME/.ai-coder-* per-file layout to the
+# consolidated user/settings.conf + user/state.conf files in the install directory.
+# Runs only when neither destination file exists yet; deletes the old files on success.
+_migrate_settings() {
+    if [ -f "$SETTINGS_FILE" ] || [ -f "$STATE_FILE" ]; then return; fi
+    mkdir -p "$USER_DIR"
+    local _v
+    # Settings (user-configured via --setup)
+    _v=$(cat "$HOME/.ai-coder-proxy" 2>/dev/null || true)
+    [ -n "$_v" ] && write_pref "$SETTINGS_FILE" proxy "$_v"
+    _v=$(grep '^isolated=' "$HOME/.ai-coder-netconfig" 2>/dev/null | cut -d= -f2- || true)
+    [ -n "$_v" ] && write_pref "$SETTINGS_FILE" isolated "$_v"
+    _v=$(grep '^gpu_mode=' "$HOME/.ai-coder-gpuconf" 2>/dev/null | cut -d= -f2- || true)
+    [ -n "$_v" ] && write_pref "$SETTINGS_FILE" gpu_mode "$_v"
+    _v=$(grep '^ctx_level=' "$HOME/.ai-coder-ctxconfig" 2>/dev/null | cut -d= -f2- || true)
+    [ -n "$_v" ] && write_pref "$SETTINGS_FILE" ctx_level "$_v"
+    _v=$(grep '^expose_host_port=' "$HOME/.ai-coder-portconfig" 2>/dev/null | cut -d= -f2- || true)
+    [ -n "$_v" ] && write_pref "$SETTINGS_FILE" expose_host_port "$_v"
+    _v=$(grep '^email=' "$HOME/.ai-coder-gitconfig" 2>/dev/null | cut -d= -f2- || true)
+    [ -n "$_v" ] && write_pref "$SETTINGS_FILE" git_email "$_v"
+    _v=$(grep '^name=' "$HOME/.ai-coder-gitconfig" 2>/dev/null | cut -d= -f2- || true)
+    [ -n "$_v" ] && write_pref "$SETTINGS_FILE" git_name "$_v"
+    # State (runtime-tracked)
+    _v=$(cat "$HOME/.ai-coder-pref" 2>/dev/null | tr -d '[:space:]' || true)
+    [ -n "$_v" ] && write_pref "$STATE_FILE" tool_pref "$_v"
+    _v=$(cat "$HOME/.ai-coder-family" 2>/dev/null | tr -d '[:space:]' || true)
+    [ -n "$_v" ] && write_pref "$STATE_FILE" family_pref "$_v"
+    _v=$(grep '^last_check=' "$HOME/.ai-coder-update-check" 2>/dev/null | cut -d= -f2- || true)
+    [ -n "$_v" ] && write_pref "$STATE_FILE" last_check "$_v"
+    _v=$(tr -d '[:space:]' < "$HOME/.ai-coder-release-hash" 2>/dev/null || true)
+    [ -n "$_v" ] && write_pref "$STATE_FILE" release_hash "$_v"
+    _v=$(grep '^gpu_mode=' "$HOME/.ai-coder-engine-state" 2>/dev/null | cut -d= -f2- || true)
+    [ -n "$_v" ] && write_pref "$STATE_FILE" engine_gpu_mode "$_v"
+    _v=$(grep '^model=' "$HOME/.ai-coder-engine-state" 2>/dev/null | cut -d= -f2- || true)
+    [ -n "$_v" ] && write_pref "$STATE_FILE" engine_model "$_v"
+    # Sentinels
+    [ -f "$HOME/.ai-coder-setup" ]          && touch "$USER_DIR/.setup-done"
+    [ -f "$HOME/.ai-coder-rebuild-needed" ] && touch "$USER_DIR/.rebuild-needed"
+    # Remove old files
+    rm -f "$HOME/.ai-coder-proxy" "$HOME/.ai-coder-netconfig" "$HOME/.ai-coder-gpuconf" \
+          "$HOME/.ai-coder-ctxconfig" "$HOME/.ai-coder-portconfig" "$HOME/.ai-coder-gitconfig" \
+          "$HOME/.ai-coder-pref" "$HOME/.ai-coder-family" \
+          "$HOME/.ai-coder-update-check" "$HOME/.ai-coder-release-hash" \
+          "$HOME/.ai-coder-engine-state" "$HOME/.ai-coder-setup" "$HOME/.ai-coder-rebuild-needed"
 }
 
 # Resolve proxy hostname to IP so Docker build containers can reach it.
@@ -302,13 +364,11 @@ resolve_proxy_to_ip() {
 
 # --- [ GIT IDENTITY ] ---------------------------------------------------------
 
-GIT_IDENTITY_FILE="$HOME/.ai-coder-gitconfig"
-
 # Load or prompt for git user identity, then store it for future runs.
 # Sets GIT_USER_EMAIL and GIT_USER_NAME in the calling environment.
 ensure_git_identity() {
-    local git_email; git_email=$(read_pref "$GIT_IDENTITY_FILE" email)
-    local git_name;  git_name=$(read_pref  "$GIT_IDENTITY_FILE" name)
+    local git_email; git_email=$(read_pref "$SETTINGS_FILE" git_email "")
+    local git_name;  git_name=$(read_pref  "$SETTINGS_FILE" git_name  "")
     [ -z "$git_email" ] && git_email=$(git config --global user.email 2>/dev/null || true)
     [ -z "$git_name"  ] && git_name=$(git config  --global user.name  2>/dev/null || true)
     export GIT_USER_EMAIL="${git_email:-}"
@@ -320,7 +380,7 @@ ensure_git_identity() {
 # Load or prompt for network isolation preference, then store it for future runs.
 # Sets NETWORK_INTERNAL in the calling environment.
 ensure_network_config() {
-    local isolated_net; isolated_net=$(read_pref "$HOME/.ai-coder-netconfig" isolated no)
+    local isolated_net; isolated_net=$(read_pref "$SETTINGS_FILE" isolated no)
     [ "$isolated_net" = "yes" ] && NETWORK_INTERNAL=true || true
 }
 
@@ -328,13 +388,13 @@ ensure_network_config() {
 # Sets GPU_MODE in the calling environment ("multi" or "single").
 # Silently skips the prompt when only one GPU is present.
 ensure_gpu_config() {
-    GPU_MODE=$(read_pref "$HOME/.ai-coder-gpuconf" gpu_mode multi)
+    GPU_MODE=$(read_pref "$SETTINGS_FILE" gpu_mode multi)
 }
 
 # Sets MODEL_CTX_LEVEL (and derives MODEL_CTX_SIZE) from the saved preference.
 # Falls back to the default defined in ai-coder-model.conf when no pref is saved.
 ensure_ctx_config() {
-    local _level; _level=$(read_pref "$HOME/.ai-coder-ctxconfig" ctx_level "")
+    local _level; _level=$(read_pref "$SETTINGS_FILE" ctx_level "")
     [ -n "$_level" ] && MODEL_CTX_LEVEL="$_level"
     # Re-derive MODEL_CTX_SIZE from the (possibly updated) level.
     case "${MODEL_CTX_LEVEL:-128k}" in
@@ -900,7 +960,7 @@ start_hub_engine() {
     [ "${NETWORK_INTERNAL:-false}" = "true" ] && _hub_net="$HUB_ISOLATED_NET"
 
     local _port_args=()
-    if [ "$(read_pref "$HOME/.ai-coder-portconfig" expose_host_port no)" = "yes" ]; then
+    if [ "$(read_pref "$SETTINGS_FILE" expose_host_port no)" = "yes" ]; then
         _port_args=(-p 8080:8080)
         echo -e "${ICON_GEAR} Engine port: ${GREEN}published on localhost:8080${NC}"
     fi
@@ -928,8 +988,8 @@ start_hub_engine() {
     }
 
     # Record the GPU mode used so ai-coder can detect changes and restart.
-    printf 'gpu_mode=%s\nmodel=%s\n' "${GPU_MODE:-multi}" "${MODEL_FILE:-}" \
-        > "$HOME/.ai-coder-engine-state"
+    write_pref "$STATE_FILE" engine_gpu_mode "${GPU_MODE:-multi}"
+    write_pref "$STATE_FILE" engine_model "${MODEL_FILE:-}"
 
     if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
         mkdir -p "$HOME/.ai-coder"
