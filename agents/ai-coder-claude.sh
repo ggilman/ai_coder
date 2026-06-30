@@ -3,7 +3,7 @@
 # AI-CODER-CLAUDE.SH | Claude-Code Variant Overrides
 # ==============================================================================
 
-IMAGE_NAME="claude-engineer-v4-9"
+IMAGE_NAME="ai-coder-claude"
 TOOL_NAME="Claude"
 
 build_image() {

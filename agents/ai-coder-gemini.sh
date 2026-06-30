@@ -3,7 +3,7 @@
 # AI-CODER-GEMINI.SH | Gemini CLI Variant Overrides
 # ==============================================================================
 
-IMAGE_NAME="gemini-engineer-v5"
+IMAGE_NAME="ai-coder-gemini"
 TOOL_NAME="Gemini"
 NEEDS_LITELLM_PROXY=true
 

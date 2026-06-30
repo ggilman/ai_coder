@@ -3,7 +3,7 @@
 # AI-CODER-AIDER.SH | Aider Variant Overrides
 # ==============================================================================
 
-IMAGE_NAME="aider-engineer-v1"
+IMAGE_NAME="ai-coder-aider"
 TOOL_NAME="Aider"
 
 build_image() {

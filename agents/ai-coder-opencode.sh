@@ -3,7 +3,7 @@
 # AI-CODER-OPENCODE.SH | OpenCode Variant Overrides
 # ==============================================================================
 
-IMAGE_NAME="opencode-engineer-v2"
+IMAGE_NAME="ai-coder-opencode"
 TOOL_NAME="OpenCode"
 
 build_image() {
