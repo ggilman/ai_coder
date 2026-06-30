@@ -30,14 +30,8 @@ WORKBENCH_PREFIX="coder"
 LITELLM_IMAGE="ghcr.io/berriai/litellm:main-latest"
 LLAMA_IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
 DOWNLOAD_PROXY="${DOWNLOAD_PROXY:-}"
-# If DOWNLOAD_PROXY was not set in the environment, read from consolidated settings.
-# Fall back to the legacy per-file location during the one-time migration window.
-if [ -z "$DOWNLOAD_PROXY" ]; then
-    if [ -f "$SETTINGS_FILE" ]; then
-        DOWNLOAD_PROXY=$(grep '^proxy=' "$SETTINGS_FILE" 2>/dev/null | cut -d= -f2- || true)
-    elif [ -f "$HOME/.ai-coder-proxy" ]; then
-        DOWNLOAD_PROXY=$(cat "$HOME/.ai-coder-proxy" 2>/dev/null || true)
-    fi
+if [ -z "$DOWNLOAD_PROXY" ] && [ -f "$SETTINGS_FILE" ]; then
+    DOWNLOAD_PROXY=$(grep '^proxy=' "$SETTINGS_FILE" 2>/dev/null | cut -d= -f2- || true)
 fi
 BASE_IMAGE="node:24-bookworm-slim"
 
@@ -352,49 +346,6 @@ write_pref() {
 # One-time migration from the old $HOME/.ai-coder-* per-file layout to the
 # consolidated user/settings.conf + user/state.conf files in the install directory.
 # Runs only when neither destination file exists yet; deletes the old files on success.
-_migrate_settings() {
-    if [ -f "$SETTINGS_FILE" ] || [ -f "$STATE_FILE" ]; then return; fi
-    mkdir -p "$USER_DIR"
-    local _v
-    # Settings (user-configured via --setup)
-    _v=$(cat "$HOME/.ai-coder-proxy" 2>/dev/null || true)
-    [ -n "$_v" ] && write_pref "$SETTINGS_FILE" proxy "$_v"
-    _v=$(grep '^isolated=' "$HOME/.ai-coder-netconfig" 2>/dev/null | cut -d= -f2- || true)
-    [ -n "$_v" ] && write_pref "$SETTINGS_FILE" isolated "$_v"
-    _v=$(grep '^gpu_mode=' "$HOME/.ai-coder-gpuconf" 2>/dev/null | cut -d= -f2- || true)
-    [ -n "$_v" ] && write_pref "$SETTINGS_FILE" gpu_mode "$_v"
-    _v=$(grep '^ctx_level=' "$HOME/.ai-coder-ctxconfig" 2>/dev/null | cut -d= -f2- || true)
-    [ -n "$_v" ] && write_pref "$SETTINGS_FILE" ctx_level "$_v"
-    _v=$(grep '^expose_host_port=' "$HOME/.ai-coder-portconfig" 2>/dev/null | cut -d= -f2- || true)
-    [ -n "$_v" ] && write_pref "$SETTINGS_FILE" expose_host_port "$_v"
-    _v=$(grep '^email=' "$HOME/.ai-coder-gitconfig" 2>/dev/null | cut -d= -f2- || true)
-    [ -n "$_v" ] && write_pref "$SETTINGS_FILE" git_email "$_v"
-    _v=$(grep '^name=' "$HOME/.ai-coder-gitconfig" 2>/dev/null | cut -d= -f2- || true)
-    [ -n "$_v" ] && write_pref "$SETTINGS_FILE" git_name "$_v"
-    # State (runtime-tracked)
-    _v=$(cat "$HOME/.ai-coder-pref" 2>/dev/null | tr -d '[:space:]' || true)
-    [ -n "$_v" ] && write_pref "$STATE_FILE" tool_pref "$_v"
-    _v=$(cat "$HOME/.ai-coder-family" 2>/dev/null | tr -d '[:space:]' || true)
-    [ -n "$_v" ] && write_pref "$STATE_FILE" family_pref "$_v"
-    _v=$(grep '^last_check=' "$HOME/.ai-coder-update-check" 2>/dev/null | cut -d= -f2- || true)
-    [ -n "$_v" ] && write_pref "$STATE_FILE" last_check "$_v"
-    _v=$(tr -d '[:space:]' < "$HOME/.ai-coder-release-hash" 2>/dev/null || true)
-    [ -n "$_v" ] && write_pref "$STATE_FILE" release_hash "$_v"
-    _v=$(grep '^gpu_mode=' "$HOME/.ai-coder-engine-state" 2>/dev/null | cut -d= -f2- || true)
-    [ -n "$_v" ] && write_pref "$STATE_FILE" engine_gpu_mode "$_v"
-    _v=$(grep '^model=' "$HOME/.ai-coder-engine-state" 2>/dev/null | cut -d= -f2- || true)
-    [ -n "$_v" ] && write_pref "$STATE_FILE" engine_model "$_v"
-    # Sentinels
-    [ -f "$HOME/.ai-coder-setup" ]          && touch "$USER_DIR/.setup-done"
-    [ -f "$HOME/.ai-coder-rebuild-needed" ] && touch "$USER_DIR/.rebuild-needed"
-    # Remove old files
-    rm -f "$HOME/.ai-coder-proxy" "$HOME/.ai-coder-netconfig" "$HOME/.ai-coder-gpuconf" \
-          "$HOME/.ai-coder-ctxconfig" "$HOME/.ai-coder-portconfig" "$HOME/.ai-coder-gitconfig" \
-          "$HOME/.ai-coder-pref" "$HOME/.ai-coder-family" \
-          "$HOME/.ai-coder-update-check" "$HOME/.ai-coder-release-hash" \
-          "$HOME/.ai-coder-engine-state" "$HOME/.ai-coder-setup" "$HOME/.ai-coder-rebuild-needed"
-}
-
 # Resolve proxy hostname to IP so Docker build containers can reach it.
 # getent is Linux-only; fall back to nslookup (available in Git Bash + WSL).
 resolve_proxy_to_ip() {

@@ -23,8 +23,6 @@ source "$CORE_SCRIPT"
 source "$(dirname "$(realpath "$0")")/libs/ai-coder-setup.sh"
 source "$(dirname "$(realpath "$0")")/libs/ai-coder-menus.sh"
 
-_migrate_settings
-
 # Handle commands that don't require an agent selection
 case "${1:-}" in
 --help|-h)
