@@ -189,6 +189,59 @@ read_mcp_pip_packages() {
     done
 }
 
+_mcp_trim() {
+    printf '%s' "$1" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+_mcp_build_env_json() {
+    # Parses comma-separated env var specs into a JSON env fragment.
+    # "NAME"        → expands $NAME from the calling environment
+    # "NAME=value"  → literal value (supports {workspace} substitution)
+    # Output: ', "env": {...}' / ', "environment": {...}' or empty.
+    local env_vars_str="$1" workspace="$2" mode="$3"
+    [ -z "$env_vars_str" ] && return
+    local env_parts=() env_name
+    IFS=',' read -ra env_names <<< "$env_vars_str"
+    for env_name in "${env_names[@]}"; do
+        env_name=$(_mcp_trim "$env_name")
+        [ -z "$env_name" ] && continue
+        if [[ "$env_name" == *=* ]]; then
+            local ev_key="${env_name%%=*}"
+            local ev_val; ev_val=$(printf '%s' "${env_name#*=}" | sed "s|{workspace}|$workspace|g")
+            env_parts+=("\"$ev_key\": \"$ev_val\"")
+        else
+            env_parts+=("\"$env_name\": \"${!env_name:-}\"")
+        fi
+    done
+    [ "${#env_parts[@]}" -eq 0 ] && return
+    local env_joined; env_joined=$(printf ',%s' "${env_parts[@]}")
+    local env_field="env"
+    [ "$mode" = "opencode" ] && env_field="environment"
+    printf ', "%s": {%s}' "$env_field" "${env_joined:1}"
+}
+
+_mcp_format_entry() {
+    # Formats one MCP server JSON entry for the given mode.
+    # standard (Claude/Gemini): {"command": "...", "args": [...], "env": {...}}
+    # opencode:                 {"type": "local", "command": [...], "enabled": true, "environment": {...}}
+    local mode="$1" key="$2" cmd="$3" args_str="$4" env_json="$5"
+    local arr=() a
+    for a in $args_str; do arr+=("\"$a\""); done
+    if [ "$mode" = "opencode" ]; then
+        local oc_arr=("\"$cmd\"")
+        [ "${#arr[@]}" -gt 0 ] && oc_arr+=("${arr[@]}")
+        local oc_joined; oc_joined=$(printf ',%s' "${oc_arr[@]}")
+        printf '    "%s": {"type": "local", "command": [%s], "enabled": true%s}' \
+            "$key" "${oc_joined:1}" "$env_json"
+    else
+        local args_json="[]"
+        if [ "${#arr[@]}" -gt 0 ]; then
+            local joined; joined=$(printf ',%s' "${arr[@]}"); args_json="[${joined:1}]"
+        fi
+        printf '    "%s": {"command": "%s", "args": %s%s}' "$key" "$cmd" "$args_json" "$env_json"
+    fi
+}
+
 # Emit indented mcpServers JSON entries from one or more server list files.
 # Usage: make_mcp_servers_json <workspace-path> <mode> <file1> [file2 ...]
 # mode: "standard" (Claude / Gemini format) or "opencode"
@@ -205,60 +258,16 @@ make_mcp_servers_json() {
     for file in "$@"; do
         [ -f "$file" ] || continue
         while IFS='|' read -r pkg key cmd args_str env_vars_str net_req; do
-            pkg=$(printf '%s' "$pkg"  | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed 's/^pip://')
+            pkg=$(_mcp_trim "$pkg"); pkg="${pkg#pip:}"
             [[ "$pkg" =~ ^# ]] && continue
             [ -z "$pkg" ] && continue
-            net_req=$(printf '%s' "${net_req:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-            [ "$net_req" = "online" ] && [ "${NETWORK_INTERNAL:-false}" = "true" ] && continue
-            key=$(printf '%s' "$key"  | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-            cmd=$(printf '%s' "$cmd"  | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            [ "$(_mcp_trim "${net_req:-}")" = "online" ] && [ "${NETWORK_INTERNAL:-false}" = "true" ] && continue
+            key=$(_mcp_trim "$key")
+            cmd=$(_mcp_trim "$cmd")
             args_str=$(printf '%s' "$args_str" | tr -d '\r' | \
-                sed "s|{workspace}|$workspace|g" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-            # Build JSON array from space-delimited tokens
-            local arr=() a
-            for a in $args_str; do arr+=("\"$a\""); done
-            local args_json="[]"
-            if [ "${#arr[@]}" -gt 0 ]; then
-                local joined; joined=$(printf ',%s' "${arr[@]}"); args_json="[${joined:1}]"
-            fi
-            # Build optional env JSON from 5th field (comma-separated name=value or bare name pairs)
-            # Bare names expand from the calling environment; name={workspace} substitutes the workspace path.
-            env_vars_str=$(printf '%s' "${env_vars_str:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-            local env_json="" env_parts=() env_name env_override
-            if [ -n "$env_vars_str" ]; then
-                IFS=',' read -ra env_names <<< "$env_vars_str"
-                for env_name in "${env_names[@]}"; do
-                    env_name=$(printf '%s' "$env_name" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-                    [ -z "$env_name" ] && continue
-                    # Support NAME=value syntax in the 5th field (with {workspace} substitution)
-                    if [[ "$env_name" == *=* ]]; then
-                        local ev_key ev_val
-                        ev_key="${env_name%%=*}"
-                        ev_val="${env_name#*=}"
-                        ev_val=$(printf '%s' "$ev_val" | sed "s|{workspace}|$workspace|g")
-                        env_parts+=("\"$ev_key\": \"$ev_val\"")
-                    else
-                        local env_val="${!env_name:-}"
-                        env_parts+=("\"$env_name\": \"$env_val\"")
-                    fi
-                done
-                if [ "${#env_parts[@]}" -gt 0 ]; then
-                    local env_joined; env_joined=$(printf ',%s' "${env_parts[@]}")
-                    # OpenCode uses "environment"; standard Claude/Gemini format uses "env"
-                    local env_field="env"
-                    [ "$mode" = "opencode" ] && env_field="environment"
-                    env_json=", \"$env_field\": {${env_joined:1}}"
-                fi
-            fi
-            if [ "$mode" = "opencode" ]; then
-                # opencode requires command as a JSON array (cmd + args merged) and an "enabled" key
-                local oc_arr=("\"$cmd\"") oc_a
-                for oc_a in "${arr[@]}"; do oc_arr+=("$oc_a"); done
-                local oc_joined; oc_joined=$(printf ',%s' "${oc_arr[@]}"); local oc_cmd_json="[${oc_joined:1}]"
-                entries+=("    \"$key\": {\"type\": \"local\", \"command\": $oc_cmd_json, \"enabled\": true$env_json}")
-            else
-                entries+=("    \"$key\": {\"command\": \"$cmd\", \"args\": $args_json$env_json}")
-            fi
+                sed "s|{workspace}|$workspace|g;s/^[[:space:]]*//;s/[[:space:]]*$//")
+            local env_json; env_json=$(_mcp_build_env_json "$(_mcp_trim "${env_vars_str:-}")" "$workspace" "$mode")
+            entries+=("$(_mcp_format_entry "$mode" "$key" "$cmd" "$args_str" "$env_json")")
         done < "$file"
     done
     local i
