@@ -325,7 +325,7 @@ check_for_update() {
 read_pref() {
     local file="$1" key="$2" default="${3:-}"
     if [ -f "$file" ]; then
-        local val; val=$(grep "^${key}=" "$file" 2>/dev/null | cut -d= -f2-)
+        local val; val=$(grep "^${key}=" "$file" 2>/dev/null | cut -d= -f2-) || true
         [ -n "$val" ] && echo "$val" || echo "$default"
     else
         echo "$default"
@@ -338,9 +338,10 @@ write_pref() {
     local file="$1" key="$2" value="$3"
     mkdir -p "$(dirname "$file")"
     if [ -f "$file" ] && grep -q "^${key}=" "$file" 2>/dev/null; then
-        grep -v "^${key}=" "$file" > "${file}.tmp" && mv "${file}.tmp" "$file" || rm -f "${file}.tmp"
+        grep -v "^${key}=" "$file" > "${file}.tmp" 2>/dev/null || true
+        mv "${file}.tmp" "$file"
     fi
-    [ -n "$value" ] && printf '%s=%s\n' "$key" "$value" >> "$file"
+    [ -n "$value" ] && printf '%s=%s\n' "$key" "$value" >> "$file" || true
 }
 
 # One-time migration from the old $HOME/.ai-coder-* per-file layout to the
