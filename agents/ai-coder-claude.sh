@@ -26,11 +26,7 @@ build_image() {
 configure_workbench() {
     # Docker runs Claude as root so files written back to the mounted ~/.claude-config
     # end up root-owned on the WSL host. Reclaim ownership before writing config.
-    if [ ! -d "$HOME/.claude-config" ]; then
-        mkdir -p "$HOME/.claude-config"
-    elif [ ! -w "$HOME/.claude-config" ]; then
-        sudo chown -R "$USER" "$HOME/.claude-config"
-    fi
+    ensure_host_dir_writable "$HOME/.claude-config"
     # Update mcpServers in ~/.claude-config.json while preserving any other keys
     # Claude Code writes there (e.g. telemetry consent, dark mode, preferences).
     local _cfg="$HOME/.claude-config.json"

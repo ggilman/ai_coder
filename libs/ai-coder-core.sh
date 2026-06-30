@@ -90,6 +90,15 @@ to_host_path() {
     fi
 }
 
+ensure_host_dir_writable() {
+    local dir="$1"
+    if [ ! -d "$dir" ]; then
+        mkdir -p "$dir"
+    elif [ ! -w "$dir" ]; then
+        sudo chown -R "$USER" "$dir"
+    fi
+}
+
 # Read a package list file: one package per line, # comments stripped.
 read_package_list() {
     local file="$1"

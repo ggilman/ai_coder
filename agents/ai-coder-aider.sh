@@ -12,25 +12,21 @@ build_image() {
         return 0
     fi
     echo -e "${ICON_GEAR} Building Aider Image..."
-    local pm_proxy_cmds=""
-    if [ -n "${DOWNLOAD_PROXY:-}" ]; then
-        local build_proxy; build_proxy=$(resolve_proxy_to_ip "$DOWNLOAD_PROXY")
-        local pip_proxy; pip_proxy=$(echo "$build_proxy" | sed 's|^https://|http://|')
-        pm_proxy_cmds="RUN pip config set global.proxy $pip_proxy && pip config set global.trusted-host 'pypi.org pypi.python.org files.pythonhosted.org'"
-    fi
     local apt_pkgs; apt_pkgs="$(read_package_list "$PACKAGES_DIR/apt-common.txt") $(read_package_list "$PACKAGES_DIR/apt-aider.txt")"
-    build_standard_image "Dockerfile.aider" "$apt_pkgs" "$pm_proxy_cmds" \
-        "RUN env -u https_proxy -u HTTPS_PROXY -u http_proxy -u HTTP_PROXY python3 -m venv /opt/aider && env -u https_proxy -u HTTPS_PROXY -u http_proxy -u HTTP_PROXY /opt/aider/bin/pip install aider-chat
+    local _pip_proxy_flags=""
+    if [ -n "${DOWNLOAD_PROXY:-}" ]; then
+        local _build_proxy; _build_proxy=$(resolve_proxy_to_ip "$DOWNLOAD_PROXY")
+        local _pip_proxy; _pip_proxy=$(echo "$_build_proxy" | sed 's|^https://|http://|')
+        _pip_proxy_flags="--proxy $_pip_proxy --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org"
+    fi
+    build_standard_image "Dockerfile.aider" "$apt_pkgs" "" \
+        "RUN env -u https_proxy -u HTTPS_PROXY -u http_proxy -u HTTP_PROXY python3 -m venv /opt/aider && env -u https_proxy -u HTTPS_PROXY -u http_proxy -u HTTP_PROXY /opt/aider/bin/pip install aider-chat ${_pip_proxy_flags}
 RUN /opt/aider/bin/aider --version"
 }
 
 configure_workbench() {
     # Docker runs as root so mounted dir files can become root-owned on the WSL host.
-    if [ ! -d "$HOME/.aider-config" ]; then
-        mkdir -p "$HOME/.aider-config"
-    elif [ ! -w "$HOME/.aider-config" ]; then
-        sudo chown -R "$USER" "$HOME/.aider-config"
-    fi
+    ensure_host_dir_writable "$HOME/.aider-config"
     # Only write gitconfig if we have identity — avoids baking in blank name/email
     # Always write gitconfig — sets global autocrlf=input even without identity.
     # Guards on name/email to avoid writing blank values.

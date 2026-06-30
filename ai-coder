@@ -26,7 +26,8 @@ source "$(dirname "$(realpath "$0")")/libs/ai-coder-menus.sh"
 _migrate_settings
 
 # Handle commands that don't require an agent selection
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+case "${1:-}" in
+--help|-h)
     cat <<HELP
 Usage: $(basename "$0") [COMMAND]
 
@@ -42,27 +43,22 @@ Commands:
   --build-only       Build the workbench image then exit (no Hub or agent launch)
   --help             Show this message
 HELP
-    exit 0
-fi
-
-if [[ "${1:-}" == "--update" ]]; then
+    exit 0 ;;
+--update)
     cmd_update
-    exit $?
-fi
-
-if [[ "${1:-}" == "--status" ]]; then
-    exec "$(dirname "$(realpath "$0")")/ai-status.sh"
-fi
-
-if [[ "${1:-}" == "--clean" ]]; then
+    exit $? ;;
+--status)
+    exec "$(dirname "$(realpath "$0")")/ai-status.sh" ;;
+--clean)
     teardown
-    exit 0
-fi
-
-if [[ "${1:-}" == "--fix-project" ]]; then
+    exit 0 ;;
+--fix-project)
     cmd_fix_project
-    exit $?
-fi
+    exit $? ;;
+--setup)
+    cmd_setup
+    exit 0 ;;
+esac
 
 if [[ "${1:-}" == "--rebuild" ]]; then
     # Collect every image name defined in any agent script (current version).
@@ -106,11 +102,6 @@ if [[ "${1:-}" == "--rebuild" ]]; then
         echo -e "${DIM}  No workbench images found — nothing to remove.${NC}" || \
         echo -e "${ICON_OK} Workbench images cleared. They will be rebuilt on next run."
     rm -f "$USER_DIR/.rebuild-needed"
-    exit 0
-fi
-
-if [[ "${1:-}" == "--setup" ]]; then
-    cmd_setup
     exit 0
 fi
 
