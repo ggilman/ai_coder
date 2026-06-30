@@ -8,21 +8,8 @@ TOOL_NAME="Gemini"
 NEEDS_LITELLM_PROXY=true
 
 build_image() {
-    if [ -n "$(docker images -q "$IMAGE_NAME" 2>/dev/null)" ]; then
-        echo -e "${ICON_OK} Gemini Image: ready."
-        return 0
-    fi
-    echo -e "${ICON_GEAR} Building Gemini CLI Image..."
-    local pm_proxy_cmds; pm_proxy_cmds=$(make_npm_proxy_cmds)
-    local pip_proxy_cmds; pip_proxy_cmds=$(make_pip_proxy_cmds)
-    local apt_pkgs; apt_pkgs="$(read_package_list "$PACKAGES_DIR/apt-common.txt") $(read_package_list "$PACKAGES_DIR/apt-gemini.txt")"
-    local mcp_pkgs; mcp_pkgs=$(read_mcp_packages "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-gemini.txt")
-    local mcp_pip_pkgs; mcp_pip_pkgs=$(read_mcp_pip_packages --offline "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-gemini.txt")
-    local mcp_pip_online; mcp_pip_online=$(read_mcp_pip_packages --online "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-gemini.txt")
-    local pip_cmd; pip_cmd=$(build_pip_install_cmds "$pip_proxy_cmds" "$mcp_pip_pkgs" "$mcp_pip_online")
-    build_standard_image "Dockerfile.gemini" "$apt_pkgs" "$pm_proxy_cmds" \
-        "RUN npm install -g @google/gemini-cli ${mcp_pkgs}${pip_cmd}
-RUN gemini --version"
+    build_npm_agent_image "Dockerfile.gemini" "apt-gemini.txt" "mcp-gemini.txt" \
+        "@google/gemini-cli" "" "RUN gemini --version"
 }
 
 configure_workbench() {

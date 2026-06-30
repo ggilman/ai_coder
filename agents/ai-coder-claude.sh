@@ -7,20 +7,8 @@ IMAGE_NAME="claude-engineer-v4-9"
 TOOL_NAME="Claude"
 
 build_image() {
-    if [ -n "$(docker images -q "$IMAGE_NAME" 2>/dev/null)" ]; then
-        echo -e "${ICON_OK} Coder Image: ready."
-        return 0
-    fi
-    echo -e "${ICON_GEAR} Building Coder Image..."
-    local pm_proxy_cmds; pm_proxy_cmds=$(make_npm_proxy_cmds)
-    local pip_proxy_cmds; pip_proxy_cmds=$(make_pip_proxy_cmds)
-    local apt_pkgs; apt_pkgs="$(read_package_list "$PACKAGES_DIR/apt-common.txt") $(read_package_list "$PACKAGES_DIR/apt-claude.txt")"
-    local mcp_pkgs; mcp_pkgs=$(read_mcp_packages "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-claude.txt")
-    local mcp_pip_pkgs; mcp_pip_pkgs=$(read_mcp_pip_packages --offline "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-claude.txt")
-    local mcp_pip_online; mcp_pip_online=$(read_mcp_pip_packages --online "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-claude.txt")
-    local pip_cmd; pip_cmd=$(build_pip_install_cmds "$pip_proxy_cmds" "$mcp_pip_pkgs" "$mcp_pip_online")
-    build_standard_image "Dockerfile" "$apt_pkgs" "$pm_proxy_cmds" \
-        "RUN npm install -g @anthropic-ai/claude-code ${mcp_pkgs}--quiet${pip_cmd}"
+    build_npm_agent_image "Dockerfile" "apt-claude.txt" "mcp-claude.txt" \
+        "@anthropic-ai/claude-code" "--quiet" ""
 }
 
 configure_workbench() {

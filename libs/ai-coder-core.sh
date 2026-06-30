@@ -857,6 +857,34 @@ DOCKERFILE
     }
 }
 
+build_npm_agent_image() {
+    # Shared build_image scaffolding for npm-based agents.
+    # Args:
+    #   $1  dockerfile name
+    #   $2  agent-specific apt package file basename (under $PACKAGES_DIR)
+    #   $3  agent-specific mcp package file basename (under $PACKAGES_DIR)
+    #   $4  npm package(s) to pass to npm install -g
+    #   $5  extra npm flags appended after mcp packages (e.g. "--quiet"), or ""
+    #   $6  extra RUN line appended after npm install (e.g. "RUN gemini --version"), or ""
+    local df_name="$1" apt_file="$2" mcp_file="$3" npm_pkg="$4" npm_extra_flags="${5:-}" verify_run="${6:-}"
+
+    if [ -n "$(docker images -q "$IMAGE_NAME" 2>/dev/null)" ]; then
+        echo -e "${ICON_OK} ${TOOL_NAME} Image: ready."
+        return 0
+    fi
+    echo -e "${ICON_GEAR} Building ${TOOL_NAME} Image..."
+    local pm_proxy_cmds; pm_proxy_cmds=$(make_npm_proxy_cmds)
+    local pip_proxy_cmds; pip_proxy_cmds=$(make_pip_proxy_cmds)
+    local apt_pkgs; apt_pkgs="$(read_package_list "$PACKAGES_DIR/apt-common.txt") $(read_package_list "$PACKAGES_DIR/$apt_file")"
+    local mcp_pkgs; mcp_pkgs=$(read_mcp_packages "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/$mcp_file")
+    local mcp_pip_pkgs; mcp_pip_pkgs=$(read_mcp_pip_packages --offline "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/$mcp_file")
+    local mcp_pip_online; mcp_pip_online=$(read_mcp_pip_packages --online "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/$mcp_file")
+    local pip_cmd; pip_cmd=$(build_pip_install_cmds "$pip_proxy_cmds" "$mcp_pip_pkgs" "$mcp_pip_online")
+    local install_cmds="RUN npm install -g ${npm_pkg} ${mcp_pkgs}${npm_extra_flags}${pip_cmd}"
+    [ -n "$verify_run" ] && install_cmds+=$'\n'"$verify_run"
+    build_standard_image "$df_name" "$apt_pkgs" "$pm_proxy_cmds" "$install_cmds"
+}
+
 exec_in_container() {
     # Usage: exec_in_container [extra docker exec flags...] <container> <cmd> [args...]
     # Handles winpty on Git Bash automatically.
