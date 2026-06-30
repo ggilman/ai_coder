@@ -217,13 +217,15 @@ _fetch_release_hash() {
         local curl_args=(-fsSL --connect-timeout 4)
         [ -n "$http_proxy" ] && curl_args+=(--proxy "$http_proxy")
         curl "${curl_args[@]}" "$api_url" 2>/dev/null \
-            | grep '"sha"' | grep -oE '[a-f0-9]{40}' | head -1 || true
+            | grep -oE '"sha"[[:space:]]*:[[:space:]]*"[a-f0-9]{40}"' \
+            | head -1 | grep -oE '[a-f0-9]{40}' || true
 
     elif command -v wget >/dev/null 2>&1; then
         local wget_proxy_args=()
         [ -n "$http_proxy" ] && wget_proxy_args=(-e "use_proxy=yes" -e "http_proxy=$http_proxy" -e "https_proxy=$http_proxy")
         wget -qO- --timeout=4 "${wget_proxy_args[@]}" "$api_url" 2>/dev/null \
-            | grep '"sha"' | grep -oE '[a-f0-9]{40}' | head -1 || true
+            | grep -oE '"sha"[[:space:]]*:[[:space:]]*"[a-f0-9]{40}"' \
+            | head -1 | grep -oE '[a-f0-9]{40}' || true
 
     fi
 }
@@ -272,7 +274,13 @@ read_pref() {
 # getent is Linux-only; fall back to nslookup (available in Git Bash + WSL).
 resolve_proxy_to_ip() {
     local proxy_url="$1"
-    local host; host=$(echo "$proxy_url" | sed 's|.*://||;s|:.*||')
+    local host_port; host_port=$(echo "$proxy_url" | sed 's|.*://||;s|/.*||')
+    # Pre-bracketed IPv6 literal (e.g. http://[::1]:3128) — already resolved, return as-is
+    if [[ "$host_port" == \[*\]* ]]; then
+        echo "$proxy_url"
+        return
+    fi
+    local host="${host_port%%:*}"
     local ip=""
     if command -v getent >/dev/null 2>&1; then
         ip=$(getent hosts "$host" 2>/dev/null | awk '{print $1}' | head -1)
@@ -346,16 +354,19 @@ ensure_ctx_config() {
 # pick up the correct author identity.
 ensure_container_gitconfig() {
     local gitcfg="$HOME/.gitconfig-container"
-    local email="${GIT_USER_EMAIL:-developer@localhost}"
-    local name="${GIT_USER_NAME:-Developer}"
-    # Escape backslashes for Git config file format
-    email="${email//\\/\\\\}"
-    name="${name//\\/\\\\}"
-    cat > "$gitcfg" <<GITCFG
+    if [ -n "${GIT_USER_EMAIL:-}" ] || [ -n "${GIT_USER_NAME:-}" ]; then
+        local email="${GIT_USER_EMAIL:-developer@localhost}"
+        local name="${GIT_USER_NAME:-Developer}"
+        # Escape backslashes and double-quotes for git config quoted-value syntax.
+        # Wrapping in double quotes makes # and ; safe (not treated as comments).
+        email="${email//\\/\\\\}"; email="${email//\"/\\\"}"
+        name="${name//\\/\\\\}";   name="${name//\"/\\\"}"
+        cat > "$gitcfg" <<GITCFG
 [user]
-    email = ${email}
-    name = ${name}
+    email = "${email}"
+    name = "${name}"
 GITCFG
+    fi
 }
 
 # Write identity into the local repo's .git/config (host-side).
@@ -372,7 +383,7 @@ apply_git_identity() {
     # Normalize CRLF→LF on checkout inside the container (Windows host mounts files with CRLF).
     # 'input' strips CR on add but never introduces CR on checkout — safe for all platforms.
     git -C "$(pwd)" config --local core.autocrlf input 2>/dev/null || true
-    [ -n "${GIT_USER_NAME:-}" ] && printf "%s%s %s <%s>%s\n" "${ICON_OK}" " Git identity:" "${CYAN}${GIT_USER_NAME}${NC}" "<${GIT_USER_EMAIL}>" "${NC}"
+    [ -n "${GIT_USER_NAME:-}" ] && printf "%s Git identity: %s%s${NC} <%s>\n" "${ICON_OK}" "${CYAN}" "${GIT_USER_NAME}" "${GIT_USER_EMAIL}"
 }
 
 # --- [ CORE LOGIC ] -----------------------------------------------------------
@@ -743,10 +754,6 @@ ARG PROXY_URL
 ARG GIT_USER_NAME
 ARG GIT_USER_EMAIL
 ENV DEBIAN_FRONTEND=noninteractive
-RUN if [ -n "\${GIT_USER_NAME}" ] && [ -n "\${GIT_USER_EMAIL}" ]; then \
-      git config --global user.name "\${GIT_USER_NAME}" && \
-      git config --global user.email "\${GIT_USER_EMAIL}"; \
-    fi
 RUN if [ -n "\${PROXY_URL}" ]; then \
       apt_proxy=\$(echo "\${PROXY_URL}" | sed 's|^https://|http://|') && \
       if [ -f /etc/apt/sources.list ]; then \
@@ -765,6 +772,10 @@ RUN apt-get update && apt-get install -y wget ca-certificates gnupg apt-transpor
     apt-get update && apt-get install -y \
     ${apt_pkgs} \
     --no-install-recommends --fix-missing && rm -rf /var/lib/apt/lists/*
+RUN if [ -n "\${GIT_USER_NAME}" ] && [ -n "\${GIT_USER_EMAIL}" ]; then \
+      git config --global user.name "\${GIT_USER_NAME}" && \
+      git config --global user.email "\${GIT_USER_EMAIL}"; \
+    fi
 ${_proxy_env_block}
 ${pm_proxy_cmds}
 ${install_cmds}

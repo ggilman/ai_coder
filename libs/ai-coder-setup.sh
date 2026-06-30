@@ -98,11 +98,9 @@ cmd_update() {
 
     # Record the installed release hash so future update checks have a baseline to compare
     local new_hash; new_hash=$(_fetch_release_hash) || true
-    [ -n "$new_hash" ] && printf '%s\\n' "$new_hash" > "$HOME/.ai-coder-release-hash"
+    [ -n "$new_hash" ] && printf '%s\n' "$new_hash" > "$HOME/.ai-coder-release-hash"
 
-    printf 'rebuild_required=true\\n' > "$HOME/.ai-coder-rebuild-needed"
-
-    echo -e \"${ICON_OK} Updated successfully${NC}\"
+    echo -e "${ICON_OK} Updated successfully${NC}"
 
     # Reset timestamp so the next run doesn't immediately re-check
     printf 'last_check=%s\n' "$(date +%s 2>/dev/null || echo 0)" > "$HOME/.ai-coder-update-check"

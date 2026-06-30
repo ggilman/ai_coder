@@ -105,6 +105,7 @@ if [[ "${1:-}" == "--rebuild" ]]; then
     [ "$_removed" -eq 0 ] && \
         echo -e "${DIM}  No workbench images found — nothing to remove.${NC}" || \
         echo -e "${ICON_OK} Workbench images cleared. They will be rebuilt on next run."
+    rm -f "$HOME/.ai-coder-rebuild-needed"
     exit 0
 fi
 
@@ -116,7 +117,6 @@ fi
 # --- [ MAIN ENTRY ] -----------------------------------------------------------
 
 # Guard: require --setup to have been run at least once before launching.
-# Guard: require --setup to have run at least once before launching.
 if [ ! -f "$HOME/.ai-coder-setup" ]; then
     echo -e "${YELLOW}◈ First-time setup required. Run:${NC}"
     echo -e "  ${CYAN}$(realpath "$0") --setup${NC}"
@@ -127,7 +127,6 @@ if [ -f "$HOME/.ai-coder-rebuild-needed" ]; then
     echo -e "${YELLOW}◈ Git identity change detected.${NC}"
     echo -e "${DIM}  A rebuild is required to bake the new identity into your workbench images.${NC}"
     echo -e "  Run: ${CYAN}$(basename "$0") --rebuild${NC} then ${CYAN}$(basename "$0")${NC}"
-    rm -f "$HOME/.ai-coder-rebuild-needed"
     exit 1
 fi
 
@@ -241,6 +240,7 @@ download_model || {
 if [ -z "${MODEL_FILE:-}" ]; then
     echo -e "${RED}✘ Model detection failed — no model available${NC}"; exit 1
 fi
+ensure_git_identity
 build_image || { echo -e "${RED}✘ Image build failed${NC}"; exit 1; }
 
 if [ "${BUILD_ONLY:-false}" = "true" ]; then
@@ -248,7 +248,6 @@ if [ "${BUILD_ONLY:-false}" = "true" ]; then
     exit 0
 fi
 
-ensure_git_identity
 ensure_container_gitconfig
 ensure_network_config
 docker network create "$HUB_NETWORK" 2>/dev/null || true
