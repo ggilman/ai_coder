@@ -267,6 +267,31 @@ cmd_setup() {
             ;;
     esac
 
+    echo -e "\n${CYAN}Fast model storage — cache the model in a Docker volume?${NC}"
+    echo -e "${DIM}  The engine loads the model from the Docker VM's native disk instead of${NC}"
+    echo -e "${DIM}  the much slower Windows filesystem bridge — engine cold starts drop from${NC}"
+    echo -e "${DIM}  minutes to seconds. Costs a one-time copy per model and duplicates the${NC}"
+    echo -e "${DIM}  active model's disk usage inside the Docker VM.${NC}"
+    echo -e "${DIM}  Reclaim the space any time with: docker volume rm ai-coder-models${NC}"
+    _cur_mvol=$(read_pref "$SETTINGS_FILE" model_volume "$MODEL_VOLUME_DEFAULT")
+    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_mvol" "$NC"
+    echo -n "  Use fast model storage? [y/n, Enter to keep]: "
+    read -r _mvol_input
+    case "${_mvol_input,,}" in
+        y|yes)
+            write_pref "$SETTINGS_FILE" model_volume yes
+            echo -e "${ICON_OK} Fast model storage ${GREEN}enabled${NC} — model syncs on next engine start."
+            ;;
+        n|no)
+            write_pref "$SETTINGS_FILE" model_volume no
+            echo -e "${DIM}  Fast model storage disabled — engine mounts the host model folder directly.${NC}"
+            echo -e "${DIM}  Reclaim volume space with: docker volume rm ai-coder-models${NC}"
+            ;;
+        *)
+            printf "%s  Fast model storage unchanged (%s)%s\n" "$DIM" "$_cur_mvol" "$NC"
+            ;;
+    esac
+
     echo -e "\n${CYAN}Host port exposure — publish the engine on localhost:8080?${NC}"
     echo -e "${DIM}  Allows external applications (e.g. Open WebUI) to connect directly.${NC}"
     echo -e "${DIM}  Leave disabled if you only need the AI coding tools inside Docker.${NC}"

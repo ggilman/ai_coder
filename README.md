@@ -97,6 +97,25 @@ You can also override the preference for a single session without changing the s
 GPU_MODE=single ./ai-coder
 ```
 
+## Model Storage
+
+Models are downloaded once to `~/ai-models` on the host (Windows home on WSL/Git Bash, so both shells share the folder). That folder is the download cache and source of truth — `bundle.sh` and re-downloads use it.
+
+**Fast model storage** (`--setup`, default **on** for WSL/Git Bash): the engine loads the model from a Docker named volume (`ai-coder-models`) instead of bind-mounting `~/ai-models`. On Windows hosts the bind mount goes through Docker Desktop's slow filesystem bridge, so reading a 5–27 GB GGUF on every engine cold start can take minutes; the named volume lives on the Docker VM's native disk and loads several times faster.
+
+How it works:
+- On engine start, the active model is copied into the volume **once per model** (with a progress ticker). Later starts skip the copy after a quick size check.
+- Only the **active model** is kept in the volume — switching family or tier prunes the old one and syncs the new one, so hidden disk usage inside the Docker VM stays bounded at one model.
+- If the sync fails for any reason, the engine falls back to the direct host folder mount automatically.
+- On native Linux the setting defaults to **off** (bind mounts are already fast).
+
+Reclaim the volume's disk space at any time (models remain in `~/ai-models`):
+
+```bash
+./ai-coder --clean          # ensure the engine is stopped
+docker volume rm ai-coder-models
+```
+
 ## Customising the Workbench Image
 
 ### When does a rebuild apply changes?
@@ -114,6 +133,7 @@ A rebuild (`./ai-coder --rebuild` followed by `./ai-coder`) is only needed when 
 | Change `config/ai-coder-model.conf` settings | No | Read at launch time |
 | Add a new model family config (`config/families/*.conf`) | No | Read at launch time |
 | Change GPU mode (`--setup`) | No | Passed as flags when the engine container starts |
+| Toggle fast model storage (`--setup`) | No | Engine restarts with the new mount on next launch |
 | Change proxy or network isolation (`--setup`) | No | Applied at container start time |
 | Change git identity (`--setup`) | **Yes** | Requires an `--rebuild` to bake into the image |
 | Upgrade `BASE_IMAGE` in `ai-coder-core.sh` | **Yes** | The base layer must be pulled and rebuilt |
@@ -335,7 +355,7 @@ ai-coder also checks for updates automatically once per day on launch and prints
 
 ### Setup (`--setup`)
 
-**`--setup` must be run once before first launch.** It walks through up to nine configuration steps:
+**`--setup` must be run once before first launch.** It walks through up to ten configuration steps:
 
 ```bash
 ./ai-coder --setup
@@ -348,8 +368,9 @@ ai-coder also checks for updates automatically once per day on launch and prints
 5. **Context window level** — how many tokens of context the model retains (4k–256k, default 128k). Higher values use more VRAM and slow responses.
 6. **MCP extras** — register the optional MCP servers (memory, thinking, conan, context7, brave-search, github, fetch, time) with each agent. Off by default: fewer registered tools means faster prompts and better tool selection on small local models.
 7. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Uses idle VRAM; stop with `--clean`.
-8. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps (e.g. Open WebUI) can connect directly.
-9. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
+8. **Fast model storage** — cache the active model in a Docker volume so engine cold starts load from the VM's native disk instead of the slow Windows filesystem bridge. Default on for WSL/Git Bash; see [Model Storage](#model-storage).
+9. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps (e.g. Open WebUI) can connect directly.
+10. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
 
 After completing setup, if you added the alias:
 

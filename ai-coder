@@ -267,7 +267,9 @@ if $_engine_running; then
     _eng_ctx=$(read_pref    "$STATE_FILE" engine_ctx "")
     _eng_expose=$(read_pref "$STATE_FILE" engine_expose "")
     _eng_net=$(read_pref    "$STATE_FILE" engine_net "")
+    _eng_mvol=$(read_pref   "$STATE_FILE" engine_mvol "")
     _cur_expose=$(read_pref "$SETTINGS_FILE" expose_host_port no)
+    _cur_mvol=$(read_pref   "$SETTINGS_FILE" model_volume "$MODEL_VOLUME_DEFAULT")
     if [ -n "$_eng_gpu" ] && [ "$_eng_gpu" != "${GPU_MODE:-multi}" ]; then
         echo -e "${YELLOW}◈ GPU mode changed (${_eng_gpu} → ${GPU_MODE:-multi}) — restarting engine...${NC}"
         _need_engine_restart=true
@@ -282,6 +284,9 @@ if $_engine_running; then
         _need_engine_restart=true
     elif [ -n "$_eng_net" ] && [ "$_eng_net" != "${NETWORK_INTERNAL:-false}" ]; then
         echo -e "${YELLOW}◈ Network isolation changed (${_eng_net} → ${NETWORK_INTERNAL:-false}) — restarting engine...${NC}"
+        _need_engine_restart=true
+    elif [ -n "$_eng_mvol" ] && [ "$_eng_mvol" != "$_cur_mvol" ]; then
+        echo -e "${YELLOW}◈ Model storage mode changed (${_eng_mvol} → ${_cur_mvol}) — restarting engine...${NC}"
         _need_engine_restart=true
     fi
 fi

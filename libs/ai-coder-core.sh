@@ -21,6 +21,7 @@ if [ -z "$DOCKER_BIN" ]; then
 fi
 GLOBAL_ENGINE_NAME="ai-hub-engine"
 GLOBAL_PROXY_NAME="ai-hub-proxy"
+MODEL_VOLUME_NAME="ai-coder-models"
 HUB_NETWORK="ai-engineering-net"
 HUB_ISOLATED_NET="ai-engineering-isolated"
 NETWORK_INTERNAL=false
@@ -50,6 +51,13 @@ source "$CONFIG_DIR/ai-coder-model.conf"
 
 IS_WSL=$(grep -qi Microsoft /proc/version 2>/dev/null && echo "true" || echo "false")
 IS_GITBASH=$(expr "$(uname -s)" : '.*MINGW.*' >/dev/null 2>&1 && echo "true" || echo "false")
+
+# Fast model storage default: on Windows hosts (WSL/Git Bash) the engine's
+# bind mount of the model folder goes through Docker Desktop's slow 9p bridge,
+# so caching the model in a native Docker volume is a big load-time win.
+# On native Linux, bind mounts are already fast — default off.
+MODEL_VOLUME_DEFAULT="no"
+{ [ "$IS_WSL" = "true" ] || [ "$IS_GITBASH" = "true" ]; } && MODEL_VOLUME_DEFAULT="yes"
 
 # Model storage: resolve to Windows home so Git Bash and WSL share the same folder.
 # Git Bash $HOME is already the Windows home (/c/Users/...).
@@ -619,21 +627,25 @@ _download_file() {
     fi
 }
 
+# Format a byte count as a human-readable size.
+# numfmt is not available in Git Bash — use awk for portability.
+_human_size() {
+    awk -v b="${1:-0}" 'BEGIN{
+        s=b+0; u="B"
+        if(s>=1073741824){s=s/1073741824; u="GiB"}
+        else if(s>=1048576){s=s/1048576; u="MiB"}
+        else if(s>=1024){s=s/1024; u="KiB"}
+        printf "%.1f%s", s, u
+    }'
+}
+
 # Show a file-size progress ticker for a background download PID, then wait for it.
 # Cleans up a partial file if the download fails.
 _await_download() {
     local dl_pid="$1" file_path="$2"
     while kill -0 "$dl_pid" 2>/dev/null; do
         local sz; sz=$(stat -c%s "$file_path" 2>/dev/null || echo 0)
-        # numfmt is not available in Git Bash — use awk for portable human-readable sizes.
-        local human_sz; human_sz=$(awk -v b="$sz" 'BEGIN{
-            s=b+0; u="B"
-            if(s>=1073741824){s=s/1073741824; u="GiB"}
-            else if(s>=1048576){s=s/1048576; u="MiB"}
-            else if(s>=1024){s=s/1024; u="KiB"}
-            printf "%.1f%s", s, u
-        }')
-        printf "\r  Downloaded: %-12s" "$human_sz"
+        printf "\r  Downloaded: %-12s" "$(_human_size "$sz")"
         sleep 2
     done
     printf "\n"
@@ -1035,6 +1047,61 @@ _resolve_engine_gpu_args() {
     fi
 }
 
+# Ensure the active model exists inside the fast-storage Docker volume.
+# On Windows hosts, bind mounts go through Docker Desktop's 9p bridge, making
+# the engine's model load (every cold start) several times slower than the
+# named volume, which lives on the Docker VM's native disk. The host copy in
+# MODEL_STORAGE_DIR remains the download cache and source of truth; this
+# copies it into the volume once per model (size-verified, resumable-safe via
+# a .part rename). Only the active model is kept in the volume so hidden VM
+# disk usage stays bounded — switching models re-syncs.
+# Requires $LLAMA_IMAGE to be present (caller pulls it first).
+ensure_model_in_volume() {
+    local host_path="$MODEL_STORAGE_DIR/$MODEL_FILE"
+    [ -f "$host_path" ] || return 1
+    local host_sz; host_sz=$(stat -c%s "$host_path" 2>/dev/null || echo 0)
+    [ "$host_sz" -gt 0 ] || return 1
+
+    docker volume create "$MODEL_VOLUME_NAME" >/dev/null 2>&1 || true
+
+    local vol_sz
+    vol_sz=$(docker run --rm --entrypoint /bin/sh -v "$MODEL_VOLUME_NAME:/vol" "$LLAMA_IMAGE" \
+        -c "stat -c%s '/vol/$MODEL_FILE' 2>/dev/null || echo 0" 2>/dev/null | tr -d '\r') || vol_sz=0
+    case "$vol_sz" in ''|*[!0-9]*) vol_sz=0 ;; esac
+    [ "$vol_sz" = "$host_sz" ] && return 0
+
+    echo -e "${ICON_GEAR} Syncing model to fast storage volume ${DIM}(one-time per model)...${NC}"
+    local _sync_name="ai-coder-model-sync"
+    docker rm -f "$_sync_name" >/dev/null 2>&1 || true
+    # Prune other models first so the volume never holds more than one GGUF,
+    # then copy via .part so an interrupted sync never looks complete.
+    docker run -d --name "$_sync_name" --entrypoint /bin/sh \
+        -v "$MODEL_VOLUME_NAME:/vol" \
+        -v "$(to_host_path "$MODEL_STORAGE_DIR"):/src:ro" \
+        "$LLAMA_IMAGE" -c "
+            find /vol -maxdepth 1 -name '*.gguf' ! -name '$MODEL_FILE' -delete
+            rm -f '/vol/$MODEL_FILE.part' '/vol/$MODEL_FILE'
+            cp '/src/$MODEL_FILE' '/vol/$MODEL_FILE.part' && mv '/vol/$MODEL_FILE.part' '/vol/$MODEL_FILE'
+        " >/dev/null || return 1
+
+    local human_total; human_total=$(_human_size "$host_sz")
+    while [ -n "$(docker ps -q -f name=^/${_sync_name}$ 2>/dev/null)" ]; do
+        local cur; cur=$(docker exec "$_sync_name" stat -c%s "/vol/$MODEL_FILE.part" 2>/dev/null | tr -d '\r') || cur=0
+        case "$cur" in ''|*[!0-9]*) cur=0 ;; esac
+        printf "\r  Synced: %s / %s (%d%%)   " "$(_human_size "$cur")" "$human_total" "$(( cur * 100 / host_sz ))"
+        sleep 3
+    done
+    printf "\r%-60s\r" ""
+
+    local _rc; _rc=$(docker inspect -f '{{.State.ExitCode}}' "$_sync_name" 2>/dev/null | tr -d '\r') || _rc=1
+    docker rm "$_sync_name" >/dev/null 2>&1 || true
+    if [ "$_rc" != "0" ]; then
+        echo -e "${YELLOW}⚠ Model volume sync failed (exit ${_rc}).${NC}"
+        return 1
+    fi
+    echo -e "${ICON_OK} Model cached in fast storage volume."
+}
+
 _start_litellm_proxy() {
     local hub_net="$1"
     mkdir -p "$HOME/.ai-coder"
@@ -1066,6 +1133,18 @@ start_hub_engine() {
     pull_image_if_missing "$LLAMA_IMAGE" || return 1
     if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
         pull_image_if_missing "$LITELLM_IMAGE" || return 1
+    fi
+
+    # Model mount: fast Docker volume when enabled (with fallback to the
+    # direct host folder mount if the sync fails for any reason).
+    local _models_src; _models_src="$(to_host_path "$MODEL_STORAGE_DIR")"
+    if [ "$(read_pref "$SETTINGS_FILE" model_volume "$MODEL_VOLUME_DEFAULT")" = "yes" ]; then
+        if ensure_model_in_volume; then
+            _models_src="$MODEL_VOLUME_NAME"
+            echo -e "${ICON_GEAR} Model storage: ${GREEN}fast volume (${MODEL_VOLUME_NAME})${NC}"
+        else
+            echo -e "${YELLOW}⚠ Falling back to direct host folder mount for models.${NC}"
+        fi
     fi
 
     local _gpus_flag _ts_args=() _cuda_env=()
@@ -1103,7 +1182,7 @@ start_hub_engine() {
     # turn — a large time-to-first-token win in agent loops.
     docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$_hub_net" --gpus "$_gpus_flag" --restart on-failure:3 \
         "${_port_args[@]}" "${_cuda_env[@]}" \
-        -v "$(to_host_path "$MODEL_STORAGE_DIR"):/models" \
+        -v "${_models_src}:/models" \
         "$LLAMA_IMAGE" \
         -m "/models/$MODEL_FILE" --host 0.0.0.0 --port 8080 \
         --parallel "$MODEL_MAX_SLOTS" -ngl 99 -c "$MODEL_CTX_SIZE" --flash-attn on \
@@ -1119,6 +1198,7 @@ start_hub_engine() {
     write_pref "$STATE_FILE" engine_ctx "${MODEL_CTX_SIZE:-}"
     write_pref "$STATE_FILE" engine_expose "$(read_pref "$SETTINGS_FILE" expose_host_port no)"
     write_pref "$STATE_FILE" engine_net "${NETWORK_INTERNAL:-false}"
+    write_pref "$STATE_FILE" engine_mvol "$(read_pref "$SETTINGS_FILE" model_volume "$MODEL_VOLUME_DEFAULT")"
 
     if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
         _start_litellm_proxy "$_hub_net" || return 1
