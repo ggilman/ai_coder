@@ -586,6 +586,24 @@ check_docker() {
     fi
 }
 
+# Estimate the KV-cache VRAM reserve in GB (rounded up) for the active
+# context size and KV quantization type.
+# Exact KV size is model-specific (layers x KV-heads x head-dim), which the
+# launcher can't know before a model is chosen. Across this project's model
+# range (8B-35B GQA models) q8_0 KV costs ~64-140 KB per token; 96 KiB/token
+# is used as a middle estimate, scaled for the KV quant type. Override with
+# MODEL_KV_BYTES_PER_TOKEN in a family conf for models far from that band.
+_estimate_kv_reserve_gb() {
+    local _bpt_default
+    case "${MODEL_KV_TYPE:-q8_0}" in
+        f16|bf16)  _bpt_default=196608 ;;
+        q4_0|q4_1) _bpt_default=49152  ;;
+        *)         _bpt_default=98304  ;;
+    esac
+    local _bpt="${MODEL_KV_BYTES_PER_TOKEN:-$_bpt_default}"
+    echo $(( (${MODEL_CTX_SIZE:-65536} * _bpt + 1073741823) / 1073741824 ))
+}
+
 # Sets MODEL_FILE and MODEL_TIER based on the supplied VRAM amount in GB.
 select_model_for_vram() {
     local vram="${1:-0}"
@@ -706,7 +724,7 @@ download_model() {
         return 0
     fi
 
-    [ -z "${MODEL_FILE:-}" ] && select_model_for_vram "${VRAM_GB:-0}"
+    [ -z "${MODEL_FILE:-}" ] && select_model_for_vram "${EFFECTIVE_VRAM_GB:-${VRAM_GB:-0}}"
 
     local model_url model_hint model_sha
     case "$MODEL_FILE" in
@@ -776,10 +794,26 @@ detect_model() {
     VRAM_GB=$((total_vram / 1024))
 
     echo -e "${ICON_GEAR} Hardware Audit: Detected ${BOLD}${VRAM_GB}GB Total VRAM${NC}"
-    
+
+    # Reserve estimated KV-cache VRAM before picking a tier — a model that
+    # fills the card leaves no room for the KV cache at the chosen context
+    # size, causing OOM or RAM spill (which makes inference crawl).
+    local kv_reserve; kv_reserve=$(_estimate_kv_reserve_gb)
+    EFFECTIVE_VRAM_GB=$(( VRAM_GB - kv_reserve ))
+    [ "$EFFECTIVE_VRAM_GB" -lt 0 ] && EFFECTIVE_VRAM_GB=0
+    echo -e "${ICON_GEAR} KV Cache Reserve: ${BOLD}~${kv_reserve}GB${NC} ${DIM}(${MODEL_CTX_LEVEL:-64k} ctx, ${MODEL_KV_TYPE:-q8_0})${NC} → ${BOLD}${EFFECTIVE_VRAM_GB}GB${NC} usable for model"
+
+    # Note the tier raw VRAM would have allowed, to hint when ctx costs a tier.
     select_model_for_vram "$VRAM_GB"
+    local _raw_tier="$MODEL_TIER"
+
+    select_model_for_vram "$EFFECTIVE_VRAM_GB"
     echo -e "${ICON_GEAR} Model Tier: ${BOLD}${MODEL_TIER}${NC}"
     echo -e "${ICON_GEAR} Tier Model: ${CYAN}${MODEL_FILE}${NC}"
+    if [ "$MODEL_TIER" != "$_raw_tier" ]; then
+        echo -e "${YELLOW}⚠ The ${MODEL_CTX_LEVEL:-64k} context reserve dropped the tier (${_raw_tier} fits without it).${NC}"
+        echo -e "${DIM}  Choose a smaller context level in --setup to unlock the bigger model.${NC}"
+    fi
     
     if [ -f "$MODEL_STORAGE_DIR/$MODEL_FILE" ]; then
         echo -e "${ICON_OK} Target Model: ${CYAN}${MODEL_FILE}${NC}"
@@ -1270,6 +1304,29 @@ execute_tool() {
 }
 
 # --- [ COMMANDS ] -------------------------------------------------------------
+
+# Arm a detached watcher that stops the warm hub after <idle-minutes> unless
+# something used it in the meantime. Disarming works through the
+# hub_idle_since stamp in state.conf: every launch clears it, and every
+# session exit re-arms with a fresh stamp — so at its deadline the watcher
+# only fires if its own stamp is still current AND no spokes are running.
+# Best-effort by design: if the watcher dies (e.g. terminal closed), the hub
+# simply stays warm, which was the behaviour before the timeout existed.
+schedule_hub_idle_stop() {
+    local idle_min="$1"
+    local stamp; stamp=$(date +%s)
+    write_pref "$STATE_FILE" hub_idle_since "$stamp"
+    nohup bash -c "
+        sleep $(( idle_min * 60 ))
+        cur=\$(grep '^hub_idle_since=' '$STATE_FILE' 2>/dev/null | cut -d= -f2-)
+        [ \"\$cur\" = '$stamp' ] || exit 0
+        [ -n \"\$(docker ps -q --filter 'name=^/${WORKBENCH_PREFIX}-' 2>/dev/null)\" ] && exit 0
+        docker stop '$GLOBAL_ENGINE_NAME' '$GLOBAL_PROXY_NAME' >/dev/null 2>&1
+        docker rm   '$GLOBAL_ENGINE_NAME' '$GLOBAL_PROXY_NAME' >/dev/null 2>&1
+        sed -i '/^hub_idle_since=/d' '$STATE_FILE' 2>/dev/null
+    " >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+}
 
 stop_hub() {
     echo -e "${CYAN}◈ Shutting down Hub...${NC}"

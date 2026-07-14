@@ -257,6 +257,25 @@ cmd_setup() {
         y|yes)
             write_pref "$SETTINGS_FILE" keep_hub yes
             echo -e "${ICON_OK} Hub will ${GREEN}stay warm${NC} after sessions end."
+            _cur_timeout=$(read_pref "$SETTINGS_FILE" keep_hub_timeout 60)
+            echo -n "  Auto-stop after how many idle minutes? [${_cur_timeout}] (0 = keep forever): "
+            read -r _timeout_input
+            case "$_timeout_input" in
+                "")
+                    printf "%s  Idle timeout unchanged (%s min)%s\n" "$DIM" "$_cur_timeout" "$NC"
+                    ;;
+                *[!0-9]*)
+                    printf "%s⚠ Not a number — keeping %s min%s\n" "$YELLOW" "$_cur_timeout" "$NC"
+                    ;;
+                *)
+                    write_pref "$SETTINGS_FILE" keep_hub_timeout "$_timeout_input"
+                    if [ "$_timeout_input" = "0" ]; then
+                        echo -e "${DIM}  Hub will stay warm until stopped with --clean.${NC}"
+                    else
+                        echo -e "${ICON_OK} Hub auto-stops after ${GREEN}${_timeout_input}${NC} idle minutes."
+                    fi
+                    ;;
+            esac
             ;;
         n|no)
             write_pref "$SETTINGS_FILE" keep_hub no

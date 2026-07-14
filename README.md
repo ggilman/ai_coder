@@ -52,10 +52,10 @@ Use this script to monitor the health of your environment.
 A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run (or with `--menu`) it prompts you to select your preferred tool, which is saved to `user/state.conf` in the install directory. Subsequent runs launch the saved preference directly.
 
 - **Alias**: `ai` (configure with `--setup`)
-- **Model family selection**: On first run, prompts you to choose a model family (Gemma 4, Qwen3, Qwen3.6, Llama 4, Devstral 2, …). Within the chosen family, the best GGUF tier is selected automatically based on detected VRAM.
+- **Model family selection**: On first run, prompts you to choose a model family (Gemma 4, Qwen3, Qwen3.6, Llama 4, Devstral 2, …). Within the chosen family, the best GGUF tier is selected automatically from detected VRAM **minus an estimated KV-cache reserve** for your chosen context level — so model + context actually fit together. If the reserve costs you a tier, the launcher says so; choose a smaller context level in `--setup` to unlock the bigger model.
 - **Tool selection**: On first run, also prompts for your preferred coding tool (Claude, OpenCode, Aider, Gemini). Both choices are saved to `user/state.conf`.
 - **Workspace mount**: Your project folder is mounted into the container as `/<foldername>` (e.g. `/my-project`), so the AI tool starts directly in your project directory.
-- **Auto-cleanup**: When you exit the tool, the workbench container is stopped. If it was the last active spoke, the Hub (engine + proxy) is also shut down automatically — unless the *keep hub warm* setting is enabled (`--setup`), which leaves the engine loaded so the next session starts in seconds. Stop a warm hub with `--clean`.
+- **Auto-cleanup**: When you exit the tool, the workbench container is stopped. If it was the last active spoke, the Hub (engine + proxy) is also shut down automatically — unless the *keep hub warm* setting is enabled (`--setup`), which leaves the engine loaded so the next session starts in seconds. A warm hub auto-stops after a configurable idle timeout (default 60 min, `0` = never) to release GPU VRAM; stop it immediately with `--clean`.
 - **Agent-free commands**: `--help`, `--status`, `--clean`, `--rebuild`, `--menu`, and `--setup` run immediately without requiring a tool to be selected.
 - **Setup required**: `--setup` must be run at least once before launching. This ensures all preferences are configured intentionally.
 
@@ -362,7 +362,7 @@ ai-coder also checks for updates automatically once per day on launch and prints
 4. **GPU mode** — only shown when 2+ GPUs are detected; choose multi (all GPUs) or single.
 5. **Context window level** — how many tokens of context the model retains (4k–256k, default 64k). Higher values use more VRAM and slow responses; local coding agents rarely benefit past 64k.
 6. **MCP extras** — register the optional MCP servers (memory, thinking, conan, context7, brave-search, github, fetch, time) with each agent. Off by default: fewer registered tools means faster prompts and better tool selection on small local models.
-7. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Uses idle VRAM; stop with `--clean`.
+7. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Also asks for an idle timeout (default 60 min, `0` = forever) after which the warm hub stops itself to release VRAM; stop it immediately with `--clean`.
 8. **Fast model storage** — cache the active model in a Docker volume so engine cold starts load from the VM's native disk instead of the slow Windows filesystem bridge. Default on for WSL/Git Bash; see [Model Storage](#model-storage).
 9. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps (e.g. Open WebUI) can connect directly.
 10. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
