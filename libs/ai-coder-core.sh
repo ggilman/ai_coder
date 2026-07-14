@@ -289,6 +289,20 @@ make_mcp_servers_json() {
     done
 }
 
+# Emit the mcpServers JSON entries an agent should register this launch:
+# core servers (mcp-common.txt), optional extras (mcp-extra.txt, only when
+# enabled via --setup), and the agent's own server file.
+# Usage: make_agent_mcp_json <workspace-path> <mode> <agent-mcp-file-basename>
+make_agent_mcp_json() {
+    local workspace="$1" mode="$2" agent_file="$3"
+    local files=("$PACKAGES_DIR/mcp-common.txt")
+    if [ "$(read_pref "$SETTINGS_FILE" mcp_extras no)" = "yes" ]; then
+        files+=("$PACKAGES_DIR/mcp-extra.txt")
+    fi
+    files+=("$PACKAGES_DIR/$agent_file")
+    make_mcp_servers_json "$workspace" "$mode" "${files[@]}"
+}
+
 _fetch_release_hash() {
     local api_url="https://api.github.com/repos/ggilman/ai_coder/git/refs/heads/release"
     local http_proxy=""
@@ -922,9 +936,12 @@ build_npm_agent_image() {
     local pm_proxy_cmds; pm_proxy_cmds=$(make_npm_proxy_cmds)
     local pip_proxy_cmds; pip_proxy_cmds=$(make_pip_proxy_cmds)
     local apt_pkgs; apt_pkgs="$(read_package_list "$PACKAGES_DIR/apt-common.txt") $(read_package_list "$PACKAGES_DIR/$apt_file")"
-    local mcp_pkgs; mcp_pkgs=$(read_mcp_packages "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/$mcp_file")
-    local mcp_pip_pkgs; mcp_pip_pkgs=$(read_mcp_pip_packages --offline "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/$mcp_file")
-    local mcp_pip_online; mcp_pip_online=$(read_mcp_pip_packages --online "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/$mcp_file")
+    # mcp-extra.txt servers are always installed in the image (so toggling the
+    # MCP extras setting never requires a rebuild); registration in the agent
+    # config is decided per-launch by make_agent_mcp_json.
+    local mcp_pkgs; mcp_pkgs=$(read_mcp_packages "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-extra.txt" "$PACKAGES_DIR/$mcp_file")
+    local mcp_pip_pkgs; mcp_pip_pkgs=$(read_mcp_pip_packages --offline "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-extra.txt" "$PACKAGES_DIR/$mcp_file")
+    local mcp_pip_online; mcp_pip_online=$(read_mcp_pip_packages --online "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-extra.txt" "$PACKAGES_DIR/$mcp_file")
     local pip_cmd; pip_cmd=$(build_pip_install_cmds "$pip_proxy_cmds" "$mcp_pip_pkgs" "$mcp_pip_online")
     local install_cmds="RUN npm install -g ${npm_pkg} ${mcp_pkgs}${npm_extra_flags}${pip_cmd}"
     [ -n "$verify_run" ] && install_cmds+=$'\n'"$verify_run"
@@ -1072,6 +1089,18 @@ start_hub_engine() {
         echo -e "${ICON_GEAR} Jinja template: ${YELLOW}disabled (model uses non-JSON tool call format)${NC}"
     fi
 
+    # Repeat penalty is off unless a family conf sets MODEL_REPEAT_PENALTY —
+    # it penalizes legitimately repeated tokens (indentation, identifiers,
+    # JSON keys in tool calls) and is a known cause of malformed tool calls.
+    local _rp_args=()
+    if [ -n "${MODEL_REPEAT_PENALTY:-}" ]; then
+        _rp_args=(--repeat-penalty "$MODEL_REPEAT_PENALTY" --repeat-last-n "${MODEL_REPEAT_LAST_N:-128}")
+        echo -e "${ICON_GEAR} Repeat penalty: ${YELLOW}${MODEL_REPEAT_PENALTY}${NC}"
+    fi
+
+    # --cache-reuse: agent conversations grow by appending, so reusing KV
+    # cache chunks across requests avoids reprocessing the whole prompt each
+    # turn — a large time-to-first-token win in agent loops.
     docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$_hub_net" --gpus "$_gpus_flag" --restart on-failure:3 \
         "${_port_args[@]}" "${_cuda_env[@]}" \
         -v "$(to_host_path "$MODEL_STORAGE_DIR"):/models" \
@@ -1080,8 +1109,8 @@ start_hub_engine() {
         --parallel "$MODEL_MAX_SLOTS" -ngl 99 -c "$MODEL_CTX_SIZE" --flash-attn on \
         -ctk "${MODEL_KV_TYPE:-q8_0}" -ctv "${MODEL_KV_TYPE:-q8_0}" \
         --batch-size 4096 --defrag-thold 0.1 \
-        --repeat-penalty 1.1 --repeat-last-n 128 \
-        "${_jinja_args[@]}" "${_ts_args[@]}" > /dev/null || {
+        --cache-reuse "${MODEL_CACHE_REUSE:-256}" \
+        "${_rp_args[@]}" "${_jinja_args[@]}" "${_ts_args[@]}" > /dev/null || {
         echo -e "${RED}✘ Failed to start engine container${NC}"; return 1
     }
 

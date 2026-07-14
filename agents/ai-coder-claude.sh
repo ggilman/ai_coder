@@ -22,7 +22,7 @@ configure_workbench() {
     cat > "$_tmp" <<EOF
 {
   "mcpServers": {
-$(make_mcp_servers_json "/$WORKSPACE_DIR" standard "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-claude.txt")
+$(make_agent_mcp_json "/$WORKSPACE_DIR" standard mcp-claude.txt)
   }
 }
 EOF

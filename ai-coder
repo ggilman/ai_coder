@@ -210,7 +210,12 @@ cleanup() {
     fi
     remaining_spokes=$(docker ps -q --filter "name=^/${WORKBENCH_PREFIX}-" 2>/dev/null | wc -l)
     if [ "$remaining_spokes" -eq 0 ]; then
-        stop_hub
+        if [ "$(read_pref "$SETTINGS_FILE" keep_hub no)" = "yes" ]; then
+            echo -e "${CYAN}◈ Hub stays warm (keep-hub enabled) — next session skips the model load.${NC}"
+            echo -e "${DIM}  Stop it manually with: $(basename "$0") --clean${NC}"
+        else
+            stop_hub
+        fi
     else
         echo -e "${CYAN}◈ ${remaining_spokes} spoke(s) still running — Hub remains active.${NC}"
     fi

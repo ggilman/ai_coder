@@ -1,0 +1,62 @@
+# ============================================================
+# mcp-extra.txt — optional MCP servers for all MCP-capable agents.
+#
+# These servers are always INSTALLED in the workbench images (so enabling
+# them never requires a rebuild) but are only REGISTERED in the generated
+# agent configs when enabled via:  ai-coder --setup → MCP extras.
+#
+# They live here rather than in mcp-common.txt because every registered
+# server's tool schemas are injected into the model's context on every
+# request — a long tool list slows prompt processing and degrades tool
+# selection on small local models. Enable extras only if you use them.
+#
+# Format (pipe-delimited, one server per line):
+#   npm-package | server-key | command | arg1 arg2 ... | ENV_VAR1,ENV_VAR2 | net
+#
+# The optional 5th field lists env var NAMES (from the host shell) whose
+# values are expanded and embedded in the generated MCP config at startup.
+#
+# The optional 6th field (net): set to "online" to skip the server when
+# network isolation is active (ai-coder --setup → isolate containers).
+# Leave blank for servers that work fully offline (local file I/O only).
+#
+# Use {workspace} as a placeholder for the container workspace path.
+# Lines starting with # are ignored. Blank lines are ignored.
+# ============================================================
+
+# Persistent knowledge graph memory — survives across sessions within the container lifetime.
+# Lets the agent remember codebase conventions, decisions, and task context.
+@modelcontextprotocol/server-memory           | memory     | mcp-server-memory                |
+
+# Sequential thinking — structured multi-step problem decomposition.
+# Helps agents plan and reason through complex tasks (refactors, conflict resolution, etc.)
+@modelcontextprotocol/server-sequential-thinking | thinking | mcp-server-sequential-thinking  |
+
+# Conan C++ package manager — manage conanfile.py deps, search Conan Center, check CVEs.
+# Official conan-io MCP server. conan itself is also installed via pip.
+# Requires internet to query Conan Center Index.
+pip:conan-mcp conan                         | conan      | conan-mcp                        | |                                                                                     | online
+
+# Context7 — fetches accurate, version-pinned library docs on demand.
+# Usage: add "use context7" to any prompt (CMake docs, Boost, OpenCV, bash manpages, etc.)
+# Pre-installed as npm package; run directly (not via npx -y which downloads at runtime).
+# Requires internet to reach the Upstash Context7 API.
+@upstash/context7-mcp                       | context7   | context7-mcp                     | |                                                                                     | online
+
+# Brave Search — web search, news, and AI-summarized results.
+# Requires a free API key: https://brave.com/search/api
+# Set BRAVE_API_KEY in your shell environment before launching ai-coder.
+# Pre-installed as npm package; run directly (not via npx -y which downloads at runtime).
+# Requires internet to reach the Brave Search API.
+@brave/brave-search-mcp-server              | brave-search | brave-search-mcp-server         | | BRAVE_API_KEY                                                                       | online
+
+# GitHub — issues, PRs, code search, file CRUD, releases, 40+ tools.
+# Set GITHUB_PERSONAL_ACCESS_TOKEN in ~/.ai-coder-env (fine-grained token works).
+# Requires internet to reach the GitHub API.
+@modelcontextprotocol/server-github         | github       | mcp-server-github               | | GITHUB_PERSONAL_ACCESS_TOKEN                                                        | online
+
+# HTTP fetch for retrieving web pages and API responses.
+pip:mcp-server-fetch  | fetch    | mcp-server-fetch          | | | online
+
+# Current time and timezone conversion.
+pip:mcp-server-time   | time     | mcp-server-time           |

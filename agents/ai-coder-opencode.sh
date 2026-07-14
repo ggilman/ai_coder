@@ -41,7 +41,7 @@ configure_workbench() {
     }
   },
   "mcp": {
-$(make_mcp_servers_json "/$WORKSPACE_DIR" opencode "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-opencode.txt")
+$(make_agent_mcp_json "/$WORKSPACE_DIR" opencode mcp-opencode.txt)
   }
 }
 EOF

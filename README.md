@@ -55,7 +55,7 @@ A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run
 - **Model family selection**: On first run, prompts you to choose a model family (Gemma 4, Qwen3, Qwen3.6, Llama 4, Devstral 2, …). The choice is saved to `~/.ai-coder-family`. Within the chosen family, the best GGUF tier is selected automatically based on detected VRAM.
 - **Tool selection**: On first run, also prompts for your preferred coding tool (Claude, OpenCode, Aider, Gemini). Saved to `~/.ai-coder-pref`.
 - **Workspace mount**: Your project folder is mounted into the container as `/<foldername>` (e.g. `/my-project`), so the AI tool starts directly in your project directory.
-- **Auto-cleanup**: When you exit the tool, the workbench container is stopped. If it was the last active spoke, the Hub (engine + proxy) is also shut down automatically.
+- **Auto-cleanup**: When you exit the tool, the workbench container is stopped. If it was the last active spoke, the Hub (engine + proxy) is also shut down automatically — unless the *keep hub warm* setting is enabled (`--setup`), which leaves the engine loaded so the next session starts in seconds. Stop a warm hub with `--clean`.
 - **Agent-free commands**: `--help`, `--status`, `--clean`, `--rebuild`, `--menu`, and `--setup` run immediately without requiring a tool to be selected.
 - **Setup required**: `--setup` must be run at least once before launching. This ensures all preferences are configured intentionally.
 
@@ -108,6 +108,7 @@ A rebuild (`./ai-coder --rebuild` followed by `./ai-coder`) is only needed when 
 | Add / remove an apt package (`apt-*.txt`) | **Yes** | Packages are installed during the image build |
 | Add / remove an MCP server (`mcp-*.txt`) — new npm or pip package | **Yes** | Packages are `npm install -g` / `pip install`'d during the image build |
 | Change MCP server args or `{workspace}` substitution | No | Config is regenerated fresh on every launch |
+| Enable/disable MCP extras (`--setup`) | No | Extra servers are pre-installed in every image; registration is decided per launch |
 | Change an MCP env var value (e.g. `BRAVE_API_KEY`) | No | Value is read from your shell at launch time |
 | Change model family or VRAM tier | No | Model is loaded by the engine container at runtime |
 | Change `config/ai-coder-model.conf` settings | No | Read at launch time |
@@ -146,10 +147,13 @@ MCP (Model Context Protocol) servers extend what the AI agent can do — web sea
 
 | File | Used by |
 | --- | --- |
-| `packages/mcp-common.txt` | All MCP-capable agents (Claude, OpenCode, Gemini) |
+| `packages/mcp-common.txt` | Core servers — always registered for all MCP-capable agents (Claude, OpenCode, Gemini) |
+| `packages/mcp-extra.txt` | Optional servers — installed in all images, but only registered when *MCP extras* is enabled in `--setup` |
 | `packages/mcp-claude.txt` | Claude image only |
 | `packages/mcp-opencode.txt` | OpenCode image only |
 | `packages/mcp-gemini.txt` | Gemini CLI image only |
+
+> **Why the core/extra split?** Every registered server's tool schemas are injected into the model's context on **every request**. A long tool list slows prompt processing and makes small local models measurably worse at choosing the right tool. Core covers day-to-day coding (filesystem, git, shell); enable the extras only if you use them. Toggling extras takes effect on the next launch — no rebuild needed, because extra servers are always pre-installed in the images.
 
 #### File format
 
@@ -168,18 +172,24 @@ npm-package | server-key | command | arg1 arg2 ... | ENV_VAR1,ENV_VAR2 | net
 
 Lines starting with `#` and blank lines are ignored.
 
-#### Currently installed servers (`mcp-common.txt`)
+#### Core servers (`mcp-common.txt`) — always registered
 
 | Server | Key | What it does |
 | --- | --- | --- |
 | `mcp-server-git` | `git` | Git operations (status, diff, add, commit) within the workspace |
 | `@modelcontextprotocol/server-filesystem` | `filesystem` | Reliable whole-file read/write across the workspace |
+| `cli-mcp-server` | `shell` | Execute shell commands (cmake, make, ctest, bash scripts) scoped to the workspace |
+
+#### Optional servers (`mcp-extra.txt`) — enable via `--setup` → MCP extras
+
+| Server | Key | What it does |
+| --- | --- | --- |
 | `@modelcontextprotocol/server-memory` | `memory` | Persistent knowledge graph — survives across sessions within the container lifetime |
 | `@modelcontextprotocol/server-sequential-thinking` | `thinking` | Structured multi-step problem decomposition |
-| `cli-mcp-server` | `shell` | Execute shell commands (cmake, make, ctest, bash scripts) scoped to the workspace |
 | `conan-mcp` | `conan` | Manage C++ Conan dependencies, search Conan Center, check CVEs |
 | `@upstash/context7-mcp` | `context7` | Fetch accurate, version-pinned library docs on demand — add `use context7` to any prompt |
 | `@brave/brave-search-mcp-server` | `brave-search` | Web search and news — requires `BRAVE_API_KEY` in your shell environment |
+| `@modelcontextprotocol/server-github` | `github` | GitHub issues, PRs, code search, file CRUD — requires `GITHUB_PERSONAL_ACCESS_TOKEN` |
 | `mcp-server-fetch` | `fetch` | HTTP fetch for retrieving web pages and API responses |
 | `mcp-server-time` | `time` | Current time and timezone conversion |
 
@@ -273,7 +283,7 @@ export BRAVE_API_KEY=your-key-here
 export SOME_OTHER_API_KEY=another-key
 ```
 
-The file is plain bash, so any valid shell syntax works. Variables set here are available to all MCP server config generation (e.g. the `BRAVE_API_KEY` env var field in `mcp-common.txt`). The path can be overridden with the `AI_CODER_ENV_FILE` environment variable.
+The file is plain bash, so any valid shell syntax works. Variables set here are available to all MCP server config generation (e.g. the `BRAVE_API_KEY` env var field in `mcp-extra.txt`). The path can be overridden with the `AI_CODER_ENV_FILE` environment variable.
 
 ## Installation
 
@@ -325,19 +335,21 @@ ai-coder also checks for updates automatically once per day on launch and prints
 
 ### Setup (`--setup`)
 
-**`--setup` must be run once before first launch.** It walks through up to seven configuration steps:
+**`--setup` must be run once before first launch.** It walks through up to nine configuration steps:
 
 ```bash
 ./ai-coder --setup
 ```
 
 1. **Shell alias** — optionally adds an `ai` shortcut to your rc file. Skip if you prefer to manage your PATH yourself. Any previously added alias is removed if you decline.
-2. **Proxy** — enter an HTTP proxy URL (saved to `~/.ai-coder-proxy`), or leave blank for none.
-3. **Network isolation** — optionally block all internet access from containers (`~/.ai-coder-netconfig`).
-4. **GPU mode** — only shown when 2+ GPUs are detected; choose multi (all GPUs) or single (`~/.ai-coder-gpuconf`).
-5. **Context window level** — how many tokens of context the model retains (4k–256k, default 128k). Saved to `~/.ai-coder-ctxconfig`. Higher values use more VRAM and slow responses.
-6. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps (e.g. Open WebUI) can connect directly. Saved to `~/.ai-coder-portconfig`.
-7. **Git identity** — name and email used for commits made inside the container (`~/.ai-coder-gitconfig`). Falls back to your host global git config if already set.
+2. **Proxy** — enter an HTTP proxy URL, or leave blank for none.
+3. **Network isolation** — optionally block all internet access from containers.
+4. **GPU mode** — only shown when 2+ GPUs are detected; choose multi (all GPUs) or single.
+5. **Context window level** — how many tokens of context the model retains (4k–256k, default 128k). Higher values use more VRAM and slow responses.
+6. **MCP extras** — register the optional MCP servers (memory, thinking, conan, context7, brave-search, github, fetch, time) with each agent. Off by default: fewer registered tools means faster prompts and better tool selection on small local models.
+7. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Uses idle VRAM; stop with `--clean`.
+8. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps (e.g. Open WebUI) can connect directly.
+9. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
 
 After completing setup, if you added the alias:
 

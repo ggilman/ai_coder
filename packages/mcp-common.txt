@@ -1,6 +1,12 @@
 # ============================================================
-# mcp-common.txt — MCP servers installed in all workbench images
-# that support MCP (Claude, Gemini, OpenCode). Not used for Aider.
+# mcp-common.txt — core MCP servers registered for all MCP-capable
+# agents (Claude, Gemini, OpenCode). Not used for Aider.
+#
+# Keep this list SMALL. Every registered server's tool schemas are
+# injected into the model's context on every request — each extra
+# server slows prompt processing and makes small local models worse
+# at picking the right tool. Servers that are useful but not
+# essential belong in mcp-extra.txt (enabled via ai-coder --setup).
 #
 # Format (pipe-delimited, one server per line):
 #   npm-package | server-key | command | arg1 arg2 ... | ENV_VAR1,ENV_VAR2 | net
@@ -22,47 +28,12 @@ pip:mcp-server-git                          | git        | mcp-server-git       
 # Filesystem tools: reliable whole-file read/write bypassing str_replace fragility
 @modelcontextprotocol/server-filesystem       | filesystem | mcp-server-filesystem            | {workspace}
 
-# Persistent knowledge graph memory — survives across sessions within the container lifetime.
-# Lets the agent remember codebase conventions, decisions, and task context.
-@modelcontextprotocol/server-memory           | memory     | mcp-server-memory                |
-
-# Sequential thinking — structured multi-step problem decomposition.
-# Helps agents plan and reason through complex tasks (refactors, conflict resolution, etc.)
-@modelcontextprotocol/server-sequential-thinking | thinking | mcp-server-sequential-thinking  |
-
 # Shell command execution — run cmake, make, ctest, bash scripts directly from the agent.
 # Configured via env vars. ALLOWED_COMMANDS=all and ALLOWED_FLAGS=all permit any command/flag.
 # ALLOW_SHELL_OPERATORS=true enables &&, ||, |, > etc.
 pip:cli-mcp-server                          | shell      | cli-mcp-server                   | | ALLOWED_DIR={workspace},ALLOWED_COMMANDS=all,ALLOWED_FLAGS=all,ALLOW_SHELL_OPERATORS=true,COMMAND_TIMEOUT=120
 
-# Conan C++ package manager — manage conanfile.py deps, search Conan Center, check CVEs.
-# Official conan-io MCP server. conan itself is also installed via pip.
-# Requires internet to query Conan Center Index.
-pip:conan-mcp conan                         | conan      | conan-mcp                        | |                                                                                     | online
-
-# Context7 — fetches accurate, version-pinned library docs on demand.
-# Usage: add "use context7" to any prompt (CMake docs, Boost, OpenCV, bash manpages, etc.)
-# Pre-installed as npm package; run directly (not via npx -y which downloads at runtime).
-# Requires internet to reach the Upstash Context7 API.
-@upstash/context7-mcp                       | context7   | context7-mcp                     | |                                                                                     | online
-
-# Brave Search — web search, news, and AI-summarized results.
-# Requires a free API key: https://brave.com/search/api
-# Set BRAVE_API_KEY in your shell environment before launching ai-coder.
-# Pre-installed as npm package; run directly (not via npx -y which downloads at runtime).
-# Requires internet to reach the Brave Search API.
-@brave/brave-search-mcp-server              | brave-search | brave-search-mcp-server         | | BRAVE_API_KEY                                                                       | online
-
-# GitHub — issues, PRs, code search, file CRUD, releases, 40+ tools.
-# Set GITHUB_PERSONAL_ACCESS_TOKEN in ~/.ai-coder-env (fine-grained token works).
-# Requires internet to reach the GitHub API.
-@modelcontextprotocol/server-github         | github       | mcp-server-github               | | GITHUB_PERSONAL_ACCESS_TOKEN                                                        | online
-
 # ----------------------------------------------------------------------------
 # NOTE: The base image is node:24-bookworm-slim (Debian Bookworm = Python 3.11).
 # pip: entries are fully supported with --break-system-packages.
-#
-# Additional pip servers (all require Python >=3.10):
-pip:mcp-server-fetch  | fetch    | mcp-server-fetch          |
-pip:mcp-server-time   | time     | mcp-server-time           |
 # ----------------------------------------------------------------------------

@@ -24,7 +24,7 @@ configure_workbench() {
   "selectedAuthType": "gemini-api-key",
   "theme": "Default",
   "mcpServers": {
-$(make_mcp_servers_json "/$WORKSPACE_DIR" standard "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-gemini.txt")
+$(make_agent_mcp_json "/$WORKSPACE_DIR" standard mcp-gemini.txt)
   }
 }
 EOF

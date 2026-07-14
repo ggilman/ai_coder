@@ -223,6 +223,50 @@ cmd_setup() {
             ;;
     esac
 
+    echo -e "\n${CYAN}MCP extras — register the optional MCP servers with each agent?${NC}"
+    echo -e "${DIM}  Extras: memory, sequential-thinking, conan, context7, brave-search, github, fetch, time.${NC}"
+    echo -e "${DIM}  Every registered server adds tool definitions to the model's context on every${NC}"
+    echo -e "${DIM}  request — small local models get slower and worse at tool selection as the${NC}"
+    echo -e "${DIM}  list grows. Core servers (filesystem, git, shell) are always registered.${NC}"
+    _cur_extras=$(read_pref "$SETTINGS_FILE" mcp_extras no)
+    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_extras" "$NC"
+    echo -n "  Enable MCP extras? [y/N]: "
+    read -r _extras_input
+    case "${_extras_input,,}" in
+        y|yes)
+            write_pref "$SETTINGS_FILE" mcp_extras yes
+            echo -e "${ICON_OK} MCP extras ${GREEN}enabled${NC} — applied on next launch (no rebuild needed)."
+            ;;
+        n|no)
+            write_pref "$SETTINGS_FILE" mcp_extras no
+            echo -e "${DIM}  MCP extras disabled — only core servers are registered.${NC}"
+            ;;
+        *)
+            printf "%s  MCP extras unchanged (%s)%s\n" "$DIM" "$_cur_extras" "$NC"
+            ;;
+    esac
+
+    echo -e "\n${CYAN}Keep hub warm — leave the engine running after the last session exits?${NC}"
+    echo -e "${DIM}  Skips the model load on your next launch. Uses GPU VRAM while idle;${NC}"
+    echo -e "${DIM}  stop it any time with: ai --clean${NC}"
+    _cur_keep=$(read_pref "$SETTINGS_FILE" keep_hub no)
+    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_keep" "$NC"
+    echo -n "  Keep hub warm? [y/N]: "
+    read -r _keep_input
+    case "${_keep_input,,}" in
+        y|yes)
+            write_pref "$SETTINGS_FILE" keep_hub yes
+            echo -e "${ICON_OK} Hub will ${GREEN}stay warm${NC} after sessions end."
+            ;;
+        n|no)
+            write_pref "$SETTINGS_FILE" keep_hub no
+            echo -e "${DIM}  Hub will shut down when the last session exits.${NC}"
+            ;;
+        *)
+            printf "%s  Keep-hub setting unchanged (%s)%s\n" "$DIM" "$_cur_keep" "$NC"
+            ;;
+    esac
+
     echo -e "\n${CYAN}Host port exposure — publish the engine on localhost:8080?${NC}"
     echo -e "${DIM}  Allows external applications (e.g. Open WebUI) to connect directly.${NC}"
     echo -e "${DIM}  Leave disabled if you only need the AI coding tools inside Docker.${NC}"
