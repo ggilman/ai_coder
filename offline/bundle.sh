@@ -66,24 +66,26 @@ FAMILY_CONF_DISPLAY="${_bundle_family_pairs[$((_family_sel-1))]%%:*}"
 source "$FAMILIES_DIR/${FAMILY_CONF_KEY}.conf"
 echo -e "${ICON_OK} Family: ${CYAN}${FAMILY_CONF_DISPLAY}${NC}"
 
-# --- [ VRAM tier selection ] --------------------------------------------------
-echo -e "${CYAN}Select the VRAM tier model to include in the bundle:${NC}"
-echo -e "  1)  ${MODEL_8GB_DESC}"
-echo -e "  2)  ${MODEL_12GB_DESC}"
-echo -e "  3)  ${MODEL_16GB_DESC}"
-echo -e "  4)  ${MODEL_24GB_DESC}"
-echo -e "  5)  ${MODEL_32GB_DESC}"
-echo -ne "\nTier [1-5]: "
-read -r _tier_sel
-case "$_tier_sel" in
-    1) TARGET_MODEL_FILE="$MODEL_8GB_FILE";  TARGET_MODEL_URL="$MODEL_8GB_URL";  TARGET_MODEL_DESC="$MODEL_8GB_DESC"  ;;
-    2) TARGET_MODEL_FILE="$MODEL_12GB_FILE"; TARGET_MODEL_URL="$MODEL_12GB_URL"; TARGET_MODEL_DESC="$MODEL_12GB_DESC" ;;
-    3) TARGET_MODEL_FILE="$MODEL_16GB_FILE"; TARGET_MODEL_URL="$MODEL_16GB_URL"; TARGET_MODEL_DESC="$MODEL_16GB_DESC" ;;
-    4) TARGET_MODEL_FILE="$MODEL_24GB_FILE"; TARGET_MODEL_URL="$MODEL_24GB_URL"; TARGET_MODEL_DESC="$MODEL_24GB_DESC" ;;
-    5) TARGET_MODEL_FILE="$MODEL_32GB_FILE"; TARGET_MODEL_URL="$MODEL_32GB_URL"; TARGET_MODEL_DESC="$MODEL_32GB_DESC" ;;
-    *) echo -e "${RED}✘ Invalid selection.${NC}"; exit 1 ;;
-esac
-echo -e "${ICON_OK} Model tier: ${CYAN}${TARGET_MODEL_DESC}${NC}"
+# --- [ Model selection ] ------------------------------------------------------
+echo -e "${CYAN}Select the model to include in the bundle:${NC}"
+_bmi=1
+while true; do
+    _bmfv="MODEL_${_bmi}_FILE"
+    [ -z "${!_bmfv:-}" ] && break
+    _bmdv="MODEL_${_bmi}_DESC"
+    echo -e "  ${_bmi})  ${!_bmdv:-${!_bmfv}}"
+    _bmi=$(( _bmi + 1 ))
+done
+_bm_max=$(( _bmi - 1 ))
+echo -ne "\nModel [1-${_bm_max}]: "
+read -r _model_sel
+if ! [[ "$_model_sel" =~ ^[0-9]+$ ]] || (( _model_sel < 1 || _model_sel > _bm_max )); then
+    echo -e "${RED}✘ Invalid selection.${NC}"; exit 1
+fi
+_bmfv="MODEL_${_model_sel}_FILE";  TARGET_MODEL_FILE="${!_bmfv}"
+_bmuv="MODEL_${_model_sel}_URL";   TARGET_MODEL_URL="${!_bmuv}"
+_bmdv="MODEL_${_model_sel}_DESC";  TARGET_MODEL_DESC="${!_bmdv:-$TARGET_MODEL_FILE}"
+echo -e "${ICON_OK} Model: ${CYAN}${TARGET_MODEL_DESC}${NC}"
 
 # --- [ Create bundle directory structure ] ------------------------------------
 echo -e "\n${ICON_GEAR} Preparing bundle directories..."

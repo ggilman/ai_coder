@@ -195,9 +195,12 @@ cmd_setup() {
                 write_pref "$SETTINGS_FILE" gpu_mode single
                 echo -e "${DIM}  GPU mode set to single.${NC}"
                 ;;
-            *)
+            y|yes)
                 write_pref "$SETTINGS_FILE" gpu_mode multi
                 echo -e "${ICON_OK} GPU mode set to ${GREEN}multi${NC}."
+                ;;
+            *)
+                echo -e "${DIM}  GPU mode unchanged (${_cur_gpu}).${NC}"
                 ;;
         esac
     fi

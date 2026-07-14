@@ -604,15 +604,41 @@ _estimate_kv_reserve_gb() {
     echo $(( (${MODEL_CTX_SIZE:-65536} * _bpt + 1073741823) / 1073741824 ))
 }
 
-# Sets MODEL_FILE and MODEL_TIER based on the supplied VRAM amount in GB.
+# Walks the MODEL_1..MODEL_N candidate list defined by the active family conf,
+# in priority order (best quality first), and selects the first entry whose
+# MODEL_N_WEIGHTS_GB fits within the supplied VRAM headroom (already KV-cache
+# and draft reserve subtracted). Sets MODEL_FILE, MODEL_URL, MODEL_SHA256, and
+# MODEL_TIER in the caller's environment.
+# The last candidate should have MODEL_N_WEIGHTS_GB=0 — it is always selected
+# unconditionally as the fallback when nothing larger fits.
 select_model_for_vram() {
-    local vram="${1:-0}"
-    if   [ "$vram" -ge "$MODEL_TIER_32GB_MIN" ]; then MODEL_FILE="$MODEL_32GB_FILE"; MODEL_TIER="32GB-tier"
-    elif [ "$vram" -ge "$MODEL_TIER_24GB_MIN" ]; then MODEL_FILE="$MODEL_24GB_FILE"; MODEL_TIER="24GB-tier"
-    elif [ "$vram" -ge "$MODEL_TIER_16GB_MIN" ]; then MODEL_FILE="$MODEL_16GB_FILE"; MODEL_TIER="16GB-tier"
-    elif [ "$vram" -ge "$MODEL_TIER_12GB_MIN" ]; then MODEL_FILE="$MODEL_12GB_FILE"; MODEL_TIER="12GB-tier"
-    else                                               MODEL_FILE="$MODEL_8GB_FILE";  MODEL_TIER="8GB-tier"
-    fi
+    local vram="${1:-0}" i _fv _wv _uv _sv _dv _w
+    local _count="${MODEL_COUNT:-0}"
+    for (( i=1; i<=_count; i++ )); do
+        _fv="MODEL_${i}_FILE"
+        [ -z "${!_fv:-}" ] && break
+        _wv="MODEL_${i}_WEIGHTS_GB"
+        _w="${!_wv:-0}"
+        if [ "$vram" -ge "$_w" ]; then
+            _uv="MODEL_${i}_URL"
+            _sv="MODEL_${i}_SHA256"
+            _dv="MODEL_${i}_DESC"
+            MODEL_FILE="${!_fv}"
+            MODEL_URL="${!_uv:-}"
+            MODEL_SHA256="${!_sv:-}"
+            MODEL_TIER="${!_dv:-model-$i}"
+            return
+        fi
+    done
+    # Should not reach here when the last entry has WEIGHTS_GB=0.
+    # Safety fallback: use last defined candidate.
+    i=$(( _count > 0 ? _count : 1 ))
+    _fv="MODEL_${i}_FILE"; _uv="MODEL_${i}_URL"
+    _sv="MODEL_${i}_SHA256"; _dv="MODEL_${i}_DESC"
+    MODEL_FILE="${!_fv:-}"
+    MODEL_URL="${!_uv:-}"
+    MODEL_SHA256="${!_sv:-}"
+    MODEL_TIER="${!_dv:-fallback}"
 }
 
 # Download a URL to a local path. Selects the best available tool and handles proxy.
@@ -764,17 +790,15 @@ download_model() {
         return 0
     fi
 
-    [ -z "${MODEL_FILE:-}" ] && select_model_for_vram "${EFFECTIVE_VRAM_GB:-${VRAM_GB:-0}}"
+    # Resolve model selection and metadata (file, url, sha256, desc) when not
+    # already set — e.g. on the initial run or when MODEL_FILE was cleared.
+    if [ -z "${MODEL_FILE:-}" ] || [ -z "${MODEL_URL:-}" ]; then
+        select_model_for_vram "${EFFECTIVE_VRAM_GB:-${VRAM_GB:-0}}"
+    fi
 
-    local model_url model_hint model_sha
-    case "$MODEL_FILE" in
-        "$MODEL_32GB_FILE") model_url="$MODEL_32GB_URL"; model_hint="$MODEL_32GB_DESC"; model_sha="${MODEL_32GB_SHA256:-}" ;;
-        "$MODEL_24GB_FILE") model_url="$MODEL_24GB_URL"; model_hint="$MODEL_24GB_DESC"; model_sha="${MODEL_24GB_SHA256:-}" ;;
-        "$MODEL_16GB_FILE") model_url="$MODEL_16GB_URL"; model_hint="$MODEL_16GB_DESC"; model_sha="${MODEL_16GB_SHA256:-}" ;;
-        "$MODEL_12GB_FILE") model_url="$MODEL_12GB_URL"; model_hint="$MODEL_12GB_DESC"; model_sha="${MODEL_12GB_SHA256:-}" ;;
-        "$MODEL_8GB_FILE")  model_url="$MODEL_8GB_URL";  model_hint="$MODEL_8GB_DESC";  model_sha="${MODEL_8GB_SHA256:-}"  ;;
-        *) echo -e "${RED}✘ Unsupported target model: $MODEL_FILE${NC}"; return 1 ;;
-    esac
+    local model_url="${MODEL_URL:-}"
+    local model_hint="${MODEL_TIER:-$MODEL_FILE}"
+    local model_sha="${MODEL_SHA256:-}"
 
     [ -z "$model_url" ] && { echo -e "${RED}✘ Missing download URL for $MODEL_FILE${NC}"; return 1; }
 
@@ -839,16 +863,19 @@ detect_model() {
     [ "$EFFECTIVE_VRAM_GB" -lt 0 ] && EFFECTIVE_VRAM_GB=0
     echo -e "${ICON_GEAR} VRAM Reserve: ${BOLD}~${kv_reserve}GB KV${NC} ${DIM}(${MODEL_CTX_LEVEL:-64k} ctx, ${MODEL_KV_TYPE:-q8_0})${_draft_note}${NC} → ${BOLD}${EFFECTIVE_VRAM_GB}GB${NC} usable for model"
 
-    # Note the tier raw VRAM would have allowed, to hint when ctx costs a tier.
+    # Record which model raw VRAM (no overhead) would allow, to detect when
+    # the context/draft reserve causes a step down to a smaller model.
     select_model_for_vram "$VRAM_GB"
     local _raw_tier="$MODEL_TIER"
 
     select_model_for_vram "$EFFECTIVE_VRAM_GB"
-    echo -e "${ICON_GEAR} Model Tier: ${BOLD}${MODEL_TIER}${NC}"
-    echo -e "${ICON_GEAR} Tier Model: ${CYAN}${MODEL_FILE}${NC}"
+    echo -e "${ICON_GEAR} Model: ${BOLD}${MODEL_TIER}${NC}"
+    echo -e "${ICON_GEAR} File:  ${CYAN}${MODEL_FILE}${NC}"
     if [ "$MODEL_TIER" != "$_raw_tier" ]; then
-        echo -e "${YELLOW}⚠ The ${MODEL_CTX_LEVEL:-64k} context reserve dropped the tier (${_raw_tier} fits without it).${NC}"
-        echo -e "${DIM}  Choose a smaller context level in --setup to unlock the bigger model.${NC}"
+        local _tier_reason="${MODEL_CTX_LEVEL:-64k} context reserve"
+        [ -n "$_draft_note" ] && _tier_reason="${MODEL_CTX_LEVEL:-64k} context + ${draft_reserve}GB draft reserve"
+        echo -e "${DIM}  ↓ ${_tier_reason} (~${kv_reserve}GB) reduces model headroom to ${EFFECTIVE_VRAM_GB}GB; ${_raw_tier} doesn't fit.${NC}"
+        echo -e "${DIM}    Lower the context level in --setup to free up headroom and unlock the larger model.${NC}"
     fi
     
     if [ -f "$MODEL_STORAGE_DIR/$MODEL_FILE" ]; then
