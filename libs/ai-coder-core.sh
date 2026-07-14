@@ -1187,8 +1187,9 @@ ensure_model_in_volume() {
     if [ -z "$sync_list" ]; then
         # Nothing to copy — still prune files no longer wanted (e.g. a draft
         # model after speculative decoding was turned off, or an old model).
-        docker run --rm --entrypoint /bin/sh -v "$MODEL_VOLUME_NAME:/vol" "$LLAMA_IMAGE" \
-            -c "find /vol -maxdepth 1 -name '*.gguf' $keep_expr -delete" >/dev/null 2>&1 || true
+        # Skip pruning — keep all models in volume:
+        # docker run --rm --entrypoint /bin/sh -v "$MODEL_VOLUME_NAME:/vol" "$LLAMA_IMAGE" \
+        #     -c "find /vol -maxdepth 1 -name '*.gguf' $keep_expr -delete" >/dev/null 2>&1 || true
         return 0
     fi
 
@@ -1199,7 +1200,7 @@ ensure_model_in_volume() {
         -v "$MODEL_VOLUME_NAME:/vol" \
         -v "$(to_host_path "$MODEL_STORAGE_DIR"):/src:ro" \
         "$LLAMA_IMAGE" -c "
-            find /vol -maxdepth 1 -name '*.gguf' $keep_expr -delete
+            # find /vol -maxdepth 1 -name '*.gguf' $keep_expr -delete # Skip pruning
             for f in $sync_list; do
                 rm -f \"/vol/\$f.part\" \"/vol/\$f\"
                 cp \"/src/\$f\" \"/vol/\$f.part\" && mv \"/vol/\$f.part\" \"/vol/\$f\" || exit 1
