@@ -31,6 +31,7 @@ The environment uses a **Hub & Spoke** model:
 | `agents/ai-coder-webui.sh` | Open WebUI mode — starts the engine + Open WebUI chat interface at `localhost:3000` |
 | `libs/ai-coder-menus.sh` | Interactive family and tool selection menus (sourced by `ai-coder`) |
 | `libs/ai-coder-setup.sh` | Setup wizard and `--fix-project` command (sourced by `ai-coder`) |
+| `libs/fixpath.sh` | WSL path resolver — converts Docker Desktop bind mounts to native WSL paths |
 | `ai-status.sh` | System health dashboard |
 | `offline/bundle.sh` | Offline bundle creator — packages scripts, Docker images, and a model for air-gapped deployment |
 | `offline/unbundle.sh` | Offline bundle installer — loads a bundle onto an isolated target machine |
