@@ -874,9 +874,7 @@ detect_model() {
     if [ "$MODEL_TIER" != "$_raw_tier" ]; then
         local _tier_reason="${MODEL_CTX_LEVEL:-64k} context reserve"
         [ -n "$_draft_note" ] && _tier_reason="${MODEL_CTX_LEVEL:-64k} context + ${draft_reserve}GB draft reserve"
-        echo -e "${DIM}  ↓ ${_tier_reason} (~${kv_reserve}GB) reduces model headroom to ${EFFECTIVE_VRAM_GB}GB; ${_raw_tier} doesn't fit.${NC}"
-        echo -e "${DIM}    Lower the context level in --setup to free up headroom and unlock the larger model.${NC}"
-    fi
+        fi
     
     if [ -f "$MODEL_STORAGE_DIR/$MODEL_FILE" ]; then
         echo -e "${ICON_OK} Target Model: ${CYAN}${MODEL_FILE}${NC}"

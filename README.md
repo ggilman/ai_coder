@@ -18,8 +18,8 @@ The environment uses a **Hub & Spoke** model:
 | `libs/ai-coder-core.sh` | Shared infrastructure library (sourced by `ai-coder`) |
 | `libs/ai-coder-graphics.sh` | Shared ANSI color and icon palette (sourced by core and status) |
 | `config/ai-coder-model.conf` | Model framework config — GPU mode, inference settings, VRAM tier thresholds |
-| `config/families/gemma4.conf` | Gemma 4 family config — model names, download URLs, display labels per tier |
-| `config/families/qwen3.conf` | Qwen3 family config — model names, download URLs, display labels per tier |
+| `config/families/gemma4.conf` | Gemma 4 family config — model tiers (names, URLs, weights, SHA256) and optional speculative decoding draft |
+| `config/families/qwen3.conf` | Qwen3 family config — model tiers (names, URLs, weights, SHA256) and speculative decoding draft |
 | `config/families/qwen3.6.conf` | Qwen3.6 family config — 27B dense + 35B-A3B MoE (released April 2026) |
 | `config/families/llama4.conf` | Llama 4 family config — Scout 17B×16E (10M context, consumer-feasible) |
 | `config/families/devstral2.conf` | Devstral 2 family config — 24B coding-specialist (SWE-Bench 68.0%) |
@@ -34,6 +34,30 @@ The environment uses a **Hub & Spoke** model:
 | `ai-status.sh` | System health dashboard |
 | `offline/bundle.sh` | Offline bundle creator — packages scripts, Docker images, and a model for air-gapped deployment |
 | `offline/unbundle.sh` | Offline bundle installer — loads a bundle onto an isolated target machine |
+
+## Family Configuration Format
+
+Each family configuration file in `config/families/` defines an ordered candidate list (best quality first) and family-specific defaults.
+
+**Core Variables:**
+- `MODEL_COUNT`: Total number of candidates.
+- `MODEL_N_FILE`: GGUF filename under `MODEL_STORAGE_DIR`.
+- `MODEL_N_URL`: Direct download URL.
+- `MODEL_N_DESC`: Human-readable label shown in logs and menus.
+- `MODEL_N_SHA256`: Expected sha256 (blank = skip verification).
+- `MODEL_N_WEIGHTS_GB`: Ceiling of model file size in GB; `0` = unconditional fallback.
+
+**Speculative Decoding (Optional):**
+- `MODEL_DRAFT_FILE`: Draft GGUF filename.
+- `MODEL_DRAFT_URL`: Direct download URL.
+- `MODEL_DRAFT_SHA256`: Expected sha256 (blank = skip verification).
+- `MODEL_DRAFT_VRAM_GB`: VRAM reserved for the draft in tier selection (default 1).
+
+**Family Defaults:**
+- `MODEL_FAMILY`: Display name in the selection menu.
+- `MODEL_KV_TYPE`: KV cache quantization (e.g., `q8_0`, `q4_0`).
+- `MODEL_JINJA`: Enable model's built-in Jinja template.
+- `MODEL_THINKING`: Toggle reasoning tokens (e.g., for Qwen3 family).
 
 ## Available Tools
 
