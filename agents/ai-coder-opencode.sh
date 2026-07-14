@@ -55,5 +55,5 @@ start_workbench() {
 }
 
 execute_tool() {
-    exec_in_container "${WORKBENCH_PREFIX}-${PROJECT_ID}" opencode
+    exec_in_container "$WORKBENCH" opencode
 }

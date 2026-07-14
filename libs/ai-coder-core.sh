@@ -89,7 +89,11 @@ ensure_host_dir_writable() {
     if [ ! -d "$dir" ]; then
         mkdir -p "$dir"
     elif [ ! -w "$dir" ]; then
-        sudo chown -R "$USER" "$dir"
+        if command -v sudo >/dev/null 2>&1; then
+            sudo chown -R "$USER" "$dir"
+        else
+            echo -e "${YELLOW}⚠ $dir is not writable and sudo is unavailable — config updates may fail.${NC}" >&2
+        fi
     fi
 }
 
@@ -135,7 +139,10 @@ with open(sys.argv[2], 'w') as f:
     json.dump(new, f, indent=2)
 " "$src" "$dst" && _merged=true
     fi
-    [ "$_merged" = "false" ] && cp "$src" "$dst"
+    if [ "$_merged" = "false" ]; then
+        [ -f "$dst" ] && echo -e "${YELLOW}⚠ No JSON merge tool available — overwriting $(basename "$dst"); existing settings in it are lost.${NC}" >&2
+        cp "$src" "$dst"
+    fi
 }
 
 # Read a package list file: one package per line, # comments stripped.
@@ -187,6 +194,14 @@ _mcp_trim() {
     printf '%s' "$1" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
 }
 
+# Escape a value for embedding inside a JSON double-quoted string.
+_mcp_json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    printf '%s' "$s"
+}
+
 _mcp_build_env_json() {
     # Parses comma-separated env var specs into a JSON env fragment.
     # "NAME"        → expands $NAME from the calling environment
@@ -202,9 +217,9 @@ _mcp_build_env_json() {
         if [[ "$env_name" == *=* ]]; then
             local ev_key="${env_name%%=*}"
             local ev_val; ev_val=$(printf '%s' "${env_name#*=}" | sed "s|{workspace}|$workspace|g")
-            env_parts+=("\"$ev_key\": \"$ev_val\"")
+            env_parts+=("\"$ev_key\": \"$(_mcp_json_escape "$ev_val")\"")
         else
-            env_parts+=("\"$env_name\": \"${!env_name:-}\"")
+            env_parts+=("\"$env_name\": \"$(_mcp_json_escape "${!env_name:-}")\"")
         fi
     done
     [ "${#env_parts[@]}" -eq 0 ] && return
@@ -220,7 +235,7 @@ _mcp_format_entry() {
     # opencode:                 {"type": "local", "command": [...], "enabled": true, "environment": {...}}
     local mode="$1" key="$2" cmd="$3" args_str="$4" env_json="$5"
     local arr=() a
-    for a in $args_str; do arr+=("\"$a\""); done
+    for a in $args_str; do arr+=("\"$(_mcp_json_escape "$a")\""); done
     if [ "$mode" = "opencode" ]; then
         local oc_arr=("\"$cmd\"")
         [ "${#arr[@]}" -gt 0 ] && oc_arr+=("${arr[@]}")
@@ -427,8 +442,19 @@ ensure_ctx_config() {
 # Write a ~/.gitconfig-container file that gets mounted into containers as
 # /root/.gitconfig so git commands in any repo (including newly init'd ones)
 # pick up the correct author identity.
+# Always writes the file — run_workbench bind-mounts it unconditionally, and a
+# missing mount source would make Docker create it as a root-owned directory.
 ensure_container_gitconfig() {
     local gitcfg="$HOME/.gitconfig-container"
+    # Recover from a previous run where Docker created this path as a directory.
+    if [ -d "$gitcfg" ]; then
+        rm -rf "$gitcfg" 2>/dev/null || sudo rm -rf "$gitcfg" 2>/dev/null || true
+    fi
+    # Normalize CRLF→LF inside containers (Windows host mounts files with CRLF).
+    cat > "$gitcfg" <<GITCFG
+[core]
+    autocrlf = input
+GITCFG
     if [ -n "${GIT_USER_EMAIL:-}" ] || [ -n "${GIT_USER_NAME:-}" ]; then
         local email="${GIT_USER_EMAIL:-developer@localhost}"
         local name="${GIT_USER_NAME:-Developer}"
@@ -436,7 +462,7 @@ ensure_container_gitconfig() {
         # Wrapping in double quotes makes # and ; safe (not treated as comments).
         email="${email//\\/\\\\}"; email="${email//\"/\\\"}"
         name="${name//\\/\\\\}";   name="${name//\"/\\\"}"
-        cat > "$gitcfg" <<GITCFG
+        cat >> "$gitcfg" <<GITCFG
 [user]
     email = "${email}"
     name = "${name}"
@@ -651,13 +677,13 @@ download_model() {
 
     [ -z "${MODEL_FILE:-}" ] && select_model_for_vram "${VRAM_GB:-0}"
 
-    local model_url model_hint
+    local model_url model_hint model_sha
     case "$MODEL_FILE" in
-        "$MODEL_32GB_FILE") model_url="$MODEL_32GB_URL"; model_hint="$MODEL_32GB_DESC" ;;
-        "$MODEL_24GB_FILE") model_url="$MODEL_24GB_URL"; model_hint="$MODEL_24GB_DESC" ;;
-        "$MODEL_16GB_FILE") model_url="$MODEL_16GB_URL"; model_hint="$MODEL_16GB_DESC" ;;
-        "$MODEL_12GB_FILE") model_url="$MODEL_12GB_URL"; model_hint="$MODEL_12GB_DESC" ;;
-        "$MODEL_8GB_FILE")  model_url="$MODEL_8GB_URL";  model_hint="$MODEL_8GB_DESC"  ;;
+        "$MODEL_32GB_FILE") model_url="$MODEL_32GB_URL"; model_hint="$MODEL_32GB_DESC"; model_sha="${MODEL_32GB_SHA256:-}" ;;
+        "$MODEL_24GB_FILE") model_url="$MODEL_24GB_URL"; model_hint="$MODEL_24GB_DESC"; model_sha="${MODEL_24GB_SHA256:-}" ;;
+        "$MODEL_16GB_FILE") model_url="$MODEL_16GB_URL"; model_hint="$MODEL_16GB_DESC"; model_sha="${MODEL_16GB_SHA256:-}" ;;
+        "$MODEL_12GB_FILE") model_url="$MODEL_12GB_URL"; model_hint="$MODEL_12GB_DESC"; model_sha="${MODEL_12GB_SHA256:-}" ;;
+        "$MODEL_8GB_FILE")  model_url="$MODEL_8GB_URL";  model_hint="$MODEL_8GB_DESC";  model_sha="${MODEL_8GB_SHA256:-}"  ;;
         *) echo -e "${RED}✘ Unsupported target model: $MODEL_FILE${NC}"; return 1 ;;
     esac
 
@@ -679,6 +705,18 @@ download_model() {
     # Download to a .part file so an interrupted transfer never leaves a file
     # that looks like a complete model.
     if _download_file "$model_url" "$part_path"; then
+        # Verify checksum when the family conf provides one (MODEL_<tier>_SHA256).
+        if [ -n "${model_sha:-}" ] && command -v sha256sum >/dev/null 2>&1; then
+            echo -e "${ICON_GEAR} Verifying checksum..."
+            local actual_sha; actual_sha=$(sha256sum "$part_path" | cut -d' ' -f1)
+            if [ "$actual_sha" != "$model_sha" ]; then
+                rm -f "$part_path"
+                echo -e "${RED}✘ Checksum mismatch — expected ${model_sha}, got ${actual_sha}${NC}"
+                echo -e "${YELLOW}  The download may be corrupt or tampered with. Please retry.${NC}"
+                return 1
+            fi
+            echo -e "${GREEN}✔ Checksum verified${NC}"
+        fi
         mv "$part_path" "$model_path"
         echo -e "${GREEN}✔ Model downloaded successfully${NC}"
     else
@@ -938,7 +976,11 @@ run_workbench() {
     # and Linux containers normalise //foo → /foo.
     local _wb_workdir="/$WORKSPACE_DIR"
     [ "$IS_GITBASH" = "true" ] && _wb_workdir="//$WORKSPACE_DIR"
-    docker run -d --name "$WORKBENCH" --network "$wb_network" --privileged \
+    # No --privileged: agents only need the workspace mount and network access,
+    # and a privileged container would undermine the network-isolation option.
+    # --stop-timeout 2: the keep-alive entrypoint ignores SIGTERM, so a short
+    # grace period avoids a 10s docker stop hang on every exit.
+    docker run -d --name "$WORKBENCH" --network "$wb_network" --stop-timeout 2 \
         -e "http_proxy=${_wb_http_proxy}" -e "https_proxy=${_wb_http_proxy}" \
         -e "HTTP_PROXY=${_wb_http_proxy}" -e "HTTPS_PROXY=${_wb_http_proxy}" \
         -e "no_proxy=$no_proxy_hosts" -e "NO_PROXY=$no_proxy_hosts" \
@@ -983,7 +1025,9 @@ _start_litellm_proxy() {
     cat > "$HOME/.ai-coder/litellm_config.yaml" <<EOF
 $config_content
 EOF
-    docker run -d --name "$GLOBAL_PROXY_NAME" --network "$hub_net" -p 4000:4000 --restart always \
+    # on-failure:3 (not always) so a host reboot doesn't resurrect the proxy
+    # orphaned without its engine. Port bound to localhost only.
+    docker run -d --name "$GLOBAL_PROXY_NAME" --network "$hub_net" -p 127.0.0.1:4000:4000 --restart on-failure:3 \
         -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
         -e "no_proxy=localhost,127.0.0.1,$GLOBAL_ENGINE_NAME" \
         -v "$(to_host_path "$HOME/.ai-coder/litellm_config.yaml"):/app/config.yaml:ro" \
@@ -1015,7 +1059,8 @@ start_hub_engine() {
 
     local _port_args=()
     if [ "$(read_pref "$SETTINGS_FILE" expose_host_port no)" = "yes" ]; then
-        _port_args=(-p 8080:8080)
+        # Bind to localhost only so the engine is not reachable from the LAN.
+        _port_args=(-p 127.0.0.1:8080:8080)
         echo -e "${ICON_GEAR} Engine port: ${GREEN}published on localhost:8080${NC}"
     fi
 
@@ -1042,16 +1087,23 @@ start_hub_engine() {
 
     write_pref "$STATE_FILE" engine_gpu_mode "${GPU_MODE:-multi}"
     write_pref "$STATE_FILE" engine_model "${MODEL_FILE:-}"
+    write_pref "$STATE_FILE" engine_ctx "${MODEL_CTX_SIZE:-}"
+    write_pref "$STATE_FILE" engine_expose "$(read_pref "$SETTINGS_FILE" expose_host_port no)"
+    write_pref "$STATE_FILE" engine_net "${NETWORK_INTERNAL:-false}"
 
     if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
         _start_litellm_proxy "$_hub_net" || return 1
     fi
 }
 
+# Sets WORKBENCH_STARTED_BY_US so the caller's cleanup only stops containers
+# this session actually started (not one shared with a concurrent session).
 ensure_workbench_running() {
+    WORKBENCH_STARTED_BY_US=false
     if [ -n "$(docker ps -q -f name=^/${WORKBENCH}$ 2>/dev/null)" ]; then
         return 0
     fi
+    WORKBENCH_STARTED_BY_US=true
     if [ -n "$(docker ps -aq -f name=^/${WORKBENCH}$ 2>/dev/null)" ]; then
         docker start "$WORKBENCH" >/dev/null 2>&1 || return 1
         return 0
@@ -1106,8 +1158,8 @@ stop_hub() {
 
 teardown() {
     echo -e "${CYAN}Tearing down Hub & Project Spokes...${NC}"
-    local _running; _running=$(docker ps -q  --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null || true)
-    local _all;     _all=$(docker ps -aq --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null || true)
+    local _running; _running=$(docker ps -q  --filter "name=^/${WORKBENCH_PREFIX}-" 2>/dev/null || true)
+    local _all;     _all=$(docker ps -aq --filter "name=^/${WORKBENCH_PREFIX}-" 2>/dev/null || true)
     # shellcheck disable=SC2086
     docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" $( [ -n "$_running" ] && echo "$_running") 2>/dev/null || true
     # shellcheck disable=SC2086
@@ -1121,7 +1173,7 @@ handle_command() {
         --build-only)
             BUILD_ONLY=true
             ;;
-        spawn|"")
+        "")
             ;;
         *)
             echo -e "${RED}Unknown command: ${cmd}${NC}"

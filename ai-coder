@@ -30,7 +30,6 @@ case "${1:-}" in
 Usage: $(basename "$0") [COMMAND]
 
 Commands:
-  spawn              Execute command in active workbench
   --status           Show GPU and engine status dashboard
   --setup            First-time and re-configuration wizard (alias, proxy, isolation, GPU, git)
   --update           Download and install the latest release from GitHub
@@ -48,6 +47,7 @@ HELP
 --status)
     exec "$(dirname "$(realpath "$0")")/ai-status.sh" ;;
 --clean)
+    check_docker || exit 1
     teardown
     exit 0 ;;
 --fix-project)
@@ -59,6 +59,9 @@ HELP
 esac
 
 if [[ "${1:-}" == "--rebuild" ]]; then
+    # Docker must be up — with the daemon down every docker call below fails
+    # silently and the .rebuild-needed flag would be cleared without rebuilding.
+    check_docker || exit 1
     # Collect every image name defined in any agent script (current version).
     # tr -d '\r' guards against CRLF on Windows-mounted filesystems.
     # Also sweep for any leftover images from previous version numbers by
@@ -108,7 +111,7 @@ fi
 # Guard: require --setup to have been run at least once before launching.
 if [ ! -f "$USER_DIR/.setup-done" ]; then
     echo -e "${YELLOW}◈ First-time setup required. Run:${NC}"
-    echo -e "  ${CYAN}$(realpath "$0") --setup${NC}"
+    echo -e "  ${CYAN}\"$(realpath "$0")\" --setup${NC}"
     exit 1
 fi
 
@@ -183,8 +186,10 @@ source "$CHILD_SCRIPT"
 # Ensure local stack dir exists (needed before core logic starts using it)
 mkdir -p "$MODEL_STORAGE_DIR"
 
-# Set WORKBENCH variable
-WORKBENCH="${WORKBENCH_PREFIX}-${PROJECT_ID}"
+# Set WORKBENCH variable. Includes the tool so switching tools (or two sessions
+# with different tools in the same project) never reuses a container built from
+# another agent's image.
+WORKBENCH="${WORKBENCH_PREFIX}-${TOOL_PREF}-${PROJECT_ID}"
 
 # --- [ CLEANUP TRAP ] --------------------------------------------------------
 # Runs on normal exit, Ctrl-C (INT), and SIGTERM so containers are always
@@ -203,7 +208,7 @@ cleanup() {
         docker stop "$WORKBENCH" 2>/dev/null || true
         docker rm   "$WORKBENCH" 2>/dev/null || true
     fi
-    remaining_spokes=$(docker ps -q --filter "name=${WORKBENCH_PREFIX}-" 2>/dev/null | wc -l)
+    remaining_spokes=$(docker ps -q --filter "name=^/${WORKBENCH_PREFIX}-" 2>/dev/null | wc -l)
     if [ "$remaining_spokes" -eq 0 ]; then
         stop_hub
     else
@@ -251,14 +256,27 @@ _engine_running=false
 _need_engine_restart=false
 
 if $_engine_running; then
-    # Restart if GPU mode or model changed since the engine was last started.
-    _eng_gpu=$(read_pref "$STATE_FILE" engine_gpu_mode "")
-    _eng_model=$(read_pref "$STATE_FILE" engine_model "")
+    # Restart if any engine-affecting setting changed since it was last started.
+    _eng_gpu=$(read_pref    "$STATE_FILE" engine_gpu_mode "")
+    _eng_model=$(read_pref  "$STATE_FILE" engine_model "")
+    _eng_ctx=$(read_pref    "$STATE_FILE" engine_ctx "")
+    _eng_expose=$(read_pref "$STATE_FILE" engine_expose "")
+    _eng_net=$(read_pref    "$STATE_FILE" engine_net "")
+    _cur_expose=$(read_pref "$SETTINGS_FILE" expose_host_port no)
     if [ -n "$_eng_gpu" ] && [ "$_eng_gpu" != "${GPU_MODE:-multi}" ]; then
         echo -e "${YELLOW}◈ GPU mode changed (${_eng_gpu} → ${GPU_MODE:-multi}) — restarting engine...${NC}"
         _need_engine_restart=true
     elif [ -n "$_eng_model" ] && [ "$_eng_model" != "${MODEL_FILE:-}" ]; then
         echo -e "${YELLOW}◈ Model changed (${_eng_model} → ${MODEL_FILE:-}) — restarting engine...${NC}"
+        _need_engine_restart=true
+    elif [ -n "$_eng_ctx" ] && [ "$_eng_ctx" != "${MODEL_CTX_SIZE:-}" ]; then
+        echo -e "${YELLOW}◈ Context size changed (${_eng_ctx} → ${MODEL_CTX_SIZE:-}) — restarting engine...${NC}"
+        _need_engine_restart=true
+    elif [ -n "$_eng_expose" ] && [ "$_eng_expose" != "$_cur_expose" ]; then
+        echo -e "${YELLOW}◈ Host port exposure changed (${_eng_expose} → ${_cur_expose}) — restarting engine...${NC}"
+        _need_engine_restart=true
+    elif [ -n "$_eng_net" ] && [ "$_eng_net" != "${NETWORK_INTERNAL:-false}" ]; then
+        echo -e "${YELLOW}◈ Network isolation changed (${_eng_net} → ${NETWORK_INTERNAL:-false}) — restarting engine...${NC}"
         _need_engine_restart=true
     fi
 fi
@@ -278,7 +296,7 @@ apply_git_identity
 configure_workbench
 
 ensure_workbench_running || { echo -e "${RED}✘ Workbench startup failed${NC}"; exit 1; }
-_workbench_started=true
+_workbench_started=$WORKBENCH_STARTED_BY_US
 
 echo -ne "${CYAN}◈ Syncing VRAM Slots:${NC} "
 retry_count=0
@@ -297,7 +315,11 @@ while [ "$retry_count" -lt "$max_retries" ]; do
     _engine_pid=$!
 
     if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
-        curl -s -m 2 http://localhost:4000/v1/models 2>/dev/null | grep -q '"object"' &
+        # Probe the proxy from inside the Docker network (via the engine
+        # container) — on the isolated internal network the proxy's published
+        # port is not reachable from the host, so a host-side curl would
+        # never succeed.
+        docker exec "$GLOBAL_ENGINE_NAME" curl -s -m 2 "http://$GLOBAL_PROXY_NAME:4000/v1/models" 2>/dev/null | grep -q '"object"' &
         _proxy_pid=$!
         wait "$_engine_pid" && engine_ready=true
         wait "$_proxy_pid"  && proxy_ready=true
@@ -316,7 +338,7 @@ if [ "$engine_ready" = "true" ] && [ "$proxy_ready" = "true" ]; then
     echo -e " ${GREEN}READY${NC}"
 else
     echo -e " ${RED}TIMEOUT${NC}"
-    echo -e "${RED}✘ Engine/Proxy failed to initialize after $((retry_count * 2)) seconds${NC}"
+    echo -e "${RED}✘ Engine/Proxy failed to initialize after ~${retry_count} seconds${NC}"
     # Basic diagnostics
     _cid=$(docker ps -aq -f "name=$GLOBAL_ENGINE_NAME" 2>/dev/null) || true
     if [ -n "${_cid:-}" ]; then

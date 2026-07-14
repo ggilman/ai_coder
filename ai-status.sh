@@ -12,7 +12,6 @@ source "$SCRIPT_DIR/libs/ai-coder-graphics.sh"
 
 # --- [ CONFIGURATION ] --------------------------------------------------------
 readonly BAR_WIDTH=35
-readonly HEADER_WIDTH=72
 readonly UPDATE_INTERVAL=2
 readonly HEALTH_TIMEOUT=5
 readonly ENGINE_NAME="ai-hub-engine"
@@ -129,10 +128,15 @@ main() {
                 temp=$(echo "$temp" | xargs)
                 pwr=$(echo "$pwr" | xargs)
 
-                # Validate data - skip if empty or zero
-                if [ -z "$m_total" ] || [ "$m_total" -le 0 ]; then
+                # Validate data - skip if empty or zero. Fields can read
+                # "[N/A]" on some GPUs; non-numeric values would crash the
+                # arithmetic below (and kill the dashboard under set -e).
+                case "$m_total" in ''|*[!0-9]*) continue ;; esac
+                if [ "$m_total" -le 0 ]; then
                     continue
                 fi
+                case "$m_used" in ''|*[!0-9]*) m_used=0 ;; esac
+                case "$util"   in ''|*[!0-9]*) util=0   ;; esac
 
                 # Calculate memory percentage
                 m_perc=$((m_used * 100 / m_total))

@@ -98,5 +98,5 @@ start_workbench() {
 }
 
 execute_tool() {
-    exec_in_container -e CLAUDE_CODE_SIMPLE=1 "${WORKBENCH_PREFIX}-${PROJECT_ID}" claude --bare
+    exec_in_container -e CLAUDE_CODE_SIMPLE=1 "$WORKBENCH" claude --bare
 }

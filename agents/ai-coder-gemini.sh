@@ -51,5 +51,5 @@ execute_tool() {
     exec_in_container \
         -e TERM=xterm-256color -e COLORTERM=truecolor \
         -e GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:4000 \
-        "${WORKBENCH_PREFIX}-${PROJECT_ID}" gemini --max_iterations 20
+        "$WORKBENCH" gemini --max_iterations 20
 }

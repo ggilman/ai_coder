@@ -27,20 +27,8 @@ RUN /opt/aider/bin/aider --version"
 configure_workbench() {
     # Docker runs as root so mounted dir files can become root-owned on the WSL host.
     ensure_host_dir_writable "$HOME/.aider-config"
-    # Only write gitconfig if we have identity — avoids baking in blank name/email
-    # Always write gitconfig — sets global autocrlf=input even without identity.
-    # Guards on name/email to avoid writing blank values.
-    cat > "$HOME/.aider-config/.gitconfig" <<EOF
-[core]
-    autocrlf = input
-EOF
-    if [ -n "${GIT_USER_NAME:-}" ] || [ -n "${GIT_USER_EMAIL:-}" ]; then
-        cat >> "$HOME/.aider-config/.gitconfig" <<EOF
-[user]
-    name = ${GIT_USER_NAME:-}
-    email = ${GIT_USER_EMAIL:-}
-EOF
-    fi
+    # Git identity + autocrlf come from ~/.gitconfig-container, which
+    # run_workbench mounts at /root/.gitconfig for every agent.
     # Always write the aider config so the API base URL stays current.
     # User customisations (model, flags) can be made in the file after first run
     # but the connection settings must match the current infrastructure.
@@ -61,7 +49,6 @@ start_workbench() {
     echo -e "${ICON_GEAR} Mapping Spoke for [$PROJECT_ID]..."
     run_workbench \
         -v "$(to_host_path "$HOME/.aider-config"):/root/.aider-config" \
-        -v "$(to_host_path "$HOME/.aider-config/.gitconfig"):/root/.gitconfig:ro" \
         -e OPENAI_API_BASE="http://$GLOBAL_ENGINE_NAME:8080/v1" \
         -e OPENAI_API_KEY="sk-local-bypass"
 }
@@ -69,5 +56,5 @@ start_workbench() {
 execute_tool() {
     exec_in_container \
         -e TERM=xterm-256color -e COLORTERM=truecolor \
-        "${WORKBENCH_PREFIX}-${PROJECT_ID}" /opt/aider/bin/aider --no-check-update --config /root/.aider-config/.aider.conf.yml
+        "$WORKBENCH" /opt/aider/bin/aider --no-check-update --config /root/.aider-config/.aider.conf.yml
 }

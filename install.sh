@@ -33,7 +33,13 @@ fi
 if [ -d "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
     echo -e "${YELLOW}⚠ Directory already exists and is not empty: ${CYAN}${INSTALL_DIR}${NC}"
     printf "  Overwrite? [y/N]: "
-    read -r _confirm
+    # Read from the terminal, not stdin — under `curl | bash` stdin is the
+    # script itself, and a plain `read` would consume the next script line.
+    if ! read -r _confirm 2>/dev/null < /dev/tty; then
+        echo -e "${RED}✘ No terminal available to confirm — aborting.${NC}"
+        echo -e "  Re-run with an empty/new directory, e.g.: ${CYAN}bash -s -- ~/ai-coder-new${NC}"
+        exit 1
+    fi
     case "${_confirm,,}" in
         y|yes) ;;
         *) echo -e "${NC}Aborted."; exit 0 ;;

@@ -7,7 +7,7 @@ This repository contains essential shell scripts for interacting with the AI Hub
 The environment uses a **Hub & Spoke** model:
 
 - **Hub**: Centralized infrastructure providing AI capabilities, including `ai-hub-engine` (local model execution via `llama.cpp`) and `ai-hub-proxy` (unified API via `litellm`).
-- **Spoke**: Individual workbench containers (`coder-<project-id>`) where your development and coding tasks occur.
+- **Spoke**: Individual workbench containers (`coder-<tool>-<project-id>`) where your development and coding tasks occur.
 
 ## Scripts
 
@@ -62,7 +62,7 @@ A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run
 **Commands:**
 | Command | Description |
 | --- | --- |
-| `spawn` | (or no argument) Launch the AI tool inside the active workbench container |
+| (no argument) | Launch the AI tool inside the active workbench container |
 | `--menu` | Reset model family **and** tool preferences; show both selection menus |
 | `--status` | Show the real-time GPU and engine status dashboard |
 | `--setup` | First-time and re-configuration wizard: alias, proxy, network isolation, GPU mode, git identity |
@@ -113,7 +113,8 @@ A rebuild (`./ai-coder --rebuild` followed by `./ai-coder`) is only needed when 
 | Change `config/ai-coder-model.conf` settings | No | Read at launch time |
 | Add a new model family config (`config/families/*.conf`) | No | Read at launch time |
 | Change GPU mode (`--setup`) | No | Passed as flags when the engine container starts |
-| Change proxy or network isolation (`--setup`) | No | Applied at container start time |\n| Change git identity (`--setup`) | **Yes** | Requires an `--rebuild` to bake into the image |
+| Change proxy or network isolation (`--setup`) | No | Applied at container start time |
+| Change git identity (`--setup`) | **Yes** | Requires an `--rebuild` to bake into the image |
 | Upgrade `BASE_IMAGE` in `ai-coder-core.sh` | **Yes** | The base layer must be pulled and rebuilt |
 | Change the Dockerfile template in `build_standard_image` | **Yes** | Modifies the image build instructions |
 | Change an agent's `configure_workbench` function | No | Config files are written to a host-mounted volume at launch |
@@ -280,11 +281,15 @@ The file is plain bash, so any valid shell syntax works. Variables set here are 
 
 Run this one-liner to download and install ai-coder (installs to `~/ai-coder` by default):
 
-```bash\ncurl -fsSL https://raw.githubusercontent.com/ggilman/ai_coder/release/install.sh | bash\n```
+```bash
+curl -fsSL https://raw.githubusercontent.com/ggilman/ai_coder/release/install.sh | bash
+```
 
 If you are behind a proxy, use the `-x` flag with `curl`:
 
-```bash\ncurl -x http://your-proxy:8080 -fsSL https://raw.githubusercontent.com/ggilman/ai_coder/release/install.sh | bash\n```
+```bash
+curl -x http://your-proxy:8080 -fsSL https://raw.githubusercontent.com/ggilman/ai_coder/release/install.sh | bash
+```
 
 To choose a different location, pass the path after `--`:
 
@@ -388,6 +393,7 @@ No internet connection is required on the target machine.
 - **Model Loading Issues**: Run `./ai-status.sh` to check GPU availability and VRAM.
 - **Tool call errors in Claude Code** (`missing parameter`): Claude Code requires llama.cpp's native Anthropic endpoint. The workbench connects directly to the engine at port 8080 (`/v1/messages`) to avoid format conversion errors.
 - **Connectivity Issues**: Ensure `DOWNLOAD_PROXY` is set correctly. The scripts use `getent`/`nslookup` to resolve proxy hostnames to IPs so Docker build containers can reach the proxy.
+  > ⚠️ **Security note**: When a proxy is configured, image builds disable TLS certificate verification for apt, pip, and npm (many corporate proxies re-sign TLS traffic with an internal CA the build containers don't trust). This means packages baked into workbench images are not certificate-verified while the proxy is set. Only use a proxy you trust, and leave the proxy setting empty on networks with direct internet access.
 - **Brave Search not working**: Ensure `BRAVE_API_KEY` is exported in your shell before running `./ai-coder`. Get a free key at [brave.com/search/api](https://brave.com/search/api).
 
 - **Shell Compatibility**: The scripts support both **WSL2** and **Git Bash** on Windows.

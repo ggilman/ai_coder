@@ -32,8 +32,10 @@ start_workbench() {
     local _wb_http_proxy="${DOWNLOAD_PROXY:-}"
     [ "${NETWORK_INTERNAL:-false}" = "true" ] && _wb_http_proxy=""
 
+    # Bind to localhost only — WEBUI_AUTH is disabled, so the UI must not be
+    # reachable from the LAN.
     docker run -d --name "$WORKBENCH" --network "$_wb_network" \
-        -p "${OPEN_WEBUI_HOST_PORT}:8080" \
+        -p "127.0.0.1:${OPEN_WEBUI_HOST_PORT}:8080" \
         -e "OPENAI_API_BASE_URL=http://${GLOBAL_ENGINE_NAME}:8080/v1" \
         -e "OPENAI_API_BASE_URLS=http://${GLOBAL_ENGINE_NAME}:8080/v1" \
         -e "OPENAI_API_KEY=sk-local-bypass" \
