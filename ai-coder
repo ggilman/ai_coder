@@ -250,6 +250,14 @@ download_model || {
 if [ -z "${MODEL_FILE:-}" ]; then
     echo -e "${RED}✘ Model detection failed — no model available${NC}"; exit 1
 fi
+# Fetch the speculative-decoding draft model when enabled for this family.
+# A failed draft download degrades gracefully to normal decoding.
+if spec_decode_enabled; then
+    download_draft_model || {
+        echo -e "${YELLOW}⚠ Draft model unavailable — speculative decoding disabled this session.${NC}"
+        MODEL_DRAFT_FILE=""
+    }
+fi
 ensure_git_identity
 build_image || { echo -e "${RED}✘ Image build failed${NC}"; exit 1; }
 
@@ -277,8 +285,11 @@ if $_engine_running; then
     _eng_expose=$(read_pref "$STATE_FILE" engine_expose "")
     _eng_net=$(read_pref    "$STATE_FILE" engine_net "")
     _eng_mvol=$(read_pref   "$STATE_FILE" engine_mvol "")
+    _eng_spec=$(read_pref   "$STATE_FILE" engine_spec "")
     _cur_expose=$(read_pref "$SETTINGS_FILE" expose_host_port no)
     _cur_mvol=$(read_pref   "$SETTINGS_FILE" model_volume "$MODEL_VOLUME_DEFAULT")
+    _cur_spec=no
+    spec_decode_enabled && [ -f "$MODEL_STORAGE_DIR/${MODEL_DRAFT_FILE:-}" ] && _cur_spec=yes
     if [ -n "$_eng_gpu" ] && [ "$_eng_gpu" != "${GPU_MODE:-multi}" ]; then
         echo -e "${YELLOW}◈ GPU mode changed (${_eng_gpu} → ${GPU_MODE:-multi}) — restarting engine...${NC}"
         _need_engine_restart=true
@@ -296,6 +307,9 @@ if $_engine_running; then
         _need_engine_restart=true
     elif [ -n "$_eng_mvol" ] && [ "$_eng_mvol" != "$_cur_mvol" ]; then
         echo -e "${YELLOW}◈ Model storage mode changed (${_eng_mvol} → ${_cur_mvol}) — restarting engine...${NC}"
+        _need_engine_restart=true
+    elif [ -n "$_eng_spec" ] && [ "$_eng_spec" != "$_cur_spec" ]; then
+        echo -e "${YELLOW}◈ Speculative decoding changed (${_eng_spec} → ${_cur_spec}) — restarting engine...${NC}"
         _need_engine_restart=true
     fi
 fi

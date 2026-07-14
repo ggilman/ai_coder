@@ -311,6 +311,28 @@ cmd_setup() {
             ;;
     esac
 
+    echo -e "\n${CYAN}Speculative decoding — speed up generation with a small draft model?${NC}"
+    echo -e "${DIM}  A tiny draft model proposes tokens the main model verifies in one pass —${NC}"
+    echo -e "${DIM}  typically 1.5-2x faster code generation. Costs ~1GB extra VRAM.${NC}"
+    echo -e "${DIM}  Applies only to model families that define a draft (currently Qwen3).${NC}"
+    _cur_spec=$(read_pref "$SETTINGS_FILE" spec_decode yes)
+    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_spec" "$NC"
+    echo -n "  Use speculative decoding? [Y/n]: "
+    read -r _spec_input
+    case "${_spec_input,,}" in
+        n|no)
+            write_pref "$SETTINGS_FILE" spec_decode no
+            echo -e "${DIM}  Speculative decoding disabled.${NC}"
+            ;;
+        y|yes)
+            write_pref "$SETTINGS_FILE" spec_decode yes
+            echo -e "${ICON_OK} Speculative decoding ${GREEN}enabled${NC} — draft downloads on next launch."
+            ;;
+        *)
+            printf "%s  Speculative decoding unchanged (%s)%s\n" "$DIM" "$_cur_spec" "$NC"
+            ;;
+    esac
+
     echo -e "\n${CYAN}Host port exposure — publish the engine on localhost:8080?${NC}"
     echo -e "${DIM}  Allows external applications (e.g. Open WebUI) to connect directly.${NC}"
     echo -e "${DIM}  Leave disabled if you only need the AI coding tools inside Docker.${NC}"

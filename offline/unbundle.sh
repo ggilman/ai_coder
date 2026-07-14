@@ -124,6 +124,20 @@ else
     echo "✔  Model installed."
 fi
 
+# Install any additional bundled models (e.g. the speculative-decoding draft).
+for _extra in "$MODELS_DIR"/*.gguf; do
+    [ -f "$_extra" ] || continue
+    _name=$(basename "$_extra")
+    [ "$_name" = "$MODEL_FILE" ] && continue
+    if [ -f "$MODEL_STORAGE_DIR/$_name" ]; then
+        echo "  $_name already installed — skipping."
+    else
+        echo "  Copying $_name..."
+        cp "$_extra" "$MODEL_STORAGE_DIR/$_name"
+        echo "✔  $_name installed."
+    fi
+done
+
 # --- [ Script install directory ] --------------------------------------------
 # Accepts Windows paths (C:\foo\bar), Git Bash (/c/foo/bar), or POSIX paths.
 normalize_path() {

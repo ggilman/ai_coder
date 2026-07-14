@@ -650,6 +650,46 @@ _download_file() {
     fi
 }
 
+# Verify a file's sha256 against an expected value. No-op when the expected
+# value is empty or sha256sum is unavailable. Removes the file on mismatch.
+_verify_sha256() {
+    local file="$1" expected="$2"
+    [ -n "$expected" ] || return 0
+    command -v sha256sum >/dev/null 2>&1 || return 0
+    echo -e "${ICON_GEAR} Verifying checksum..."
+    local actual; actual=$(sha256sum "$file" | cut -d' ' -f1)
+    if [ "$actual" != "$expected" ]; then
+        rm -f "$file"
+        echo -e "${RED}✘ Checksum mismatch — expected ${expected}, got ${actual}${NC}"
+        echo -e "${YELLOW}  The download may be corrupt or tampered with. Please retry.${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}✔ Checksum verified${NC}"
+}
+
+# True when speculative decoding should be used: the setting is on (default)
+# and the active model family defines a draft model.
+spec_decode_enabled() {
+    [ "$(read_pref "$SETTINGS_FILE" spec_decode yes)" = "yes" ] && [ -n "${MODEL_DRAFT_FILE:-}" ]
+}
+
+# Download the family's speculative-decoding draft model if missing.
+download_draft_model() {
+    local dest="$MODEL_STORAGE_DIR/$MODEL_DRAFT_FILE"
+    [ -f "$dest" ] && return 0
+    [ -n "${MODEL_DRAFT_URL:-}" ] || return 1
+    local part="${dest}.part"
+    rm -f "$part"
+    echo -e "${ICON_GEAR} Downloading draft model ${CYAN}${MODEL_DRAFT_FILE}${NC} ${DIM}(speculative decoding)...${NC}"
+    if _download_file "$MODEL_DRAFT_URL" "$part"; then
+        _verify_sha256 "$part" "${MODEL_DRAFT_SHA256:-}" || return 1
+        mv "$part" "$dest"
+    else
+        rm -f "$part"
+        return 1
+    fi
+}
+
 # Format a byte count as a human-readable size.
 # numfmt is not available in Git Bash — use awk for portability.
 _human_size() {
@@ -755,17 +795,7 @@ download_model() {
     # that looks like a complete model.
     if _download_file "$model_url" "$part_path"; then
         # Verify checksum when the family conf provides one (MODEL_<tier>_SHA256).
-        if [ -n "${model_sha:-}" ] && command -v sha256sum >/dev/null 2>&1; then
-            echo -e "${ICON_GEAR} Verifying checksum..."
-            local actual_sha; actual_sha=$(sha256sum "$part_path" | cut -d' ' -f1)
-            if [ "$actual_sha" != "$model_sha" ]; then
-                rm -f "$part_path"
-                echo -e "${RED}✘ Checksum mismatch — expected ${model_sha}, got ${actual_sha}${NC}"
-                echo -e "${YELLOW}  The download may be corrupt or tampered with. Please retry.${NC}"
-                return 1
-            fi
-            echo -e "${GREEN}✔ Checksum verified${NC}"
-        fi
+        _verify_sha256 "$part_path" "${model_sha:-}" || return 1
         mv "$part_path" "$model_path"
         echo -e "${GREEN}✔ Model downloaded successfully${NC}"
     else
@@ -798,10 +828,16 @@ detect_model() {
     # Reserve estimated KV-cache VRAM before picking a tier — a model that
     # fills the card leaves no room for the KV cache at the chosen context
     # size, causing OOM or RAM spill (which makes inference crawl).
+    # The speculative-decoding draft model occupies VRAM too when enabled.
     local kv_reserve; kv_reserve=$(_estimate_kv_reserve_gb)
-    EFFECTIVE_VRAM_GB=$(( VRAM_GB - kv_reserve ))
+    local draft_reserve=0 _draft_note=""
+    if spec_decode_enabled; then
+        draft_reserve="${MODEL_DRAFT_VRAM_GB:-1}"
+        _draft_note=" + ${draft_reserve}GB draft"
+    fi
+    EFFECTIVE_VRAM_GB=$(( VRAM_GB - kv_reserve - draft_reserve ))
     [ "$EFFECTIVE_VRAM_GB" -lt 0 ] && EFFECTIVE_VRAM_GB=0
-    echo -e "${ICON_GEAR} KV Cache Reserve: ${BOLD}~${kv_reserve}GB${NC} ${DIM}(${MODEL_CTX_LEVEL:-64k} ctx, ${MODEL_KV_TYPE:-q8_0})${NC} → ${BOLD}${EFFECTIVE_VRAM_GB}GB${NC} usable for model"
+    echo -e "${ICON_GEAR} VRAM Reserve: ${BOLD}~${kv_reserve}GB KV${NC} ${DIM}(${MODEL_CTX_LEVEL:-64k} ctx, ${MODEL_KV_TYPE:-q8_0})${_draft_note}${NC} → ${BOLD}${EFFECTIVE_VRAM_GB}GB${NC} usable for model"
 
     # Note the tier raw VRAM would have allowed, to hint when ctx costs a tier.
     select_model_for_vram "$VRAM_GB"
@@ -1086,48 +1122,80 @@ _resolve_engine_gpu_args() {
     fi
 }
 
-# Ensure the active model exists inside the fast-storage Docker volume.
+# Ensure the given models exist inside the fast-storage Docker volume.
+# Usage: ensure_model_in_volume <gguf-file> [more-gguf-files...]
 # On Windows hosts, bind mounts go through Docker Desktop's 9p bridge, making
 # the engine's model load (every cold start) several times slower than the
-# named volume, which lives on the Docker VM's native disk. The host copy in
-# MODEL_STORAGE_DIR remains the download cache and source of truth; this
-# copies it into the volume once per model (size-verified, resumable-safe via
-# a .part rename). Only the active model is kept in the volume so hidden VM
-# disk usage stays bounded — switching models re-syncs.
+# named volume, which lives on the Docker VM's native disk. The host copies in
+# MODEL_STORAGE_DIR remain the download cache and source of truth; this copies
+# them into the volume once per model (size-verified, interruption-safe via a
+# .part rename). Exactly the given files are kept in the volume — anything
+# else is pruned so hidden VM disk usage stays bounded.
 # Requires $LLAMA_IMAGE to be present (caller pulls it first).
 ensure_model_in_volume() {
-    local host_path="$MODEL_STORAGE_DIR/$MODEL_FILE"
-    [ -f "$host_path" ] || return 1
-    local host_sz; host_sz=$(stat -c%s "$host_path" 2>/dev/null || echo 0)
-    [ "$host_sz" -gt 0 ] || return 1
+    local files=("$@") f
+    [ "${#files[@]}" -gt 0 ] || return 1
+    for f in "${files[@]}"; do
+        [ -f "$MODEL_STORAGE_DIR/$f" ] || return 1
+    done
 
     docker volume create "$MODEL_VOLUME_NAME" >/dev/null 2>&1 || true
 
-    local vol_sz
-    vol_sz=$(docker run --rm --entrypoint /bin/sh -v "$MODEL_VOLUME_NAME:/vol" "$LLAMA_IMAGE" \
-        -c "stat -c%s '/vol/$MODEL_FILE' 2>/dev/null || echo 0" 2>/dev/null | tr -d '\r') || vol_sz=0
-    case "$vol_sz" in ''|*[!0-9]*) vol_sz=0 ;; esac
-    [ "$vol_sz" = "$host_sz" ] && return 0
+    # One container call lists current volume contents as "name size" lines.
+    local vol_listing
+    vol_listing=$(docker run --rm --entrypoint /bin/sh -v "$MODEL_VOLUME_NAME:/vol" "$LLAMA_IMAGE" \
+        -c 'for p in /vol/*.gguf; do [ -f "$p" ] && printf "%s %s\n" "${p##*/}" "$(stat -c%s "$p")"; done; true' \
+        2>/dev/null | tr -d '\r') || vol_listing=""
 
-    echo -e "${ICON_GEAR} Syncing model to fast storage volume ${DIM}(one-time per model)...${NC}"
+    local keep_expr="" sync_list="" total_sz=0 host_sz vol_sz
+    for f in "${files[@]}"; do
+        keep_expr+=" ! -name '$f'"
+        host_sz=$(stat -c%s "$MODEL_STORAGE_DIR/$f" 2>/dev/null || echo 0)
+        [ "$host_sz" -gt 0 ] || return 1
+        vol_sz=$(printf '%s\n' "$vol_listing" | awk -v n="$f" '$1==n{print $2}')
+        if [ "${vol_sz:-0}" != "$host_sz" ]; then
+            sync_list+=" $f"
+            total_sz=$(( total_sz + host_sz ))
+        fi
+    done
+
+    if [ -z "$sync_list" ]; then
+        # Nothing to copy — still prune files no longer wanted (e.g. a draft
+        # model after speculative decoding was turned off, or an old model).
+        docker run --rm --entrypoint /bin/sh -v "$MODEL_VOLUME_NAME:/vol" "$LLAMA_IMAGE" \
+            -c "find /vol -maxdepth 1 -name '*.gguf' $keep_expr -delete" >/dev/null 2>&1 || true
+        return 0
+    fi
+
+    echo -e "${ICON_GEAR} Syncing model(s) to fast storage volume ${DIM}(one-time per model)...${NC}"
     local _sync_name="ai-coder-model-sync"
     docker rm -f "$_sync_name" >/dev/null 2>&1 || true
-    # Prune other models first so the volume never holds more than one GGUF,
-    # then copy via .part so an interrupted sync never looks complete.
     docker run -d --name "$_sync_name" --entrypoint /bin/sh \
         -v "$MODEL_VOLUME_NAME:/vol" \
         -v "$(to_host_path "$MODEL_STORAGE_DIR"):/src:ro" \
         "$LLAMA_IMAGE" -c "
-            find /vol -maxdepth 1 -name '*.gguf' ! -name '$MODEL_FILE' -delete
-            rm -f '/vol/$MODEL_FILE.part' '/vol/$MODEL_FILE'
-            cp '/src/$MODEL_FILE' '/vol/$MODEL_FILE.part' && mv '/vol/$MODEL_FILE.part' '/vol/$MODEL_FILE'
+            find /vol -maxdepth 1 -name '*.gguf' $keep_expr -delete
+            for f in $sync_list; do
+                rm -f \"/vol/\$f.part\" \"/vol/\$f\"
+                cp \"/src/\$f\" \"/vol/\$f.part\" && mv \"/vol/\$f.part\" \"/vol/\$f\" || exit 1
+            done
         " >/dev/null || return 1
 
-    local human_total; human_total=$(_human_size "$host_sz")
+    local human_total; human_total=$(_human_size "$total_sz")
     while [ -n "$(docker ps -q -f name=^/${_sync_name}$ 2>/dev/null)" ]; do
-        local cur; cur=$(docker exec "$_sync_name" stat -c%s "/vol/$MODEL_FILE.part" 2>/dev/null | tr -d '\r') || cur=0
+        local cur
+        cur=$(docker exec "$_sync_name" /bin/sh -c "
+            tot=0
+            for f in $sync_list; do
+                if [ -f \"/vol/\$f\" ]; then s=\$(stat -c%s \"/vol/\$f\")
+                elif [ -f \"/vol/\$f.part\" ]; then s=\$(stat -c%s \"/vol/\$f.part\")
+                else s=0; fi
+                tot=\$((tot+s))
+            done
+            echo \$tot
+        " 2>/dev/null | tr -d '\r') || cur=0
         case "$cur" in ''|*[!0-9]*) cur=0 ;; esac
-        printf "\r  Synced: %s / %s (%d%%)   " "$(_human_size "$cur")" "$human_total" "$(( cur * 100 / host_sz ))"
+        printf "\r  Synced: %s / %s (%d%%)   " "$(_human_size "$cur")" "$human_total" "$(( cur * 100 / total_sz ))"
         sleep 3
     done
     printf "\r%-60s\r" ""
@@ -1138,7 +1206,7 @@ ensure_model_in_volume() {
         echo -e "${YELLOW}⚠ Model volume sync failed (exit ${_rc}).${NC}"
         return 1
     fi
-    echo -e "${ICON_OK} Model cached in fast storage volume."
+    echo -e "${ICON_OK} Model(s) cached in fast storage volume."
 }
 
 _start_litellm_proxy() {
@@ -1174,11 +1242,20 @@ start_hub_engine() {
         pull_image_if_missing "$LITELLM_IMAGE" || return 1
     fi
 
+    # Speculative decoding: a small draft model proposes tokens the main
+    # model verifies in one pass — typically 1.5-2x generation speed on code.
+    local _draft_args=() _vol_files=("$MODEL_FILE")
+    if spec_decode_enabled && [ -f "$MODEL_STORAGE_DIR/$MODEL_DRAFT_FILE" ]; then
+        _draft_args=(--model-draft "/models/$MODEL_DRAFT_FILE" -ngld 99)
+        _vol_files+=("$MODEL_DRAFT_FILE")
+        echo -e "${ICON_GEAR} Speculative decoding: ${GREEN}enabled${NC} ${DIM}(draft: ${MODEL_DRAFT_FILE})${NC}"
+    fi
+
     # Model mount: fast Docker volume when enabled (with fallback to the
     # direct host folder mount if the sync fails for any reason).
     local _models_src; _models_src="$(to_host_path "$MODEL_STORAGE_DIR")"
     if [ "$(read_pref "$SETTINGS_FILE" model_volume "$MODEL_VOLUME_DEFAULT")" = "yes" ]; then
-        if ensure_model_in_volume; then
+        if ensure_model_in_volume "${_vol_files[@]}"; then
             _models_src="$MODEL_VOLUME_NAME"
             echo -e "${ICON_GEAR} Model storage: ${GREEN}fast volume (${MODEL_VOLUME_NAME})${NC}"
         else
@@ -1236,7 +1313,7 @@ start_hub_engine() {
         -ctk "${MODEL_KV_TYPE:-q8_0}" -ctv "${MODEL_KV_TYPE:-q8_0}" \
         --batch-size 4096 --defrag-thold 0.1 \
         --cache-reuse "${MODEL_CACHE_REUSE:-256}" \
-        "${_think_args[@]}" "${_rp_args[@]}" "${_jinja_args[@]}" "${_ts_args[@]}" > /dev/null || {
+        "${_draft_args[@]}" "${_think_args[@]}" "${_rp_args[@]}" "${_jinja_args[@]}" "${_ts_args[@]}" > /dev/null || {
         echo -e "${RED}✘ Failed to start engine container${NC}"; return 1
     }
 
@@ -1246,6 +1323,8 @@ start_hub_engine() {
     write_pref "$STATE_FILE" engine_expose "$(read_pref "$SETTINGS_FILE" expose_host_port no)"
     write_pref "$STATE_FILE" engine_net "${NETWORK_INTERNAL:-false}"
     write_pref "$STATE_FILE" engine_mvol "$(read_pref "$SETTINGS_FILE" model_volume "$MODEL_VOLUME_DEFAULT")"
+    local _spec_state=no; [ "${#_draft_args[@]}" -gt 0 ] && _spec_state=yes
+    write_pref "$STATE_FILE" engine_spec "$_spec_state"
 
     if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
         _start_litellm_proxy "$_hub_net" || return 1

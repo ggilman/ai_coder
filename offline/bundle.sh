@@ -114,6 +114,23 @@ else
     echo -e "${ICON_OK} Model bundled."
 fi
 
+# Bundle the family's speculative-decoding draft model too, if it defines one,
+# so spec decoding works on the air-gapped target.
+if [ -n "${MODEL_DRAFT_FILE:-}" ]; then
+    _bundle_draft_path="$BUNDLE_MODELS_DIR/$MODEL_DRAFT_FILE"
+    if [ -f "$_bundle_draft_path" ]; then
+        echo -e "${ICON_OK} Draft model already in bundle. ${DIM}(skipped)${NC}"
+    else
+        if [ ! -f "$MODEL_STORAGE_DIR/$MODEL_DRAFT_FILE" ]; then
+            download_draft_model || echo -e "${YELLOW}⚠ Draft model download failed — bundling without it.${NC}"
+        fi
+        if [ -f "$MODEL_STORAGE_DIR/$MODEL_DRAFT_FILE" ]; then
+            cp "$MODEL_STORAGE_DIR/$MODEL_DRAFT_FILE" "$_bundle_draft_path"
+            echo -e "${ICON_OK} Draft model bundled (speculative decoding)."
+        fi
+    fi
+fi
+
 # --- [ Helper: save a Docker image to the bundle ] ----------------------------
 ensure_image_saved() {
     local image="$1" tag="$2"
