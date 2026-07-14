@@ -340,9 +340,14 @@ check_for_update() {
     if [ $(( now - last_check )) -lt $interval ]; then return; fi
 
     local remote_hash; remote_hash=$(_fetch_release_hash)
-    [ -z "$remote_hash" ] && return
+    if [ -z "$remote_hash" ]; then
+        # Fetch failed (offline / proxy down). Back off for an hour instead of
+        # paying the connection timeout on every launch, but don't wait the
+        # full daily interval so updates are noticed soon after coming online.
+        write_pref "$STATE_FILE" last_check "$(( now - interval + 3600 ))"
+        return
+    fi
 
-    # Write timestamp after successful network call so a failed check doesn't block retries
     write_pref "$STATE_FILE" last_check "$now"
 
     local local_hash; local_hash=$(read_pref "$STATE_FILE" release_hash "")
@@ -449,7 +454,7 @@ ensure_ctx_config() {
     local _level; _level=$(read_pref "$SETTINGS_FILE" ctx_level "")
     [ -n "$_level" ] && MODEL_CTX_LEVEL="$_level"
     # Re-derive MODEL_CTX_SIZE from the (possibly updated) level.
-    case "${MODEL_CTX_LEVEL:-128k}" in
+    case "${MODEL_CTX_LEVEL:-64k}" in
         4k)   MODEL_CTX_SIZE=4096   ;;
         8k)   MODEL_CTX_SIZE=8192   ;;
         16k)  MODEL_CTX_SIZE=16384  ;;
@@ -457,7 +462,7 @@ ensure_ctx_config() {
         64k)  MODEL_CTX_SIZE=65536  ;;
         128k) MODEL_CTX_SIZE=131072 ;;
         256k) MODEL_CTX_SIZE=262144 ;;
-        *)    MODEL_CTX_SIZE=131072 ;;
+        *)    MODEL_CTX_SIZE=65536  ;;
     esac
 }
 
@@ -1168,6 +1173,14 @@ start_hub_engine() {
         echo -e "${ICON_GEAR} Jinja template: ${YELLOW}disabled (model uses non-JSON tool call format)${NC}"
     fi
 
+    # Thinking mode: reasoning models (Qwen3) burn hundreds of tokens before
+    # every tool call. MODEL_THINKING=false disables it for snappier turns.
+    local _think_args=()
+    if [ "${MODEL_THINKING:-true}" = "false" ]; then
+        _think_args=(--reasoning-budget 0)
+        echo -e "${ICON_GEAR} Thinking mode: ${YELLOW}disabled (--reasoning-budget 0)${NC}"
+    fi
+
     # Repeat penalty is off unless a family conf sets MODEL_REPEAT_PENALTY —
     # it penalizes legitimately repeated tokens (indentation, identifiers,
     # JSON keys in tool calls) and is a known cause of malformed tool calls.
@@ -1189,7 +1202,7 @@ start_hub_engine() {
         -ctk "${MODEL_KV_TYPE:-q8_0}" -ctv "${MODEL_KV_TYPE:-q8_0}" \
         --batch-size 4096 --defrag-thold 0.1 \
         --cache-reuse "${MODEL_CACHE_REUSE:-256}" \
-        "${_rp_args[@]}" "${_jinja_args[@]}" "${_ts_args[@]}" > /dev/null || {
+        "${_think_args[@]}" "${_rp_args[@]}" "${_jinja_args[@]}" "${_ts_args[@]}" > /dev/null || {
         echo -e "${RED}✘ Failed to start engine container${NC}"; return 1
     }
 

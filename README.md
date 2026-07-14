@@ -49,11 +49,11 @@ Use this script to monitor the health of your environment.
 ```
 
 ### 2. Unified AI Coding Interface (`ai-coder`)
-A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run (or with `--menu`) it prompts you to select your preferred tool, which is saved to `~/.ai-coder-pref`. Subsequent runs launch the saved preference directly.
+A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run (or with `--menu`) it prompts you to select your preferred tool, which is saved to `user/state.conf` in the install directory. Subsequent runs launch the saved preference directly.
 
 - **Alias**: `ai` (configure with `--setup`)
-- **Model family selection**: On first run, prompts you to choose a model family (Gemma 4, Qwen3, Qwen3.6, Llama 4, Devstral 2, …). The choice is saved to `~/.ai-coder-family`. Within the chosen family, the best GGUF tier is selected automatically based on detected VRAM.
-- **Tool selection**: On first run, also prompts for your preferred coding tool (Claude, OpenCode, Aider, Gemini). Saved to `~/.ai-coder-pref`.
+- **Model family selection**: On first run, prompts you to choose a model family (Gemma 4, Qwen3, Qwen3.6, Llama 4, Devstral 2, …). Within the chosen family, the best GGUF tier is selected automatically based on detected VRAM.
+- **Tool selection**: On first run, also prompts for your preferred coding tool (Claude, OpenCode, Aider, Gemini). Both choices are saved to `user/state.conf`.
 - **Workspace mount**: Your project folder is mounted into the container as `/<foldername>` (e.g. `/my-project`), so the AI tool starts directly in your project directory.
 - **Auto-cleanup**: When you exit the tool, the workbench container is stopped. If it was the last active spoke, the Hub (engine + proxy) is also shut down automatically — unless the *keep hub warm* setting is enabled (`--setup`), which leaves the engine loaded so the next session starts in seconds. Stop a warm hub with `--clean`.
 - **Agent-free commands**: `--help`, `--status`, `--clean`, `--rebuild`, `--menu`, and `--setup` run immediately without requiring a tool to be selected.
@@ -89,7 +89,7 @@ When two or more NVIDIA GPUs are present, `--setup` will ask whether to use all 
 | **multi** (default) | All GPUs exposed to the engine container. `--tensor-split` is set automatically using each card's VRAM as proportional weights, so both compute *and* VRAM are distributed across GPUs. |
 | **single** | Only GPU 0 is exposed (`--gpus device=0`). VRAM tier selection is also scoped to GPU 0 so the right model size is chosen. Useful when secondary GPUs are used for display output or other workloads. |
 
-The choice is saved to `~/.ai-coder-gpuconf`. To change it, run `./ai-coder --setup` again.
+The choice is saved to `user/settings.conf`. To change it, run `./ai-coder --setup` again.
 
 You can also override the preference for a single session without changing the saved value:
 
@@ -276,22 +276,17 @@ echo "@some-org/server | key | cmd | args" >> packages/mcp-opencode.txt
 | Claude Code | Conversation history, sessions, telemetry | `~/.claude-config/` (directory) |
 | Claude Code | First-run preferences, accepted permissions, settings | `~/.claude-config.json` (file) |
 | OpenCode | Config, provider settings | `.ai-coder/opencode/opencode-config/` (per project) |
-| Aider | Git identity, aider config, input history | `~/.aider-config/` (directory) |
+| Aider | Aider config, input history | `~/.aider-config/` (directory) |
 | Gemini CLI | Auth tokens, session state, settings | `~/.gemini-config/` (directory) |
-| ai-coder | Saved tool preference | `~/.ai-coder-pref` |
-| ai-coder | Saved model family preference | `~/.ai-coder-family` |
-| ai-coder | GPU mode preference (single/multi) | `~/.ai-coder-gpuconf` |
-| ai-coder | Saved proxy URL | `~/.ai-coder-proxy` |
-| ai-coder | Network isolation preference | `~/.ai-coder-netconfig` |
-| ai-coder | Context window level (4k–256k) | `~/.ai-coder-ctxconfig` |
-| ai-coder | Host port exposure preference | `~/.ai-coder-portconfig` |
-| ai-coder | Setup completion sentinel | `~/.ai-coder-setup` |
-| ai-coder | Installed release hash (used for update checks) | `~/.ai-coder-release-hash` |
-| ai-coder | Last update-check timestamp | `~/.ai-coder-update-check` |
-| ai-coder | Git identity (name + email) | `~/.ai-coder-gitconfig` |
+| ai-coder | **All settings** — proxy, isolation, GPU mode, context level, MCP extras, keep-hub, model volume, port exposure, git identity | `<install-dir>/user/settings.conf` |
+| ai-coder | **Runtime state** — tool + family preference, update-check hash/timestamp, running-engine settings | `<install-dir>/user/state.conf` |
+| ai-coder | Setup completion sentinel | `<install-dir>/user/.setup-done` |
+| ai-coder | Git identity mounted into containers as `/root/.gitconfig` | `~/.gitconfig-container` |
+| ai-coder | Downloaded GGUF models (download cache) | `~/ai-models/` (Windows home on WSL/Git Bash) |
+| ai-coder | Active model fast-storage cache | Docker volume `ai-coder-models` |
 | ai-coder | **Session env vars** (API keys, secrets) | `~/.ai-coder-env` (WSL: Windows home) |
 
-All paths are volume-mounted into the workbench container, so settings survive container restarts without rebuilding the image. The `~/.claude-config.json` file is pre-created with `{}` on first launch if it does not already exist.
+Agent config paths are volume-mounted into the workbench container, so settings survive container restarts without rebuilding the image. The `~/.claude-config.json` file is pre-created on first launch if it does not already exist. The `user/` directory lives inside the install directory and is preserved across `--update`.
 
 ### Session environment file (`~/.ai-coder-env`)
 
@@ -365,7 +360,7 @@ ai-coder also checks for updates automatically once per day on launch and prints
 2. **Proxy** — enter an HTTP proxy URL, or leave blank for none.
 3. **Network isolation** — optionally block all internet access from containers.
 4. **GPU mode** — only shown when 2+ GPUs are detected; choose multi (all GPUs) or single.
-5. **Context window level** — how many tokens of context the model retains (4k–256k, default 128k). Higher values use more VRAM and slow responses.
+5. **Context window level** — how many tokens of context the model retains (4k–256k, default 64k). Higher values use more VRAM and slow responses; local coding agents rarely benefit past 64k.
 6. **MCP extras** — register the optional MCP servers (memory, thinking, conan, context7, brave-search, github, fetch, time) with each agent. Off by default: fewer registered tools means faster prompts and better tool selection on small local models.
 7. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Uses idle VRAM; stop with `--clean`.
 8. **Fast model storage** — cache the active model in a Docker volume so engine cold starts load from the VM's native disk instead of the slow Windows filesystem bridge. Default on for WSL/Git Bash; see [Model Storage](#model-storage).

@@ -203,9 +203,9 @@ cmd_setup() {
     fi
 
     echo -e "\n${CYAN}Context window level — how many tokens of context should the model keep?${NC}"
-    echo -e "${DIM}  4k / 8k / 16k / 32k / 64k / 128k (default) / 256k${NC}"
+    echo -e "${DIM}  4k / 8k / 16k / 32k / 64k (default) / 128k / 256k${NC}"
     echo -e "${DIM}  Larger = more context, but higher VRAM usage and slower responses.${NC}"
-    _cur_ctx=$(read_pref "$SETTINGS_FILE" ctx_level 128k)
+    _cur_ctx=$(read_pref "$SETTINGS_FILE" ctx_level 64k)
     printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_ctx" "$NC"
     echo -n "  Context level [${_cur_ctx}]: "
     read -r _ctx_input
