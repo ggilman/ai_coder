@@ -1470,9 +1470,30 @@ schedule_hub_idle_stop() {
 # Launch an Open WebUI container connected to the hub engine.
 # Shared by the standalone webui agent (agents/ai-coder-webui.sh) and the
 # sidecar started when webui_pref=yes.
-# Usage: run_open_webui_container <container-name>
+# Usage: run_open_webui_container <container-name> [quiet]
+# "quiet" disables Open WebUI's background task generations (title, tags,
+# follow-ups, typing autocomplete): the engine runs with a single inference
+# slot, and these fire several hidden completions per chat message that
+# starve a concurrently running coding agent. The standalone webui agent
+# omits it — with no agent competing for the slot they are harmless and
+# useful.
 run_open_webui_container() {
-    local _name="$1"
+    local _name="$1" _mode="${2:-}"
+
+    # Config is env-driven per boot (ENABLE_PERSISTENT_CONFIG=False) rather
+    # than baked into the shared open-webui data volume on first boot — the
+    # sidecar and standalone variants share that volume, so persisted config
+    # from one mode would silently override the other's env settings.
+    local _task_envs=(-e "ENABLE_PERSISTENT_CONFIG=False")
+    if [ "$_mode" = "quiet" ]; then
+        _task_envs+=(
+            -e "ENABLE_TITLE_GENERATION=False"
+            -e "ENABLE_TAGS_GENERATION=False"
+            -e "ENABLE_FOLLOW_UP_GENERATION=False"
+            -e "ENABLE_AUTOCOMPLETE_GENERATION=False"
+            -e "ENABLE_RETRIEVAL_QUERY_GENERATION=False"
+        )
+    fi
 
     if ! docker image inspect "$OPEN_WEBUI_IMAGE" >/dev/null 2>&1; then
         echo -e "${CYAN}  Pulling $OPEN_WEBUI_IMAGE ...${NC}"
@@ -1499,6 +1520,7 @@ run_open_webui_container() {
         -e "ENABLE_OPENAI_API=True" \
         -e "ENABLE_OLLAMA_API=False" \
         -e "WEBUI_AUTH=False" \
+        "${_task_envs[@]}" \
         -e "http_proxy=${_wb_http_proxy}" \
         -e "https_proxy=${_wb_http_proxy}" \
         -e "HTTP_PROXY=${_wb_http_proxy}" \
@@ -1518,7 +1540,7 @@ start_webui_sidecar() {
     fi
     docker rm "$GLOBAL_WEBUI_NAME" 2>/dev/null || true
     echo -e "${ICON_GEAR} Starting Open WebUI..."
-    if run_open_webui_container "$GLOBAL_WEBUI_NAME"; then
+    if run_open_webui_container "$GLOBAL_WEBUI_NAME" quiet; then
         echo -e "${ICON_OK} Open WebUI available at ${CYAN}http://localhost:${OPEN_WEBUI_HOST_PORT}${NC}"
     else
         echo -e "${YELLOW}⚠ Open WebUI failed to start — continuing without it.${NC}"
