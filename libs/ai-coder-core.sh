@@ -1183,8 +1183,8 @@ _resolve_engine_gpu_args() {
 # named volume, which lives on the Docker VM's native disk. The host copies in
 # MODEL_STORAGE_DIR remain the download cache and source of truth; this copies
 # them into the volume once per model (size-verified, interruption-safe via a
-# .part rename). Exactly the given files are kept in the volume — anything
-# else is pruned so hidden VM disk usage stays bounded.
+# .part rename). Previously synced models are retained in the volume so
+# switching family or tier back is instant; remove the volume to reclaim disk.
 # Requires $LLAMA_IMAGE to be present (caller pulls it first).
 ensure_model_in_volume() {
     local files=("$@") f

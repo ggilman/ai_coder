@@ -132,7 +132,7 @@ Models are downloaded once to `~/ai-models` on the host (Windows home on WSL/Git
 
 How it works:
 - On engine start, the active model is copied into the volume **once per model** (with a progress ticker). Later starts skip the copy after a quick size check.
-- Only the **active model** is kept in the volume — switching family or tier prunes the old one and syncs the new one, so hidden disk usage inside the Docker VM stays bounded at one model.
+- Previously synced models are **retained** in the volume — switching family or tier keeps the old models cached so switching back is instant. Note this hidden disk usage inside the Docker VM grows with each model you use; reclaim it by removing the volume (below).
 - If the sync fails for any reason, the engine falls back to the direct host folder mount automatically.
 - On native Linux the setting defaults to **off** (bind mounts are already fast).
 
@@ -174,6 +174,7 @@ A rebuild (`./ai-coder --rebuild` followed by `./ai-coder`) is only needed when 
 | Change GPU mode (`--setup`) | No | Passed as flags when the engine container starts |
 | Toggle fast model storage (`--setup`) | No | Engine restarts with the new mount on next launch |
 | Toggle speculative decoding (`--setup`) | No | Engine restarts with/without the draft model on next launch |
+| Toggle asymmetric KV cache (`--setup`) | No | Engine restarts with the new KV cache types on next launch |
 | Change proxy or network isolation (`--setup`) | No | Applied at container start time |
 | Change git identity (`--setup`) | **Yes** | Requires an `--rebuild` to bake into the image |
 | Upgrade `BASE_IMAGE` in `ai-coder-core.sh` | **Yes** | The base layer must be pulled and rebuilt |
@@ -318,8 +319,8 @@ echo "@some-org/server | key | cmd | args" >> packages/mcp-opencode.txt
 | OpenCode | Config, provider settings | `.ai-coder/opencode/opencode-config/` (per project) |
 | Aider | Aider config, input history | `~/.aider-config/` (directory) |
 | Gemini CLI | Auth tokens, session state, settings | `~/.gemini-config/` (directory) |
-| ai-coder | **All settings** — proxy, isolation, GPU mode, context level, MCP extras, keep-hub, model volume, speculative decoding, port exposure, git identity | `<install-dir>/user/settings.conf` |
-| ai-coder | **Runtime state** — tool + family preference, update-check hash/timestamp, running-engine settings | `<install-dir>/user/state.conf` |
+| ai-coder | **All settings** — proxy, isolation, GPU mode, context level, asymmetric KV cache, MCP extras, keep-hub, model volume, speculative decoding, port exposure, git identity | `<install-dir>/user/settings.conf` |
+| ai-coder | **Runtime state** — tool + family + Open WebUI preferences, update-check hash/timestamp, running-engine settings | `<install-dir>/user/state.conf` |
 | ai-coder | Setup completion sentinel | `<install-dir>/user/.setup-done` |
 | ai-coder | Git identity mounted into containers as `/root/.gitconfig` | `~/.gitconfig-container` |
 | ai-coder | Downloaded GGUF models (download cache) | `~/ai-models/` (Windows home on WSL/Git Bash) |
@@ -390,7 +391,7 @@ ai-coder also checks for updates automatically once per day on launch and prints
 
 ### Setup (`--setup`)
 
-**`--setup` must be run once before first launch.** It walks through up to eleven configuration steps:
+**`--setup` must be run once before first launch.** It walks through up to twelve configuration steps:
 
 ```bash
 ./ai-coder --setup
@@ -401,12 +402,13 @@ ai-coder also checks for updates automatically once per day on launch and prints
 3. **Network isolation** — optionally block all internet access from containers.
 4. **GPU mode** — only shown when 2+ GPUs are detected; choose multi (all GPUs) or single.
 5. **Context window level** — how many tokens of context the model retains (4k–256k, default 64k). Higher values use more VRAM and slow responses; local coding agents rarely benefit past 64k.
-6. **MCP extras** — register the optional MCP servers (memory, thinking, conan, context7, brave-search, github, fetch, time) with each agent. Off by default: fewer registered tools means faster prompts and better tool selection on small local models.
-7. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Also asks for an idle timeout (default 60 min, `0` = forever) after which the warm hub stops itself to release VRAM; stop it immediately with `--clean`.
-8. **Fast model storage** — cache the active model in a Docker volume so engine cold starts load from the VM's native disk instead of the slow Windows filesystem bridge. Default on for WSL/Git Bash; see [Model Storage](#model-storage).
-9. **Speculative decoding** — use a small draft model to speed up generation, typically 1.5–2× on code. Default on; costs ~1 GB VRAM and applies only to families that define a draft (currently Qwen3). See [Speculative Decoding](#speculative-decoding).
-10. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps (e.g. Open WebUI) can connect directly.
-11. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
+6. **Asymmetric KV cache** — quantize the value cache to `q4_0` while keys keep the family KV type, cutting the KV VRAM reserve ~25%. Off by default; useful on low-VRAM cards or large context levels, at a small long-context quality cost.
+7. **MCP extras** — register the optional MCP servers (memory, thinking, conan, context7, brave-search, github, fetch, time) with each agent. Off by default: fewer registered tools means faster prompts and better tool selection on small local models.
+8. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Also asks for an idle timeout (default 60 min, `0` = forever) after which the warm hub stops itself to release VRAM; stop it immediately with `--clean`.
+9. **Fast model storage** — cache models in a Docker volume so engine cold starts load from the VM's native disk instead of the slow Windows filesystem bridge. Default on for WSL/Git Bash; see [Model Storage](#model-storage).
+10. **Speculative decoding** — use a small draft model to speed up generation, typically 1.5–2× on code. Default on; costs ~1 GB VRAM and applies only to families that define a draft (currently Qwen3). See [Speculative Decoding](#speculative-decoding).
+11. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
+12. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
 
 After completing setup, if you added the alias:
 
