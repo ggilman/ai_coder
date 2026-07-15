@@ -241,6 +241,7 @@ check_docker || { echo -e "${RED}✘ Docker initialization failed${NC}"; exit 1;
 write_pref "$STATE_FILE" hub_idle_since ""
 ensure_gpu_config
 ensure_ctx_config
+ensure_kv_config
 detect_model || true
 download_model || {
     echo -e "${RED}✘ Model download failed${NC}"
@@ -282,6 +283,7 @@ if $_engine_running; then
     _eng_gpu=$(read_pref    "$STATE_FILE" engine_gpu_mode "")
     _eng_model=$(read_pref  "$STATE_FILE" engine_model "")
     _eng_ctx=$(read_pref    "$STATE_FILE" engine_ctx "")
+    _eng_kv=$(read_pref     "$STATE_FILE" engine_kv "")
     _eng_expose=$(read_pref "$STATE_FILE" engine_expose "")
     _eng_net=$(read_pref    "$STATE_FILE" engine_net "")
     _eng_mvol=$(read_pref   "$STATE_FILE" engine_mvol "")
@@ -298,6 +300,9 @@ if $_engine_running; then
         _need_engine_restart=true
     elif [ -n "$_eng_ctx" ] && [ "$_eng_ctx" != "${MODEL_CTX_SIZE:-}" ]; then
         echo -e "${YELLOW}◈ Context size changed (${_eng_ctx} → ${MODEL_CTX_SIZE:-}) — restarting engine...${NC}"
+        _need_engine_restart=true
+    elif [ -n "$_eng_kv" ] && [ "$_eng_kv" != "$(kv_type_label)" ]; then
+        echo -e "${YELLOW}◈ KV cache type changed (${_eng_kv} → $(kv_type_label)) — restarting engine...${NC}"
         _need_engine_restart=true
     elif [ -n "$_eng_expose" ] && [ "$_eng_expose" != "$_cur_expose" ]; then
         echo -e "${YELLOW}◈ Host port exposure changed (${_eng_expose} → ${_cur_expose}) — restarting engine...${NC}"

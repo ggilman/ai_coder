@@ -56,7 +56,8 @@ Each family configuration file in `config/families/` defines an ordered candidat
 
 **Family Defaults:**
 - `MODEL_FAMILY`: Display name in the selection menu.
-- `MODEL_KV_TYPE`: KV cache quantization (e.g., `q8_0`, `q4_0`).
+- `MODEL_KV_TYPE`: KV cache quantization (e.g., `q8_0`, `q4_0`). Used for both K and V unless split.
+- `MODEL_KV_TYPE_V`: V-cache quantization. Unset by default — follows the *asymmetric KV cache* setup option (`--setup`, off by default), which drops V to `q4_0` while K keeps `MODEL_KV_TYPE`, cutting the KV VRAM reserve ~25% on low-VRAM cards. Set explicitly to pin it.
 - `MODEL_JINJA`: Enable model's built-in Jinja template.
 - `MODEL_THINKING`: Toggle reasoning tokens (e.g., for Qwen3 family).
 

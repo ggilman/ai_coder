@@ -226,6 +226,29 @@ cmd_setup() {
             ;;
     esac
 
+    echo -e "\n${CYAN}Asymmetric KV cache — quantize the value cache to q4_0 to save VRAM?${NC}"
+    echo -e "${DIM}  Keys stay at the family's KV type (usually q8_0) for quality; values drop${NC}"
+    echo -e "${DIM}  to q4_0, cutting the KV-cache VRAM reserve by ~25%. Useful on low-VRAM${NC}"
+    echo -e "${DIM}  cards or large context levels — it can unlock a bigger model tier — at a${NC}"
+    echo -e "${DIM}  small quality cost on long-context recall.${NC}"
+    _cur_kva=$(read_pref "$SETTINGS_FILE" kv_asym no)
+    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_kva" "$NC"
+    echo -n "  Enable asymmetric KV cache? [y/N]: "
+    read -r _kva_input
+    case "${_kva_input,,}" in
+        y|yes)
+            write_pref "$SETTINGS_FILE" kv_asym yes
+            echo -e "${ICON_OK} Asymmetric KV cache ${GREEN}enabled${NC} — applied on next engine start."
+            ;;
+        n|no)
+            write_pref "$SETTINGS_FILE" kv_asym no
+            echo -e "${DIM}  Asymmetric KV cache disabled — K and V both use the family KV type.${NC}"
+            ;;
+        *)
+            printf "%s  Asymmetric KV cache unchanged (%s)%s\n" "$DIM" "$_cur_kva" "$NC"
+            ;;
+    esac
+
     echo -e "\n${CYAN}MCP extras — register the optional MCP servers with each agent?${NC}"
     echo -e "${DIM}  Extras: memory, sequential-thinking, conan, context7, brave-search, github, fetch, time.${NC}"
     echo -e "${DIM}  Every registered server adds tool definitions to the model's context on every${NC}"
