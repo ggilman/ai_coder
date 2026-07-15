@@ -863,7 +863,7 @@ detect_model() {
         echo -e "${RED}✘ nvidia-smi failed${NC}"; return 1
     }
 
-    local total_vram=0 gpu_idx=0
+    local total_vram=0 gpu_idx=0 gpus_used=0
     for v in $vram_list; do
         case "$v" in *[!0-9]*) gpu_idx=$((gpu_idx + 1)); continue ;; esac
         # In single-GPU mode only count VRAM from GPU 0 so the tier selection
@@ -872,6 +872,7 @@ detect_model() {
             gpu_idx=$((gpu_idx + 1)); continue
         fi
         total_vram=$((total_vram + v))
+        gpus_used=$((gpus_used + 1))
         gpu_idx=$((gpu_idx + 1))
     done
     VRAM_GB=$((total_vram / 1024))
@@ -881,16 +882,19 @@ detect_model() {
     # Reserve estimated KV-cache VRAM before picking a tier — a model that
     # fills the card leaves no room for the KV cache at the chosen context
     # size, causing OOM or RAM spill (which makes inference crawl).
-    # The speculative-decoding draft model occupies VRAM too when enabled.
+    # The speculative-decoding draft model occupies VRAM too when enabled,
+    # and each GPU loses a fixed overhead to CUDA context, compute buffers,
+    # and desktop/display usage (see MODEL_VRAM_OVERHEAD_GB).
     local kv_reserve; kv_reserve=$(_estimate_kv_reserve_gb)
     local draft_reserve=0 _draft_note=""
     if spec_decode_enabled; then
         draft_reserve="${MODEL_DRAFT_VRAM_GB:-1}"
         _draft_note=" + ${draft_reserve}GB draft"
     fi
-    EFFECTIVE_VRAM_GB=$(( VRAM_GB - kv_reserve - draft_reserve ))
+    local overhead_reserve=$(( ${MODEL_VRAM_OVERHEAD_GB:-2} * gpus_used ))
+    EFFECTIVE_VRAM_GB=$(( VRAM_GB - kv_reserve - draft_reserve - overhead_reserve ))
     [ "$EFFECTIVE_VRAM_GB" -lt 0 ] && EFFECTIVE_VRAM_GB=0
-    echo -e "${ICON_GEAR} VRAM Reserve: ${BOLD}~${kv_reserve}GB KV${NC} ${DIM}(${MODEL_CTX_LEVEL:-64k} ctx, $(kv_type_label))${_draft_note}${NC} → ${BOLD}${EFFECTIVE_VRAM_GB}GB${NC} usable for model"
+    echo -e "${ICON_GEAR} VRAM Reserve: ${BOLD}~${kv_reserve}GB KV${NC} ${DIM}(${MODEL_CTX_LEVEL:-64k} ctx, $(kv_type_label))${_draft_note} + ${overhead_reserve}GB overhead (${gpus_used} GPU)${NC} → ${BOLD}${EFFECTIVE_VRAM_GB}GB${NC} usable for model"
 
     # Record which model raw VRAM (no overhead) would allow, to detect when
     # the context/draft reserve causes a step down to a smaller model.

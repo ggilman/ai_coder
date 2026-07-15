@@ -56,19 +56,37 @@ get_gpu_stats() {
         --format=csv,noheader,nounits 2>/dev/null
 }
 
-# Checks engine slot status via curl (empty string on failure)
+# Checks engine health via curl (empty string on failure)
 # WSL2 workaround: docker exec output is lost when captured via $() command
 # substitution, and 'timeout' wrapping docker exec also drops output.
 # We use a fixed temp file and curl's --max-time instead of the timeout binary.
+#
+# Online/offline is decided by /health, which llama.cpp answers immediately
+# even while crunching a prompt. /slots must NOT be used for this: it is
+# queued as an internal task the engine only services between decode batches,
+# so under load it can take 30+ seconds — reading it as "offline" exactly
+# when the engine is busiest. Slot detail is fetched separately, best-effort.
 _ENGINE_TMP="/tmp/ai_status_engine_$$"
+_SLOTS_TMP="/tmp/ai_status_slots_$$"
+readonly SLOTS_TIMEOUT=2
 
 get_engine_health() {
     # set -o pipefail (active globally) causes docker exec redirects to drop output.
     # Disable pipefail locally for this call only.
     local _old_opts; _old_opts=$(set +o | grep pipefail)
     set +o pipefail
-    docker exec "$ENGINE_NAME" curl -s --max-time "$HEALTH_TIMEOUT" http://localhost:8080/slots \
+    docker exec "$ENGINE_NAME" curl -s --max-time "$HEALTH_TIMEOUT" http://localhost:8080/health \
         > "$_ENGINE_TMP" 2>/dev/null || true
+    eval "$_old_opts"
+}
+
+# Fetches slot detail (short timeout — may legitimately fail while the engine
+# is processing; callers must degrade gracefully, not report offline).
+get_engine_slots() {
+    local _old_opts; _old_opts=$(set +o | grep pipefail)
+    set +o pipefail
+    docker exec "$ENGINE_NAME" curl -s --max-time "$SLOTS_TIMEOUT" http://localhost:8080/slots \
+        > "$_SLOTS_TMP" 2>/dev/null || true
     eval "$_old_opts"
 }
 
@@ -180,14 +198,24 @@ main() {
 
         # Display engine health
         get_engine_health
-        slots_raw=$(cat "$_ENGINE_TMP" 2>/dev/null || true)
+        health_raw=$(cat "$_ENGINE_TMP" 2>/dev/null || true)
         rm -f "$_ENGINE_TMP"
-        if [ -n "$slots_raw" ]; then
-            total_slots=$(echo "$slots_raw" | { grep -o '"id"' || true; } | wc -l | xargs)
-            active_slots=$(echo "$slots_raw" | { grep -o '"is_processing":true' || true; } | wc -l | xargs)
+        if echo "$health_raw" | grep -q '"ok"'; then
+            # Engine is up. Slot detail is best-effort: /slots stalls while a
+            # prompt is being processed, which just means "busy", not offline.
+            get_engine_slots
+            slots_raw=$(cat "$_SLOTS_TMP" 2>/dev/null || true)
+            rm -f "$_SLOTS_TMP"
+            if [ -n "$slots_raw" ]; then
+                total_slots=$(echo "$slots_raw" | { grep -o '"id"' || true; } | wc -l | xargs)
+                active_slots=$(echo "$slots_raw" | { grep -o '"is_processing":true' || true; } | wc -l | xargs)
+                slot_info="${total_slots} slot(s) | ${active_slots} active"
+            else
+                slot_info="${YELLOW}busy processing${NC}${BOLD}"
+            fi
             model_name=$(get_model_name)
 
-            health_text="${BOLD}ENGINE HUB: ${GREEN}● Online${NC}${BOLD} | ${total_slots} slot(s) | ${active_slots} active${NC}"
+            health_text="${BOLD}ENGINE HUB: ${GREEN}● Online${NC}${BOLD} | ${slot_info}${NC}"
             health_len=$(get_visible_length "$health_text")
             health_pad=$((70 - health_len))
             [ "$health_pad" -lt 0 ] && health_pad=0
@@ -216,7 +244,13 @@ main() {
             [ "$net_pad" -lt 0 ] && net_pad=0
             printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$net_text" "$net_pad" "" "$CYAN" "$NC"
         else
-            health_text="${BOLD}ENGINE HUB: ${RED}● Offline${NC}"
+            # Non-empty /health without "ok" means the server is up but the
+            # model is still loading; empty means unreachable.
+            if [ -n "$health_raw" ]; then
+                health_text="${BOLD}ENGINE HUB: ${YELLOW}● Loading model...${NC}"
+            else
+                health_text="${BOLD}ENGINE HUB: ${RED}● Offline${NC}"
+            fi
             health_len=$(get_visible_length "$health_text")
             health_pad=$((70 - health_len))
             [ "$health_pad" -lt 0 ] && health_pad=0
