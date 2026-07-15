@@ -80,6 +80,7 @@ A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run
 - **Alias**: `ai` (configure with `--setup`)
 - **Model family selection**: On first run, prompts you to choose a model family (Gemma 4, Qwen3, Qwen3.6, Llama 4, Devstral 2, …). Within the chosen family, the best GGUF tier is selected automatically from detected VRAM **minus an estimated KV-cache reserve** for your chosen context level — so model + context actually fit together. If the reserve costs you a tier, the launcher says so; choose a smaller context level in `--setup` to unlock the bigger model.
 - **Tool selection**: On first run, also prompts for your preferred coding tool (Claude, OpenCode, Aider, Gemini). Both choices are saved to `user/state.conf`.
+- **Open WebUI sidecar**: If host port exposure is enabled in `--setup`, a third question asks whether to also start Open WebUI (`http://localhost:3000`) alongside your coding agent, so you can chat with the same local model while you code. The answer is saved like the other preferences and re-asked via `--menu`. It shuts down together with the Hub.
 - **Workspace mount**: Your project folder is mounted into the container as `/<foldername>` (e.g. `/my-project`), so the AI tool starts directly in your project directory.
 - **Auto-cleanup**: When you exit the tool, the workbench container is stopped. If it was the last active spoke, the Hub (engine + proxy) is also shut down automatically — unless the *keep hub warm* setting is enabled (`--setup`), which leaves the engine loaded so the next session starts in seconds. A warm hub auto-stops after a configurable idle timeout (default 60 min, `0` = never) to release GPU VRAM; stop it immediately with `--clean`.
 - **Agent-free commands**: `--help`, `--status`, `--clean`, `--rebuild`, `--menu`, and `--setup` run immediately without requiring a tool to be selected.
@@ -89,7 +90,7 @@ A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run
 | Command | Description |
 | --- | --- |
 | (no argument) | Launch the AI tool inside the active workbench container |
-| `--menu` | Reset model family **and** tool preferences; show both selection menus |
+| `--menu` | Reset model family, tool **and** Open WebUI preferences; show the selection menus again |
 | `--status` | Show the real-time GPU and engine status dashboard |
 | `--setup` | First-time and re-configuration wizard: alias, proxy, network isolation, GPU mode, git identity |
 | `--update` | Download and install the latest release from GitHub |

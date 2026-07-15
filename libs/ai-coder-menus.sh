@@ -76,3 +76,28 @@ show_menu() {
     IFS=$'\n' pairs=($(printf '%s\n' "${pairs[@]}" | sort)); unset IFS
     _run_selection_menu "Welcome to AI-Coder. Please select your preferred tool:" "$STATE_FILE" "tool_pref" "$current_key" "${pairs[@]}"
 }
+
+# ------------------------------------------------------------------------------
+# show_webui_prompt — ask whether to start Open WebUI alongside the agent.
+# Only offered when the engine port is exposed to the host (see --setup).
+# ------------------------------------------------------------------------------
+show_webui_prompt() {
+    local prev="${1:-}"
+    local def="n" hint="[y/N]"
+    if [ "$prev" = "yes" ]; then def="y"; hint="[Y/n]"; fi
+    echo -e "\n${CYAN}Start Open WebUI alongside your coding agent?${NC}"
+    echo -e "${DIM}  Chat with the same local model at http://localhost:${OPEN_WEBUI_HOST_PORT} while you code.${NC}"
+    echo -n "  Start Open WebUI? $hint: "
+    read -r _webui_input
+    [ -z "$_webui_input" ] && _webui_input="$def"
+    case "${_webui_input,,}" in
+        y|yes)
+            write_pref "$STATE_FILE" webui_pref yes
+            echo -e "${ICON_OK} Open WebUI will start with each session."
+            ;;
+        *)
+            write_pref "$STATE_FILE" webui_pref no
+            echo -e "${DIM}  Open WebUI will not be started.${NC}"
+            ;;
+    esac
+}

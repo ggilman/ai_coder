@@ -36,7 +36,7 @@ Commands:
   --fix-project      Fix line endings in the current project for AI editing (run from project folder)
   --clean            Stop and remove all containers
   --rebuild          Remove all workbench images to force a full rebuild on next run
-  --menu             Reset model family and tool preferences, show selection menus
+  --menu             Reset model family, tool and Open WebUI preferences, show selection menus
   --build-only       Build the workbench image then exit (no Hub or agent launch)
   --help             Show this message
 HELP
@@ -136,14 +136,16 @@ if [ -f "$AI_CODER_ENV_FILE" ]; then
     source "$AI_CODER_ENV_FILE"
 fi
 
-# Handle --menu flag: clears both family and tool preferences so both menus
-# are shown again on the next step of this run.
-_prev_family=""; _prev_tool=""
+# Handle --menu flag: clears the family, tool, and Open WebUI preferences so
+# all the selection questions are shown again on the next step of this run.
+_prev_family=""; _prev_tool=""; _prev_webui=""
 if [[ "${1:-}" == "--menu" ]]; then
     _prev_family=$(read_pref "$STATE_FILE" family_pref "")
     _prev_tool=$(read_pref   "$STATE_FILE" tool_pref   "")
+    _prev_webui=$(read_pref  "$STATE_FILE" webui_pref  "")
     write_pref "$STATE_FILE" family_pref ""
     write_pref "$STATE_FILE" tool_pref   ""
+    write_pref "$STATE_FILE" webui_pref  ""
     shift
 fi
 
@@ -179,6 +181,19 @@ if [ ! -f "$CHILD_SCRIPT" ]; then
     write_pref "$STATE_FILE" tool_pref ""
     exit 1
 fi
+
+# --- [ OPEN WEBUI SIDECAR SELECTION ] -----------------------------------------
+# Third question: offer to run Open WebUI alongside the coding agent. Only
+# asked when the engine port is exposed to the host (enable via --setup), and
+# skipped when Open WebUI itself is the selected tool. Left unanswered while
+# the port is closed, so it appears automatically once exposure is enabled.
+WEBUI_PREF=$(read_pref "$STATE_FILE" webui_pref "")
+if [ -z "$WEBUI_PREF" ] && [ "$TOOL_PREF" != "webui" ] && \
+   [ "$(read_pref "$SETTINGS_FILE" expose_host_port no)" = "yes" ]; then
+    show_webui_prompt "$_prev_webui"
+    WEBUI_PREF=$(read_pref "$STATE_FILE" webui_pref "")
+fi
+
 LOCAL_STACK_DIR="$(pwd)/.ai-coder/${TOOL_PREF}"
 
 source "$CHILD_SCRIPT"
@@ -383,6 +398,16 @@ else
         docker logs "$GLOBAL_ENGINE_NAME" 2>&1 | tail -20 | sed 's/^/    /'
     fi
     exit 1
+fi
+
+# Honour the Open WebUI sidecar choice now that the engine is ready. When the
+# preference is anything but yes, make sure a leftover sidecar isn't running.
+if [ "$TOOL_PREF" != "webui" ]; then
+    if [ "${WEBUI_PREF:-}" = "yes" ]; then
+        start_webui_sidecar
+    else
+        stop_webui_sidecar
+    fi
 fi
 
 echo -e "${ICON_GEAR} Attaching to workbench..."

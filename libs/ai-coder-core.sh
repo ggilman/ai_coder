@@ -21,6 +21,9 @@ if [ -z "$DOCKER_BIN" ]; then
 fi
 GLOBAL_ENGINE_NAME="ai-hub-engine"
 GLOBAL_PROXY_NAME="ai-hub-proxy"
+GLOBAL_WEBUI_NAME="ai-hub-webui"
+OPEN_WEBUI_IMAGE="ghcr.io/open-webui/open-webui:main"
+OPEN_WEBUI_HOST_PORT=3000
 MODEL_VOLUME_NAME="ai-coder-models"
 HUB_NETWORK="ai-engineering-net"
 HUB_ISOLATED_NET="ai-engineering-isolated"
@@ -1457,17 +1460,81 @@ schedule_hub_idle_stop() {
         cur=\$(grep '^hub_idle_since=' '$STATE_FILE' 2>/dev/null | cut -d= -f2-)
         [ \"\$cur\" = '$stamp' ] || exit 0
         [ -n \"\$(docker ps -q --filter 'name=^/${WORKBENCH_PREFIX}-' 2>/dev/null)\" ] && exit 0
-        docker stop '$GLOBAL_ENGINE_NAME' '$GLOBAL_PROXY_NAME' >/dev/null 2>&1
-        docker rm   '$GLOBAL_ENGINE_NAME' '$GLOBAL_PROXY_NAME' >/dev/null 2>&1
+        docker stop '$GLOBAL_ENGINE_NAME' '$GLOBAL_PROXY_NAME' '$GLOBAL_WEBUI_NAME' >/dev/null 2>&1
+        docker rm   '$GLOBAL_ENGINE_NAME' '$GLOBAL_PROXY_NAME' '$GLOBAL_WEBUI_NAME' >/dev/null 2>&1
         sed -i '/^hub_idle_since=/d' '$STATE_FILE' 2>/dev/null
     " >/dev/null 2>&1 &
     disown 2>/dev/null || true
 }
 
+# Launch an Open WebUI container connected to the hub engine.
+# Shared by the standalone webui agent (agents/ai-coder-webui.sh) and the
+# sidecar started when webui_pref=yes.
+# Usage: run_open_webui_container <container-name>
+run_open_webui_container() {
+    local _name="$1"
+
+    if ! docker image inspect "$OPEN_WEBUI_IMAGE" >/dev/null 2>&1; then
+        echo -e "${CYAN}  Pulling $OPEN_WEBUI_IMAGE ...${NC}"
+        docker pull "$OPEN_WEBUI_IMAGE" || {
+            echo -e "${RED}✘ Failed to pull Open WebUI image${NC}"
+            return 1
+        }
+    fi
+
+    local _wb_network="$HUB_NETWORK"
+    [ "${NETWORK_INTERNAL:-false}" = "true" ] && _wb_network="$HUB_ISOLATED_NET"
+
+    local _wb_http_proxy="${DOWNLOAD_PROXY:-}"
+    [ "${NETWORK_INTERNAL:-false}" = "true" ] && _wb_http_proxy=""
+
+    # Bind to localhost only — WEBUI_AUTH is disabled, so the UI must not be
+    # reachable from the LAN.
+    docker run -d --name "$_name" --network "$_wb_network" \
+        -p "127.0.0.1:${OPEN_WEBUI_HOST_PORT}:8080" \
+        -e "OPENAI_API_BASE_URL=http://${GLOBAL_ENGINE_NAME}:8080/v1" \
+        -e "OPENAI_API_BASE_URLS=http://${GLOBAL_ENGINE_NAME}:8080/v1" \
+        -e "OPENAI_API_KEY=sk-local-bypass" \
+        -e "OPENAI_API_KEYS=sk-local-bypass" \
+        -e "ENABLE_OPENAI_API=True" \
+        -e "ENABLE_OLLAMA_API=False" \
+        -e "WEBUI_AUTH=False" \
+        -e "http_proxy=${_wb_http_proxy}" \
+        -e "https_proxy=${_wb_http_proxy}" \
+        -e "HTTP_PROXY=${_wb_http_proxy}" \
+        -e "HTTPS_PROXY=${_wb_http_proxy}" \
+        -e "no_proxy=localhost,127.0.0.1,${GLOBAL_ENGINE_NAME}" \
+        -e "NO_PROXY=localhost,127.0.0.1,${GLOBAL_ENGINE_NAME}" \
+        -v "open-webui:/app/backend/data" \
+        "$OPEN_WEBUI_IMAGE" > /dev/null
+}
+
+# Start the global Open WebUI sidecar alongside the selected coding agent.
+# A failure degrades gracefully — the coding session continues without it.
+start_webui_sidecar() {
+    if [ -n "$(docker ps -q -f name=^/${GLOBAL_WEBUI_NAME}$ 2>/dev/null)" ]; then
+        echo -e "${ICON_OK} Open WebUI already running at ${CYAN}http://localhost:${OPEN_WEBUI_HOST_PORT}${NC}"
+        return 0
+    fi
+    docker rm "$GLOBAL_WEBUI_NAME" 2>/dev/null || true
+    echo -e "${ICON_GEAR} Starting Open WebUI..."
+    if run_open_webui_container "$GLOBAL_WEBUI_NAME"; then
+        echo -e "${ICON_OK} Open WebUI available at ${CYAN}http://localhost:${OPEN_WEBUI_HOST_PORT}${NC}"
+    else
+        echo -e "${YELLOW}⚠ Open WebUI failed to start — continuing without it.${NC}"
+    fi
+    return 0
+}
+
+stop_webui_sidecar() {
+    docker stop "$GLOBAL_WEBUI_NAME" 2>/dev/null || true
+    docker rm   "$GLOBAL_WEBUI_NAME" 2>/dev/null || true
+}
+
 stop_hub() {
     echo -e "${CYAN}◈ Shutting down Hub...${NC}"
-    docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
-    docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
+    docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME" 2>/dev/null || true
+    docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME" 2>/dev/null || true
     echo -e "${ICON_OK} Hub stopped."
 }
 
@@ -1476,9 +1543,9 @@ teardown() {
     local _running; _running=$(docker ps -q  --filter "name=^/${WORKBENCH_PREFIX}-" 2>/dev/null || true)
     local _all;     _all=$(docker ps -aq --filter "name=^/${WORKBENCH_PREFIX}-" 2>/dev/null || true)
     # shellcheck disable=SC2086
-    docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" $( [ -n "$_running" ] && echo "$_running") 2>/dev/null || true
+    docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME" $( [ -n "$_running" ] && echo "$_running") 2>/dev/null || true
     # shellcheck disable=SC2086
-    docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" $( [ -n "$_all" ]     && echo "$_all")     2>/dev/null || true
+    docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME" $( [ -n "$_all" ]     && echo "$_all")     2>/dev/null || true
     docker network rm "$HUB_NETWORK" "$HUB_ISOLATED_NET" 2>/dev/null || true
 }
 

@@ -370,6 +370,7 @@ cmd_setup() {
         y|yes)
             write_pref "$SETTINGS_FILE" expose_host_port yes
             echo -e "${ICON_OK} Engine will be published on ${CYAN}localhost:8080${NC}."
+            echo -e "${DIM}  Next launch will also offer to start Open WebUI alongside your agent.${NC}"
             ;;
         n|no)
             write_pref "$SETTINGS_FILE" expose_host_port no
