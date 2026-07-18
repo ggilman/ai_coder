@@ -254,6 +254,14 @@ fi
 check_docker || { echo -e "${RED}✘ Docker initialization failed${NC}"; exit 1; }
 # Mark the hub as in-use so any pending idle-stop watcher disarms.
 write_pref "$STATE_FILE" hub_idle_since ""
+# Surface (once) a thermal-guard trip from a previous run before starting again.
+_guard_trip=$(read_pref "$STATE_FILE" engine_guard_trip "")
+if [ -n "$_guard_trip" ]; then
+    echo -e "${RED}⚠ The GPU thermal guard stopped the engine on a previous run:${NC}"
+    echo -e "${RED}  ${_guard_trip}${NC}"
+    echo -e "${YELLOW}  Check cooling/dust/airflow before another long run (threshold: MODEL_GPU_MAX_TEMP_C).${NC}"
+    write_pref "$STATE_FILE" engine_guard_trip ""
+fi
 ensure_gpu_config
 ensure_ctx_config
 ensure_kv_config
@@ -299,6 +307,7 @@ if $_engine_running; then
     _eng_model=$(read_pref  "$STATE_FILE" engine_model "")
     _eng_ctx=$(read_pref    "$STATE_FILE" engine_ctx "")
     _eng_kv=$(read_pref     "$STATE_FILE" engine_kv "")
+    _eng_batch=$(read_pref  "$STATE_FILE" engine_batch "")
     _eng_expose=$(read_pref "$STATE_FILE" engine_expose "")
     _eng_net=$(read_pref    "$STATE_FILE" engine_net "")
     _eng_mvol=$(read_pref   "$STATE_FILE" engine_mvol "")
@@ -318,6 +327,9 @@ if $_engine_running; then
         _need_engine_restart=true
     elif [ -n "$_eng_kv" ] && [ "$_eng_kv" != "$(kv_type_label)" ]; then
         echo -e "${YELLOW}◈ KV cache type changed (${_eng_kv} → $(kv_type_label)) — restarting engine...${NC}"
+        _need_engine_restart=true
+    elif [ -n "$_eng_batch" ] && [ "$_eng_batch" != "${MODEL_BATCH_SIZE:-1024}/${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}" ]; then
+        echo -e "${YELLOW}◈ Batch size changed (${_eng_batch} → ${MODEL_BATCH_SIZE:-1024}/${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}) — restarting engine...${NC}"
         _need_engine_restart=true
     elif [ -n "$_eng_expose" ] && [ "$_eng_expose" != "$_cur_expose" ]; then
         echo -e "${YELLOW}◈ Host port exposure changed (${_eng_expose} → ${_cur_expose}) — restarting engine...${NC}"
@@ -359,7 +371,7 @@ proxy_ready=false
 
 while [ "$retry_count" -lt "$max_retries" ]; do
     # Bail early if the engine container has stopped (e.g. unsupported flag, missing model).
-    # --restart on-failure:3 retries transiently, but a clean exit means it won't come back.
+    # The engine runs with --restart no, so any exit means it won't come back.
     if ! docker ps -q -f "name=^/${GLOBAL_ENGINE_NAME}$" 2>/dev/null | grep -q .; then
         break
     fi
@@ -389,6 +401,9 @@ done
 
 if [ "$engine_ready" = "true" ] && [ "$proxy_ready" = "true" ]; then
     echo -e " ${GREEN}READY${NC}"
+    # llama.cpp can report ready while a GPU is silently oversubscribed
+    # (WDDM pages the overflow to system RAM) — check and warn before use.
+    warn_if_vram_oversubscribed
 else
     echo -e " ${RED}TIMEOUT${NC}"
     echo -e "${RED}✘ Engine/Proxy failed to initialize after ~${retry_count} seconds${NC}"

@@ -859,25 +859,42 @@ download_model() {
 }
 
 detect_model() {
-    local vram_list; vram_list=$($SMI --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | tr -d '\r') || {
+    local vram_list; vram_list=$($SMI --query-gpu=memory.total,memory.free --format=csv,noheader,nounits 2>/dev/null | tr -d '\r') || {
         echo -e "${RED}✘ nvidia-smi failed${NC}"; return 1
     }
 
-    local total_vram=0 gpu_idx=0 gpus_used=0
-    for v in $vram_list; do
-        case "$v" in *[!0-9]*) gpu_idx=$((gpu_idx + 1)); continue ;; esac
+    # Budget from FREE VRAM, not capacity: the display GPU permanently loses
+    # VRAM to the desktop compositor and other apps, and budgeting from
+    # capacity lets a model that "fits on paper" oversubscribe the card —
+    # WDDM then silently pages VRAM to system RAM and the whole desktop
+    # freezes/crawls. When the hub engine is already loaded, free VRAM
+    # reflects its own model and is meaningless for tier selection — fall
+    # back to capacity for that launch (the tier only matters if a config
+    # change forces a restart, which frees the VRAM anyway).
+    local _use_free=true
+    [ -n "$(docker ps -q -f name=^/${GLOBAL_ENGINE_NAME}$ 2>/dev/null)" ] && _use_free=false
+
+    local total_vram=0 free_vram=0 gpu_idx=0 gpus_used=0 _t _f
+    while IFS=', ' read -r _t _f _; do
+        case "$_t" in ''|*[!0-9]*) gpu_idx=$((gpu_idx + 1)); continue ;; esac
         # In single-GPU mode only count VRAM from GPU 0 so the tier selection
         # matches what will actually be available to the engine container.
         if [ "${GPU_MODE:-multi}" = "single" ] && [ "$gpu_idx" -gt 0 ]; then
             gpu_idx=$((gpu_idx + 1)); continue
         fi
-        total_vram=$((total_vram + v))
+        total_vram=$((total_vram + _t))
+        case "$_f" in ''|*[!0-9]*) free_vram=$((free_vram + _t)) ;; *) free_vram=$((free_vram + _f)) ;; esac
         gpus_used=$((gpus_used + 1))
         gpu_idx=$((gpu_idx + 1))
-    done
+    done <<< "$vram_list"
     VRAM_GB=$((total_vram / 1024))
-
-    echo -e "${ICON_GEAR} Hardware Audit: Detected ${BOLD}${VRAM_GB}GB Total VRAM${NC}"
+    local budget_gb=$VRAM_GB
+    if $_use_free; then
+        budget_gb=$((free_vram / 1024))
+        echo -e "${ICON_GEAR} Hardware Audit: Detected ${BOLD}${VRAM_GB}GB Total VRAM${NC} ${DIM}(${budget_gb}GB free)${NC}"
+    else
+        echo -e "${ICON_GEAR} Hardware Audit: Detected ${BOLD}${VRAM_GB}GB Total VRAM${NC} ${DIM}(engine loaded — budgeting from capacity)${NC}"
+    fi
 
     # Reserve estimated KV-cache VRAM before picking a tier — a model that
     # fills the card leaves no room for the KV cache at the chosen context
@@ -892,7 +909,7 @@ detect_model() {
         _draft_note=" + ${draft_reserve}GB draft"
     fi
     local overhead_reserve=$(( ${MODEL_VRAM_OVERHEAD_GB:-2} * gpus_used ))
-    EFFECTIVE_VRAM_GB=$(( VRAM_GB - kv_reserve - draft_reserve - overhead_reserve ))
+    EFFECTIVE_VRAM_GB=$(( budget_gb - kv_reserve - draft_reserve - overhead_reserve ))
     [ "$EFFECTIVE_VRAM_GB" -lt 0 ] && EFFECTIVE_VRAM_GB=0
     echo -e "${ICON_GEAR} VRAM Reserve: ${BOLD}~${kv_reserve}GB KV${NC} ${DIM}(${MODEL_CTX_LEVEL:-64k} ctx, $(kv_type_label))${_draft_note} + ${overhead_reserve}GB overhead (${gpus_used} GPU)${NC} → ${BOLD}${EFFECTIVE_VRAM_GB}GB${NC} usable for model"
 
@@ -907,8 +924,10 @@ detect_model() {
     if [ "$MODEL_TIER" != "$_raw_tier" ]; then
         local _tier_reason="${MODEL_CTX_LEVEL:-64k} context reserve"
         [ -n "$_draft_note" ] && _tier_reason="${MODEL_CTX_LEVEL:-64k} context + ${draft_reserve}GB draft reserve"
-        fi
-    
+        echo -e "${ICON_GEAR} ${DIM}Stepped down from ${_raw_tier} to leave room for the ${_tier_reason} + overhead.${NC}"
+    fi
+
+
     if [ -f "$MODEL_STORAGE_DIR/$MODEL_FILE" ]; then
         echo -e "${ICON_OK} Target Model: ${CYAN}${MODEL_FILE}${NC}"
         return 0
@@ -1167,11 +1186,21 @@ _resolve_engine_gpu_args() {
         _cuda_env=(-e CUDA_VISIBLE_DEVICES=0)
         echo -e "${ICON_GEAR} GPU Mode: ${YELLOW}Single (GPU 0 only)${NC}"
     else
-        local _vram_raw; _vram_raw=$($SMI --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | tr -d '\r') || true
+        # Split by FREE VRAM (fallback: capacity) so the display GPU — which
+        # loses VRAM to the desktop — receives proportionally fewer layers.
+        # This runs after the old engine is stopped, so free reflects reality.
+        local _vram_raw; _vram_raw=$($SMI --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | tr -d '\r') || true
         local _split_vals=()
         for _v in $_vram_raw; do
             case "$_v" in *[!0-9]*) ;; *) _split_vals+=("$_v") ;; esac
         done
+        if [ "${#_split_vals[@]}" -lt 2 ]; then
+            _vram_raw=$($SMI --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | tr -d '\r') || true
+            _split_vals=()
+            for _v in $_vram_raw; do
+                case "$_v" in *[!0-9]*) ;; *) _split_vals+=("$_v") ;; esac
+            done
+        fi
         if [ "${#_split_vals[@]}" -gt 1 ]; then
             local _ts; _ts=$(IFS=,; echo "${_split_vals[*]}")
             _ts_args=(--tensor-split "$_ts")
@@ -1367,14 +1396,21 @@ start_hub_engine() {
     # --cache-reuse: agent conversations grow by appending, so reusing KV
     # cache chunks across requests avoids reprocessing the whole prompt each
     # turn — a large time-to-first-token win in agent loops.
-    docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$_hub_net" --gpus "$_gpus_flag" --restart on-failure:3 \
+    #
+    # --restart no (NOT on-failure): a restart policy persists across Docker
+    # daemon restarts, so after a crash/BSOD mid-load the engine would reload
+    # the model at full GPU power unattended as soon as Docker Desktop came
+    # back — exactly the wrong behaviour on a machine that just crashed
+    # (observed 2026-07-15: overnight re-crash after a GPU hardware failure).
+    # A failed engine stays down until a human relaunches it.
+    docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$_hub_net" --gpus "$_gpus_flag" --restart no \
         "${_port_args[@]}" "${_cuda_env[@]}" \
         -v "${_models_src}:/models" \
         "$LLAMA_IMAGE" \
         -m "/models/$MODEL_FILE" --host 0.0.0.0 --port 8080 \
         --parallel "$MODEL_MAX_SLOTS" -ngl 99 -c "$MODEL_CTX_SIZE" --flash-attn on \
         -ctk "${MODEL_KV_TYPE:-q8_0}" -ctv "${MODEL_KV_TYPE_V:-${MODEL_KV_TYPE:-q8_0}}" \
-        --batch-size 4096 --defrag-thold 0.1 \
+        --batch-size "${MODEL_BATCH_SIZE:-1024}" --ubatch-size "${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}" --defrag-thold 0.1 \
         --cache-reuse "${MODEL_CACHE_REUSE:-256}" \
         "${_draft_args[@]}" "${_think_args[@]}" "${_rp_args[@]}" "${_jinja_args[@]}" "${_ts_args[@]}" > /dev/null || {
         echo -e "${RED}✘ Failed to start engine container${NC}"; return 1
@@ -1384,11 +1420,14 @@ start_hub_engine() {
     write_pref "$STATE_FILE" engine_model "${MODEL_FILE:-}"
     write_pref "$STATE_FILE" engine_ctx "${MODEL_CTX_SIZE:-}"
     write_pref "$STATE_FILE" engine_kv "$(kv_type_label)"
+    write_pref "$STATE_FILE" engine_batch "${MODEL_BATCH_SIZE:-1024}/${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}"
     write_pref "$STATE_FILE" engine_expose "$(read_pref "$SETTINGS_FILE" expose_host_port no)"
     write_pref "$STATE_FILE" engine_net "${NETWORK_INTERNAL:-false}"
     write_pref "$STATE_FILE" engine_mvol "$(read_pref "$SETTINGS_FILE" model_volume "$MODEL_VOLUME_DEFAULT")"
     local _spec_state=no; [ "${#_draft_args[@]}" -gt 0 ] && _spec_state=yes
     write_pref "$STATE_FILE" engine_spec "$_spec_state"
+
+    start_gpu_guard
 
     if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
         _start_litellm_proxy "$_hub_net" || return 1
@@ -1469,6 +1508,61 @@ schedule_hub_idle_stop() {
         sed -i '/^hub_idle_since=/d' '$STATE_FILE' 2>/dev/null
     " >/dev/null 2>&1 &
     disown 2>/dev/null || true
+}
+
+# Watchdog: while the engine runs, poll GPU temperatures and stop the engine
+# if any GPU stays at/above MODEL_GPU_MAX_TEMP_C for three consecutive polls
+# (~30s). A trip is recorded in state.conf (engine_guard_trip) and reported
+# on the next launch. Set MODEL_GPU_MAX_TEMP_C=0 to disable. Best-effort by
+# design: if the watcher dies with its terminal the engine simply runs
+# unguarded, which was the behaviour before the guard existed.
+start_gpu_guard() {
+    local max_c="${MODEL_GPU_MAX_TEMP_C:-90}"
+    case "$max_c" in ''|*[!0-9]*|0) return 0 ;; esac
+    command -v "$SMI" >/dev/null 2>&1 || return 0
+    nohup bash -c "
+        strikes=0
+        while docker ps -q -f name=^/${GLOBAL_ENGINE_NAME}\$ 2>/dev/null | grep -q .; do
+            hot=''
+            for t in \$($SMI --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | tr -d '\r'); do
+                case \"\$t\" in ''|*[!0-9]*) ;; *) [ \"\$t\" -ge $max_c ] && hot=\$t ;; esac
+            done
+            if [ -n \"\$hot\" ]; then strikes=\$((strikes+1)); else strikes=0; fi
+            if [ \"\$strikes\" -ge 3 ]; then
+                docker stop '$GLOBAL_ENGINE_NAME' >/dev/null 2>&1
+                sed -i '/^engine_guard_trip=/d' '$STATE_FILE' 2>/dev/null
+                echo \"engine_guard_trip=\$(date '+%Y-%m-%d %H:%M') GPU held \${hot}C (limit ${max_c}C)\" >> '$STATE_FILE'
+                exit 0
+            fi
+            sleep 10
+        done
+    " >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+}
+
+# After the engine reports ready, verify no GPU is at the edge of its VRAM.
+# On Windows the WDDM driver does not fail an over-allocation — it silently
+# pages VRAM to system RAM, which collapses generation speed and can freeze
+# the whole desktop. 97%+ used right after load means the fit is
+# oversubscribed even if llama.cpp started "successfully".
+warn_if_vram_oversubscribed() {
+    local _list; _list=$($SMI --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | tr -d '\r') || return 0
+    local _u _t _pct _idx=0 _warned=false
+    while IFS=', ' read -r _u _t _; do
+        case "$_u" in ''|*[!0-9]*) _idx=$((_idx + 1)); continue ;; esac
+        case "$_t" in ''|*[!0-9]*|0) _idx=$((_idx + 1)); continue ;; esac
+        _pct=$(( _u * 100 / _t ))
+        if [ "$_pct" -ge 97 ]; then
+            echo -e "${YELLOW}⚠ GPU ${_idx} VRAM is ${_pct}% full (${_u}/${_t} MiB) — the model likely does not truly fit.${NC}"
+            _warned=true
+        fi
+        _idx=$((_idx + 1))
+    done <<< "$_list"
+    if $_warned; then
+        echo -e "${YELLOW}  Expect severe slowdown from driver VRAM paging. Reduce the context size,${NC}"
+        echo -e "${YELLOW}  enable the asymmetric KV cache, or drop a model tier before heavy use.${NC}"
+    fi
+    return 0
 }
 
 # Launch an Open WebUI container connected to the hub engine.

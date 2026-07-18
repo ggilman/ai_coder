@@ -1,5 +1,6 @@
 test_*
 .ai-coder/
+GPU-INCIDENT-NOTES.md
 .vs/
 .vscode/
 ai_coder.zip
