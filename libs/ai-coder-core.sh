@@ -789,13 +789,20 @@ build_pip_install_cmds() {
     # Usage: build_pip_install_cmds <pip_proxy_cmds> <offline_pkgs> <online_pkgs>
     # Returns Dockerfile RUN lines for offline pip packages (required) and online
     # pip packages (best-effort, || true). Used by agent build_image() functions.
+    #
+    # Pins mcp<2.0.0: the MCP Python SDK's 2.0.0 release removed the
+    # @server.list_tools() decorator API that third-party servers like
+    # mcp-server-git and cli-mcp-server are still built against, so an
+    # unpinned install resolves 2.0.0 and they crash on startup with
+    # "AttributeError: 'Server' object has no attribute 'list_tools'".
+    # Remove this pin once those packages catch up to the new SDK.
     local pip_proxy_cmds="$1" mcp_pip_pkgs="$2" mcp_pip_online="$3"
     local pip_cmd=""
     if [ -n "$(echo "$mcp_pip_pkgs" | tr -d ' ')" ]; then
-        pip_cmd=$'\nRUN '"${pip_proxy_cmds} ${mcp_pip_pkgs}"
+        pip_cmd=$'\nRUN '"${pip_proxy_cmds} ${mcp_pip_pkgs} 'mcp<2.0.0'"
     fi
     if [ -n "$(echo "$mcp_pip_online" | tr -d ' ')" ]; then
-        pip_cmd+=$'\nRUN '"${pip_proxy_cmds} ${mcp_pip_online} || true"
+        pip_cmd+=$'\nRUN '"${pip_proxy_cmds} ${mcp_pip_online} 'mcp<2.0.0' || true"
     fi
     printf '%s' "$pip_cmd"
 }
