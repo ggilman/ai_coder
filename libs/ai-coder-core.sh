@@ -171,7 +171,7 @@ read_mcp_packages() {
     for file in "$@"; do
         [ -f "$file" ] || continue
         grep -v '^\s*#' "$file" | grep -v '^\s*$' | tr -d '\r' | \
-            awk -F'|' '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); if ($1 != "" && substr($1,1,4) != "pip:") printf "%s ", $1}'
+            awk -F'|' '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); if ($1 != "" && substr($1,1,4) != "pip:") printf "%s ", $1}' || true
     done
 }
 
@@ -197,7 +197,7 @@ read_mcp_pip_packages() {
                 if (nf == "offline" && is_online) next
                 if (nf == "online"  && !is_online) next
                 printf "%s ", substr($1,5)
-            }'
+            }' || true
     done
 }
 
@@ -476,7 +476,7 @@ ensure_ctx_config() {
 # types (the asymmetric approach this replaced) silently fall back to a
 # CPU-bound path — see ggml-org/llama.cpp#20866 and #22411.
 ensure_kv_config() {
-    [ "$(read_pref "$SETTINGS_FILE" kv_q4 no)" = "yes" ] && MODEL_KV_TYPE="q4_0"
+    [ "$(read_pref "$SETTINGS_FILE" kv_q4 no)" = "yes" ] && MODEL_KV_TYPE="q4_0" || true
 }
 
 # Write a ~/.gitconfig-container file that gets mounted into containers as
@@ -525,6 +525,7 @@ apply_git_identity() {
     # 'input' strips CR on add but never introduces CR on checkout — safe for all platforms.
     git -C "$(pwd)" config --local core.autocrlf input 2>/dev/null || true
     [ -n "${GIT_USER_NAME:-}" ] && printf "%s Git identity: %s%s${NC} <%s>\n" "${ICON_OK}" "${CYAN}" "${GIT_USER_NAME}" "${GIT_USER_EMAIL}"
+    return 0
 }
 
 # --- [ CORE LOGIC ] -----------------------------------------------------------
