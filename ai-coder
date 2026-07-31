@@ -220,7 +220,7 @@ cleanup() {
     # a workbench that belongs to a concurrently running session in the same project.
     if $_workbench_started; then
         echo -e "${CYAN}◈ Stopping workbench [$WORKBENCH]...${NC}"
-        docker stop "$WORKBENCH" 2>/dev/null || true
+        docker stop -t 5 "$WORKBENCH" 2>/dev/null || true
         docker rm   "$WORKBENCH" 2>/dev/null || true
     fi
     remaining_spokes=$(docker ps -q --filter "name=^/${WORKBENCH_PREFIX}-" 2>/dev/null | wc -l)
