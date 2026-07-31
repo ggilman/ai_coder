@@ -56,8 +56,7 @@ Each family configuration file in `config/families/` defines an ordered candidat
 
 **Family Defaults:**
 - `MODEL_FAMILY`: Display name in the selection menu.
-- `MODEL_KV_TYPE`: KV cache quantization (e.g., `q8_0`, `q4_0`). Used for both K and V unless split.
-- `MODEL_KV_TYPE_V`: V-cache quantization. Unset by default — follows the *asymmetric KV cache* setup option (`--setup`, off by default), which drops V to `q4_0` while K keeps `MODEL_KV_TYPE`, cutting the KV VRAM reserve ~25% on low-VRAM cards. Set explicitly to pin it.
+- `MODEL_KV_TYPE`: KV cache quantization (e.g., `q8_0`, `q4_0`). Applied to both K and V.
 - `MODEL_JINJA`: Enable model's built-in Jinja template.
 - `MODEL_THINKING`: Toggle reasoning tokens (e.g., for Qwen3 family).
 
@@ -174,7 +173,7 @@ A rebuild (`./ai-coder --rebuild` followed by `./ai-coder`) is only needed when 
 | Change GPU mode (`--setup`) | No | Passed as flags when the engine container starts |
 | Toggle fast model storage (`--setup`) | No | Engine restarts with the new mount on next launch |
 | Toggle speculative decoding (`--setup`) | No | Engine restarts with/without the draft model on next launch |
-| Toggle asymmetric KV cache (`--setup`) | No | Engine restarts with the new KV cache types on next launch |
+| Toggle low-VRAM KV cache (`--setup`) | No | Engine restarts with the new KV cache type on next launch |
 | Change proxy or network isolation (`--setup`) | No | Applied at container start time |
 | Change git identity (`--setup`) | **Yes** | Requires an `--rebuild` to bake into the image |
 | Upgrade `BASE_IMAGE` in `ai-coder-core.sh` | **Yes** | The base layer must be pulled and rebuilt |
@@ -319,7 +318,7 @@ echo "@some-org/server | key | cmd | args" >> packages/mcp-opencode.txt
 | OpenCode | Config, provider settings | `.ai-coder/opencode/opencode-config/` (per project) |
 | Aider | Aider config, input history | `~/.aider-config/` (directory) |
 | Gemini CLI | Auth tokens, session state, settings | `~/.gemini-config/` (directory) |
-| ai-coder | **All settings** — proxy, isolation, GPU mode, context level, asymmetric KV cache, MCP extras, keep-hub, model volume, speculative decoding, port exposure, git identity | `<install-dir>/user/settings.conf` |
+| ai-coder | **All settings** — proxy, isolation, GPU mode, context level, low-VRAM KV cache, MCP extras, keep-hub, model volume, speculative decoding, port exposure, git identity | `<install-dir>/user/settings.conf` |
 | ai-coder | **Runtime state** — tool + family + Open WebUI preferences, update-check hash/timestamp, running-engine settings | `<install-dir>/user/state.conf` |
 | ai-coder | Setup completion sentinel | `<install-dir>/user/.setup-done` |
 | ai-coder | Git identity mounted into containers as `/root/.gitconfig` | `~/.gitconfig-container` |
@@ -402,7 +401,7 @@ ai-coder also checks for updates automatically once per day on launch and prints
 3. **Network isolation** — optionally block all internet access from containers.
 4. **GPU mode** — only shown when 2+ GPUs are detected; choose multi (all GPUs) or single.
 5. **Context window level** — how many tokens of context the model retains (4k–256k, default 64k). Higher values use more VRAM and slow responses; local coding agents rarely benefit past 64k.
-6. **Asymmetric KV cache** — quantize the value cache to `q4_0` while keys keep the family KV type, cutting the KV VRAM reserve ~25%. Off by default; useful on low-VRAM cards or large context levels, at a small long-context quality cost.
+6. **Low-VRAM KV cache** — quantize both K and V cache to `q4_0`, roughly halving the KV VRAM reserve vs the family default. Off by default; real quality cost on long-context recall, but K and V stay matched so llama.cpp keeps using its fast fused Flash Attention kernel.
 7. **MCP extras** — register the optional MCP servers (memory, thinking, conan, context7, brave-search, github, fetch, time) with each agent. Off by default: fewer registered tools means faster prompts and better tool selection on small local models.
 8. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Also asks for an idle timeout (default 60 min, `0` = forever) after which the warm hub stops itself to release VRAM; stop it immediately with `--clean`.
 9. **Fast model storage** — cache models in a Docker volume so engine cold starts load from the VM's native disk instead of the slow Windows filesystem bridge. Default on for WSL/Git Bash; see [Model Storage](#model-storage).

@@ -469,25 +469,14 @@ ensure_ctx_config() {
     esac
 }
 
-# Sets MODEL_KV_TYPE_V (the -ctv quant type) from the asymmetric-KV-cache
-# preference. Keys are more quantization-sensitive than values, so asymmetric
-# mode keeps K at MODEL_KV_TYPE and drops V to q4_0 — reclaiming ~25% of the
-# KV reserve on low-VRAM cards at a small long-context quality cost.
-# Off by default; a conf-file MODEL_KV_TYPE_V wins over the preference.
+# Sets MODEL_KV_TYPE to q4_0 (both K and V) from the low-VRAM KV cache
+# preference (ai-coder --setup, off by default), overriding the family
+# default. Matched K/V quant types use llama.cpp's fused CUDA Flash
+# Attention kernel even on the stock ghcr.io/ggml-org image; mismatched
+# types (the asymmetric approach this replaced) silently fall back to a
+# CPU-bound path — see ggml-org/llama.cpp#20866 and #22411.
 ensure_kv_config() {
-    if [ -z "${MODEL_KV_TYPE_V:-}" ]; then
-        if [ "$(read_pref "$SETTINGS_FILE" kv_asym no)" = "yes" ]; then
-            MODEL_KV_TYPE_V="q4_0"
-        else
-            MODEL_KV_TYPE_V="${MODEL_KV_TYPE:-q8_0}"
-        fi
-    fi
-}
-
-# Human-readable KV quant label: the single type, or "K <k>/V <v>" when split.
-kv_type_label() {
-    local _k="${MODEL_KV_TYPE:-q8_0}" _v="${MODEL_KV_TYPE_V:-${MODEL_KV_TYPE:-q8_0}}"
-    [ "$_k" = "$_v" ] && echo "$_k" || echo "K ${_k}/V ${_v}"
+    [ "$(read_pref "$SETTINGS_FILE" kv_q4 no)" = "yes" ] && MODEL_KV_TYPE="q4_0"
 }
 
 # Write a ~/.gitconfig-container file that gets mounted into containers as
@@ -611,25 +600,21 @@ check_docker() {
 }
 
 # Estimate the KV-cache VRAM reserve in GB (rounded up) for the active
-# context size and KV quantization types.
+# context size and KV quantization type.
 # Exact KV size is model-specific (layers x KV-heads x head-dim), which the
 # launcher can't know before a model is chosen. Across this project's model
 # range (8B-35B GQA models) q8_0 KV costs ~64-140 KB per token; 96 KiB/token
-# is used as a middle estimate, split evenly between the K and V caches and
-# scaled per side so asymmetric K/V types are sized correctly. Override with
-# MODEL_KV_BYTES_PER_TOKEN in a family conf for models far from that band.
-_kv_side_bytes_per_token() {
-    case "$1" in
-        f16|bf16)  echo 98304 ;;
-        q4_0|q4_1) echo 24576 ;;
-        *)         echo 49152 ;;
-    esac
-}
+# is used as a middle estimate. MODEL_KV_BYTES_PER_TOKEN (settable in a family
+# conf for models far from that band) is always a q8_0-equivalent figure —
+# scaled here for the KV type actually in effect, so a family override stays
+# accurate whether or not the low-VRAM KV cache toggle is on.
 _estimate_kv_reserve_gb() {
-    local _k_bpt _v_bpt
-    _k_bpt=$(_kv_side_bytes_per_token "${MODEL_KV_TYPE:-q8_0}")
-    _v_bpt=$(_kv_side_bytes_per_token "${MODEL_KV_TYPE_V:-${MODEL_KV_TYPE:-q8_0}}")
-    local _bpt="${MODEL_KV_BYTES_PER_TOKEN:-$(( _k_bpt + _v_bpt ))}"
+    local _q8_bpt="${MODEL_KV_BYTES_PER_TOKEN:-98304}" _bpt
+    case "${MODEL_KV_TYPE:-q8_0}" in
+        f16|bf16)  _bpt=$(( _q8_bpt * 2 )) ;;
+        q4_0|q4_1) _bpt=$(( _q8_bpt / 2 )) ;;
+        *)         _bpt="$_q8_bpt" ;;
+    esac
     echo $(( (${MODEL_CTX_SIZE:-65536} * _bpt + 1073741823) / 1073741824 ))
 }
 
@@ -911,7 +896,7 @@ detect_model() {
     local overhead_reserve=$(( ${MODEL_VRAM_OVERHEAD_GB:-2} * gpus_used ))
     EFFECTIVE_VRAM_GB=$(( budget_gb - kv_reserve - draft_reserve - overhead_reserve ))
     [ "$EFFECTIVE_VRAM_GB" -lt 0 ] && EFFECTIVE_VRAM_GB=0
-    echo -e "${ICON_GEAR} VRAM Reserve: ${BOLD}~${kv_reserve}GB KV${NC} ${DIM}(${MODEL_CTX_LEVEL:-64k} ctx, $(kv_type_label))${_draft_note} + ${overhead_reserve}GB overhead (${gpus_used} GPU)${NC} → ${BOLD}${EFFECTIVE_VRAM_GB}GB${NC} usable for model"
+    echo -e "${ICON_GEAR} VRAM Reserve: ${BOLD}~${kv_reserve}GB KV${NC} ${DIM}(${MODEL_CTX_LEVEL:-64k} ctx, ${MODEL_KV_TYPE:-q8_0})${_draft_note} + ${overhead_reserve}GB overhead (${gpus_used} GPU)${NC} → ${BOLD}${EFFECTIVE_VRAM_GB}GB${NC} usable for model"
 
     # Record which model raw VRAM (no overhead) would allow, to detect when
     # the context/draft reserve causes a step down to a smaller model.
@@ -1372,10 +1357,6 @@ start_hub_engine() {
         echo -e "${ICON_GEAR} Jinja template: ${YELLOW}disabled (model uses non-JSON tool call format)${NC}"
     fi
 
-    if [ "${MODEL_KV_TYPE_V:-${MODEL_KV_TYPE:-q8_0}}" != "${MODEL_KV_TYPE:-q8_0}" ]; then
-        echo -e "${ICON_GEAR} KV cache: ${YELLOW}asymmetric ($(kv_type_label))${NC}"
-    fi
-
     # Thinking mode: reasoning models (Qwen3) burn hundreds of tokens before
     # every tool call. MODEL_THINKING=false disables it for snappier turns.
     local _think_args=()
@@ -1409,7 +1390,7 @@ start_hub_engine() {
         "$LLAMA_IMAGE" \
         -m "/models/$MODEL_FILE" --host 0.0.0.0 --port 8080 \
         --parallel "$MODEL_MAX_SLOTS" -ngl 99 -c "$MODEL_CTX_SIZE" --flash-attn on \
-        -ctk "${MODEL_KV_TYPE:-q8_0}" -ctv "${MODEL_KV_TYPE_V:-${MODEL_KV_TYPE:-q8_0}}" \
+        -ctk "${MODEL_KV_TYPE:-q8_0}" -ctv "${MODEL_KV_TYPE:-q8_0}" \
         --batch-size "${MODEL_BATCH_SIZE:-1024}" --ubatch-size "${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}" --defrag-thold 0.1 \
         --cache-reuse "${MODEL_CACHE_REUSE:-256}" \
         "${_draft_args[@]}" "${_think_args[@]}" "${_rp_args[@]}" "${_jinja_args[@]}" "${_ts_args[@]}" > /dev/null || {
@@ -1419,7 +1400,7 @@ start_hub_engine() {
     write_pref "$STATE_FILE" engine_gpu_mode "${GPU_MODE:-multi}"
     write_pref "$STATE_FILE" engine_model "${MODEL_FILE:-}"
     write_pref "$STATE_FILE" engine_ctx "${MODEL_CTX_SIZE:-}"
-    write_pref "$STATE_FILE" engine_kv "$(kv_type_label)"
+    write_pref "$STATE_FILE" engine_kv "${MODEL_KV_TYPE:-q8_0}"
     write_pref "$STATE_FILE" engine_batch "${MODEL_BATCH_SIZE:-1024}/${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}"
     write_pref "$STATE_FILE" engine_expose "$(read_pref "$SETTINGS_FILE" expose_host_port no)"
     write_pref "$STATE_FILE" engine_net "${NETWORK_INTERNAL:-false}"
@@ -1560,7 +1541,7 @@ warn_if_vram_oversubscribed() {
     done <<< "$_list"
     if $_warned; then
         echo -e "${YELLOW}  Expect severe slowdown from driver VRAM paging. Reduce the context size,${NC}"
-        echo -e "${YELLOW}  enable the asymmetric KV cache, or drop a model tier before heavy use.${NC}"
+        echo -e "${YELLOW}  enable the low-VRAM KV cache, or drop a model tier before heavy use.${NC}"
     fi
     return 0
 }

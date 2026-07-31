@@ -226,26 +226,28 @@ cmd_setup() {
             ;;
     esac
 
-    echo -e "\n${CYAN}Asymmetric KV cache — quantize the value cache to q4_0 to save VRAM?${NC}"
-    echo -e "${DIM}  Keys stay at the family's KV type (usually q8_0) for quality; values drop${NC}"
-    echo -e "${DIM}  to q4_0, cutting the KV-cache VRAM reserve by ~25%. Useful on low-VRAM${NC}"
-    echo -e "${DIM}  cards or large context levels — it can unlock a bigger model tier — at a${NC}"
-    echo -e "${DIM}  small quality cost on long-context recall.${NC}"
-    _cur_kva=$(read_pref "$SETTINGS_FILE" kv_asym no)
-    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_kva" "$NC"
-    echo -n "  Enable asymmetric KV cache? [y/N]: "
-    read -r _kva_input
-    case "${_kva_input,,}" in
+    echo -e "\n${CYAN}Low-VRAM KV cache — quantize both K and V cache to q4_0?${NC}"
+    echo -e "${DIM}  Roughly halves the KV-cache VRAM reserve vs the family's default (usually${NC}"
+    echo -e "${DIM}  q8_0), which can unlock a bigger model tier or larger context on low-VRAM${NC}"
+    echo -e "${DIM}  cards. Real quality cost on long-context recall — keys are more${NC}"
+    echo -e "${DIM}  quantization-sensitive than values. K and V stay matched, so llama.cpp${NC}"
+    echo -e "${DIM}  keeps using its fast fused Flash Attention kernel (mismatched K/V types${NC}"
+    echo -e "${DIM}  silently fall back to a much slower CPU-bound path).${NC}"
+    _cur_kvq4=$(read_pref "$SETTINGS_FILE" kv_q4 no)
+    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_kvq4" "$NC"
+    echo -n "  Enable low-VRAM (q4_0) KV cache? [y/N]: "
+    read -r _kvq4_input
+    case "${_kvq4_input,,}" in
         y|yes)
-            write_pref "$SETTINGS_FILE" kv_asym yes
-            echo -e "${ICON_OK} Asymmetric KV cache ${GREEN}enabled${NC} — applied on next engine start."
+            write_pref "$SETTINGS_FILE" kv_q4 yes
+            echo -e "${ICON_OK} Low-VRAM KV cache ${GREEN}enabled${NC} (q4_0/q4_0) — applied on next engine start."
             ;;
         n|no)
-            write_pref "$SETTINGS_FILE" kv_asym no
-            echo -e "${DIM}  Asymmetric KV cache disabled — K and V both use the family KV type.${NC}"
+            write_pref "$SETTINGS_FILE" kv_q4 no
+            echo -e "${DIM}  Low-VRAM KV cache disabled — using the family's default KV type.${NC}"
             ;;
         *)
-            printf "%s  Asymmetric KV cache unchanged (%s)%s\n" "$DIM" "$_cur_kva" "$NC"
+            printf "%s  Low-VRAM KV cache unchanged (%s)%s\n" "$DIM" "$_cur_kvq4" "$NC"
             ;;
     esac
 

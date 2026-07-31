@@ -325,8 +325,8 @@ if $_engine_running; then
     elif [ -n "$_eng_ctx" ] && [ "$_eng_ctx" != "${MODEL_CTX_SIZE:-}" ]; then
         echo -e "${YELLOW}◈ Context size changed (${_eng_ctx} → ${MODEL_CTX_SIZE:-}) — restarting engine...${NC}"
         _need_engine_restart=true
-    elif [ -n "$_eng_kv" ] && [ "$_eng_kv" != "$(kv_type_label)" ]; then
-        echo -e "${YELLOW}◈ KV cache type changed (${_eng_kv} → $(kv_type_label)) — restarting engine...${NC}"
+    elif [ -n "$_eng_kv" ] && [ "$_eng_kv" != "${MODEL_KV_TYPE:-q8_0}" ]; then
+        echo -e "${YELLOW}◈ KV cache type changed (${_eng_kv} → ${MODEL_KV_TYPE:-q8_0}) — restarting engine...${NC}"
         _need_engine_restart=true
     elif [ -n "$_eng_batch" ] && [ "$_eng_batch" != "${MODEL_BATCH_SIZE:-1024}/${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}" ]; then
         echo -e "${YELLOW}◈ Batch size changed (${_eng_batch} → ${MODEL_BATCH_SIZE:-1024}/${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}) — restarting engine...${NC}"
