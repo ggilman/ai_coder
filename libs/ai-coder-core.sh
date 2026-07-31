@@ -906,20 +906,9 @@ detect_model() {
     [ "$EFFECTIVE_VRAM_GB" -lt 0 ] && EFFECTIVE_VRAM_GB=0
     echo -e "${ICON_GEAR} VRAM Reserve: ${BOLD}~${kv_reserve}GB KV${NC} ${DIM}(${MODEL_CTX_LEVEL:-64k} ctx, ${MODEL_KV_TYPE:-q8_0})${_draft_note} + ${overhead_reserve}GB overhead (${gpus_used} GPU)${NC} → ${BOLD}${EFFECTIVE_VRAM_GB}GB${NC} usable for model"
 
-    # Record which model raw VRAM (no overhead) would allow, to detect when
-    # the context/draft reserve causes a step down to a smaller model.
-    select_model_for_vram "$VRAM_GB"
-    local _raw_tier="$MODEL_TIER"
-
     select_model_for_vram "$EFFECTIVE_VRAM_GB"
     echo -e "${ICON_GEAR} Model: ${BOLD}${MODEL_TIER}${NC}"
     echo -e "${ICON_GEAR} File:  ${CYAN}${MODEL_FILE}${NC}"
-    if [ "$MODEL_TIER" != "$_raw_tier" ]; then
-        local _tier_reason="${MODEL_CTX_LEVEL:-64k} context reserve"
-        [ -n "$_draft_note" ] && _tier_reason="${MODEL_CTX_LEVEL:-64k} context + ${draft_reserve}GB draft reserve"
-        echo -e "${ICON_GEAR} ${DIM}Stepped down from ${_raw_tier} to leave room for the ${_tier_reason} + overhead.${NC}"
-    fi
-
 
     if [ -f "$MODEL_STORAGE_DIR/$MODEL_FILE" ]; then
         echo -e "${ICON_OK} Target Model: ${CYAN}${MODEL_FILE}${NC}"
