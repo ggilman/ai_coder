@@ -251,6 +251,26 @@ cmd_setup() {
             ;;
     esac
 
+    echo -e "\n${CYAN}VRAM overhead reserve — how many GB of VRAM should be reserved for CUDA/system overhead?${NC}"
+    echo -e "${DIM}  Recommended: 1GB. Larger values can prevent OOMs on high-load GPUs.${NC}"
+    _cur_vram_oh=$(read_pref "$SETTINGS_FILE" vram_overhead 1)
+    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_vram_oh" "$NC"
+    echo -n "  Reserve (GB) [${_cur_vram_oh}]: "
+    read -r _vram_oh_input
+    _vram_oh_input="${_vram_oh_input:-}"
+    case "${_vram_oh_input}" in
+        *[!0-9]*)
+            printf "%s⚠ Not a number — keeping %s%s\n" "$YELLOW" "$_cur_vram_oh" "$NC"
+            ;;
+        "")
+            printf "%s  VRAM overhead unchanged (%s)%s\n" "$DIM" "$_cur_vram_oh" "$NC"
+            ;;
+        *)
+            write_pref "$SETTINGS_FILE" vram_overhead "$_vram_oh_input"
+            echo -e "${ICON_OK} VRAM overhead reserve set to ${GREEN}${_vram_oh_input}GB${NC}."
+            ;;
+    esac
+
     echo -e "\n${CYAN}MCP extras — register the optional MCP servers with each agent?${NC}"
     echo -e "${DIM}  Extras: memory, sequential-thinking, conan, context7, brave-search, github, fetch, time.${NC}"
     echo -e "${DIM}  Every registered server adds tool definitions to the model's context on every${NC}"

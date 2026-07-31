@@ -479,6 +479,17 @@ ensure_kv_config() {
     [ "$(read_pref "$SETTINGS_FILE" kv_q4 no)" = "yes" ] && MODEL_KV_TYPE="q4_0" || true
 }
 
+ensure_overhead_config() {
+    # Read the user-defined VRAM overhead reserve from settings.conf.
+    # Defaults to 1 if not set.
+    local _vram_oh; _vram_oh=$(read_pref "$SETTINGS_FILE" vram_overhead 1)
+    # Ensure it's a number
+    case "$_vram_oh" in
+        *[!0-9]*) MODEL_VRAM_OVERHEAD_GB=1 ;;
+        *)        MODEL_VRAM_OVERHEAD_GB="$_vram_oh" ;;
+    esac
+}
+
 # Write a ~/.gitconfig-container file that gets mounted into containers as
 # /root/.gitconfig so git commands in any repo (including newly init'd ones)
 # pick up the correct author identity.
@@ -901,7 +912,7 @@ detect_model() {
         draft_reserve="${MODEL_DRAFT_VRAM_GB:-1}"
         _draft_note=" + ${draft_reserve}GB draft"
     fi
-    local overhead_reserve=$(( ${MODEL_VRAM_OVERHEAD_GB:-2} * gpus_used ))
+    local overhead_reserve=$(( ${MODEL_VRAM_OVERHEAD_GB:-1} * gpus_used ))
     EFFECTIVE_VRAM_GB=$(( budget_gb - kv_reserve - draft_reserve - overhead_reserve ))
     [ "$EFFECTIVE_VRAM_GB" -lt 0 ] && EFFECTIVE_VRAM_GB=0
     echo -e "${ICON_GEAR} VRAM Reserve: ${BOLD}~${kv_reserve}GB KV${NC} ${DIM}(${MODEL_CTX_LEVEL:-64k} ctx, ${MODEL_KV_TYPE:-q8_0})${_draft_note} + ${overhead_reserve}GB overhead (${gpus_used} GPU)${NC} → ${BOLD}${EFFECTIVE_VRAM_GB}GB${NC} usable for model"
