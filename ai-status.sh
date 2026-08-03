@@ -1,78 +1,97 @@
 #!/bin/bash
+
 # ==============================================================================
-# AI-STATUS.SH v1.0 | GPU & Engine Dashboard
+# AI-STATUS-GUM.SH v4.6 | GPU & Engine Dashboard via Gum
 # Monitors GPU utilization, VRAM, and AI Hub engine health.
-# Usage: ./ai-status.sh
 # ==============================================================================
 set -euo pipefail
 
-# --- [ GRAPHICS ] -------------------------------------------------------------
+# BULLETPROOF PATH RESOLUTION
 SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
-source "$SCRIPT_DIR/libs/ai-coder-graphics.sh"
+
+# --- [ AUTO-DEPENDENCY GUM BOOTSTRAP ] ----------------------------------------
+GUM_DIR="$HOME/.ai_tool_setup_assets"
+mkdir -p "$GUM_DIR"
+
+GUM_EXE_NAME="gum"
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+    GUM_EXE_NAME="gum.exe"
+fi
+
+if ! command -v gum &> /dev/null && [ ! -f "$GUM_DIR/$GUM_EXE_NAME" ]; then
+    echo "⚡ Bootstrapping status interface engine..."
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64|amd64) GUM_ARCH="x86_64" ;;
+        aarch64|arm64) GUM_ARCH="arm64" ;;
+        *) GUM_ARCH="x86_64" ;;
+    esac
+    
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+        PLATFORM="Windows"
+        EXT=".zip"
+    else
+        PLATFORM="Linux"
+        EXT=".tar.gz"
+    fi
+    
+    DOWNLOAD_URL=$(curl -sL "https://api.github.com/repos/charmbracelet/gum/releases/latest" | grep "browser_download_url" | grep "${PLATFORM}_${GUM_ARCH}${EXT}" | cut -d '"' -f 4 | head -n 1)
+    TMP_EXTRACT=$(mktemp -d)
+    
+    echo "📥 Downloading asset from: $DOWNLOAD_URL"
+    if [ "$PLATFORM" == "Windows" ]; then
+        curl -L "$DOWNLOAD_URL" -o "$TMP_EXTRACT/gum.zip"
+        unzip -j -o "$TMP_EXTRACT/gum.zip" "gum.exe" -d "$GUM_DIR" || unzip -j -o "$TMP_EXTRACT/gum.zip" "*/gum.exe" -d "$GUM_DIR"
+    else
+        curl -L "$DOWNLOAD_URL" -o "$TMP_EXTRACT/gum.tar.gz"
+        tar -xzf "$TMP_EXTRACT/gum.tar.gz" -C "$TMP_EXTRACT"
+        find "$TMP_EXTRACT" -type f -name "gum" -exec mv {} "$GUM_DIR/" \;
+    fi
+    
+    rm -rf "$TMP_EXTRACT"
+    chmod +x "$GUM_DIR/$GUM_EXE_NAME"
+    echo "✅ Setup interface engine ready!"
+fi
+
+if command -v gum &> /dev/null; then
+    GUM_CMD="gum"
+else
+    GUM_CMD="$GUM_DIR/$GUM_EXE_NAME"
+fi
 
 # --- [ CONFIGURATION ] --------------------------------------------------------
-readonly BAR_WIDTH=35
 readonly UPDATE_INTERVAL=2
 readonly HEALTH_TIMEOUT=5
 readonly ENGINE_NAME="ai-hub-engine"
-readonly SEPARATOR_LINE=$(printf '═%.0s' {1..70})
 
+IS_GITBASH=false
+E_PAD="" # Terminal cursor hack to fix Git Bash Mintty emoji width rendering
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+    IS_GITBASH=true
+    E_PAD=$'\e[C' # ANSI escape to force the cursor 1 space to the right
+fi
 
-# Platform detection
-readonly IS_GITBASH=$(expr "$(uname -s)" : '.*MINGW.*' >/dev/null 2>&1 && echo "true" || echo "false")
-readonly SMI="$([[ "$IS_GITBASH" == "true" ]] && echo "nvidia-smi.exe" || echo "nvidia-smi")"
+if [[ "$IS_GITBASH" == "true" ]]; then
+    export SMI="nvidia-smi.exe"
+else
+    export SMI="nvidia-smi"
+fi
 
 # --- [ UTILITY FUNCTIONS ] ---------------------------------------------------
 
-# Returns visible string length (stripping ANSI codes)
-get_visible_length() {
-    local str="$1"
-    echo -ne "$str" | sed 's/\x1b\[[0-9;]*m//g' | wc -m | xargs
-}
-
-# Draws a colored progress bar
-draw_bar() {
-    perc=$1
-    width=${2:-$BAR_WIDTH}
-    filled=$((perc * width / 100))
-    remaining=$((width - filled))
-    
-    color="$GREEN"
-    [ "$perc" -gt 70 ] && color="$YELLOW"
-    [ "$perc" -gt 90 ] && color="$RED"
-    
-    printf "%b" "${color}"
-    i=0
-    while [ "$i" -lt "$filled" ]; do printf "█"; i=$((i + 1)); done
-    printf "%b" "${NC}${DIM}"
-    i=0
-    while [ "$i" -lt "$remaining" ]; do printf "░"; i=$((i + 1)); done
-    printf "%b" "${NC}"
-}
-
-# Fetches raw GPU stats via nvidia-smi
-get_gpu_stats() {
-    $SMI --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw \
-        --format=csv,noheader,nounits 2>/dev/null
-}
-
-# Checks engine health via curl (empty string on failure)
-# WSL2 workaround: docker exec output is lost when captured via $() command
-# substitution, and 'timeout' wrapping docker exec also drops output.
-# We use a fixed temp file and curl's --max-time instead of the timeout binary.
-#
-# Online/offline is decided by /health, which llama.cpp answers immediately
-# even while crunching a prompt. /slots must NOT be used for this: it is
-# queued as an internal task the engine only services between decode batches,
-# so under load it can take 30+ seconds — reading it as "offline" exactly
-# when the engine is busiest. Slot detail is fetched separately, best-effort.
 _ENGINE_TMP="/tmp/ai_status_engine_$$"
 _SLOTS_TMP="/tmp/ai_status_slots_$$"
 readonly SLOTS_TIMEOUT=2
 
+get_gpu_stats() {
+    if ! command -v "$SMI" &> /dev/null; then
+        return 1
+    fi
+    "$SMI" --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw \
+        --format=csv,noheader,nounits 2>/dev/null || return 1
+}
+
 get_engine_health() {
-    # set -o pipefail (active globally) causes docker exec redirects to drop output.
-    # Disable pipefail locally for this call only.
     local _old_opts; _old_opts=$(set +o | grep pipefail)
     set +o pipefail
     docker exec "$ENGINE_NAME" curl -s --max-time "$HEALTH_TIMEOUT" http://localhost:8080/health \
@@ -80,8 +99,6 @@ get_engine_health() {
     eval "$_old_opts"
 }
 
-# Fetches slot detail (short timeout — may legitimately fail while the engine
-# is processing; callers must degrade gracefully, not report offline).
 get_engine_slots() {
     local _old_opts; _old_opts=$(set +o | grep pipefail)
     set +o pipefail
@@ -90,7 +107,6 @@ get_engine_slots() {
     eval "$_old_opts"
 }
 
-# Fetches the loaded model name from the engine's /v1/models endpoint
 get_model_name() {
     local _mtmp="/tmp/ai_status_model_$$"
     local _old_opts; _old_opts=$(set +o | grep pipefail)
@@ -102,165 +118,160 @@ get_model_name() {
     rm -f "$_mtmp"
 }
 
-# Draws the dashboard header
-draw_header() {
-    # Top border
-    printf "%b╔%s╗%b\n" "$CYAN" "$SEPARATOR_LINE" "$NC"
+# Generates a standard colorized progress bar using ANSI-C quoting
+make_progress_string() {
+    local percentage=$1
+    local width=${2:-20}
+    if ! [[ "$percentage" =~ ^[0-9]+$ ]]; then percentage=0; fi
+    
+    local filled=$((percentage * width / 100))
+    local empty=$((width - filled))
+    
+    # ANSI-C quoted color codes (resolves universally in bash memory)
+    local c_grn=$'\e[32m'
+    local c_yel=$'\e[33m'
+    local c_red=$'\e[31m'
+    local c_gry=$'\e[90m'
+    local c_rst=$'\e[0m'
+    
+    local color="${c_grn}"
+    if [ "$percentage" -gt 70 ]; then color="${c_yel}"; fi
+    if [ "$percentage" -gt 90 ]; then color="${c_red}"; fi
 
-    # Content line
-    local content_text="$BOLD$WHITE$BG_BLUE  AI HUB COMMAND CENTER  $NC $DIM v1.0$NC"
-    local content_len=$(get_visible_length "$content_text")
-    local pad=$((70 - content_len))
-    [ "$pad" -lt 0 ] && pad=0
-
-    printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$content_text" "$pad" "" "$CYAN" "$NC"
-}
-
-# Draws a separator line
-draw_separator() {
-    printf "%b╠%s╣%b\n" "$CYAN" "$SEPARATOR_LINE" "$NC"
-}
-
-# Draws the dashboard footer
-draw_footer() {
-    printf "%b╚%s╝%b\n" "$CYAN" "$SEPARATOR_LINE" "$NC"
+    # Assemble progress bar track
+    local bar="${color}"
+    for ((i=0; i<filled; i++)); do bar+="█"; done
+    bar+="${c_rst}${c_gry}"
+    for ((i=0; i<empty; i++)); do bar+="░"; done
+    bar+="${c_rst}"
+    
+    printf "%s" "$bar"
 }
 
 # --- [ MAIN LOOP ] -----------------------------------------------------------
-
 main() {
     clear
+    trap "rm -f $_ENGINE_TMP $_SLOTS_TMP; exit" INT TERM EXIT
     while true; do
         printf "\033[H"
-        draw_header
-        
-        # Display GPU stats
+
+        # 1. RENDER HEADER
+        $GUM_CMD style \
+            --foreground 15 --background 57 \
+            --bold --align center --width 74 --padding "0 2" \
+            "🤖  AI HUB COMMAND CENTER"
+
+        # 2. RENDER GPU CARDS (Vertical Stack Mode - Cyan Accented Borders)
         if gpu_data=$(get_gpu_stats); then
-            echo "$gpu_data" | while IFS=',' read -r id name util m_used m_total temp pwr; do
-                # Trim whitespace
-                id=$(echo "$id" | xargs)
-                name=$(echo "$name" | xargs)
-                util=$(echo "$util" | xargs)
-                m_used=$(echo "$m_used" | xargs)
-                m_total=$(echo "$m_total" | xargs)
-                temp=$(echo "$temp" | xargs)
-                pwr=$(echo "$pwr" | xargs)
+            if [ -z "$gpu_data" ]; then
+                $GUM_CMD style \
+                    --border rounded --border-foreground 1 \
+                    --foreground 1 --align center --width 74 \
+                    "✘  NVIDIA GPU details could not be queried (no data returned)"
+            else
+                while IFS=',' read -r id name util m_used m_total temp pwr; do
+                    id=$(echo "$id" | xargs)
+                    name=$(echo "$name" | xargs)
+                    util=$(echo "$util" | xargs)
+                    m_used=$(echo "$m_used" | xargs)
+                    m_total=$(echo "$m_total" | xargs)
+                    temp=$(echo "$temp" | xargs)
+                    pwr=$(echo "$pwr" | xargs)
 
-                # Validate data - skip if empty or zero. Fields can read
-                # "[N/A]" on some GPUs; non-numeric values would crash the
-                # arithmetic below (and kill the dashboard under set -e).
-                case "$m_total" in ''|*[!0-9]*) continue ;; esac
-                if [ "$m_total" -le 0 ]; then
-                    continue
-                fi
-                case "$m_used" in ''|*[!0-9]*) m_used=0 ;; esac
-                case "$util"   in ''|*[!0-9]*) util=0   ;; esac
+                    case "$m_total" in ''|*[!0-9]*) continue ;; esac
+                    if [ "$m_total" -le 0 ]; then continue; fi
+                    case "$m_used" in ''|*[!0-9]*) m_used=0 ;; esac
+                    case "$util"   in ''|*[!0-9]*) util=0   ;; esac
 
-                # Calculate memory percentage
-                m_perc=$((m_used * 100 / m_total))
+                    m_perc=$((m_used * 100 / m_total))
+                    
+                    local vram_bar
+                    vram_bar=$(make_progress_string "$m_perc" "40")
+                    local util_bar
+                    util_bar=$(make_progress_string "$util" "40")
 
-                header_text="$BOLD GPU $id: $name $NC"
-                header_len=$(get_visible_length "$header_text")
-                pad=$((70 - header_len))
-                [ "$pad" -lt 0 ] && pad=0
-                printf "%b║%b%b%*s%b║%b\n" \
-                    "$CYAN" "$NC" "$header_text" "$pad" "" "$CYAN" "$NC"
+                    # Formatting text with bold/dim tokens to preserve contrast
+                    local card_content="📟  \e[1mGPU $id:\e[0m \e[36m$name\e[0m
+📊  \e[1mVRAM:\e[0m $vram_bar $m_perc% (${m_used}/${m_total} MB)
+🔥  \e[1mLoad:\e[0m $util_bar $util%
+🌡️  \e[1mTemp:\e[0m \e[33m${temp}°C\e[0m   |  ⚡  \e[1mPower:\e[0m \e[33m${pwr}W\e[0m${E_PAD}"
 
-                # VRAM Line
-                vram_bar_part=$(draw_bar "$m_perc" "$BAR_WIDTH")
-                vram_text="  VRAM: ${vram_bar_part} ${m_perc}% (${m_used} MB)"
-                vram_len=$(get_visible_length "$vram_text")
-                vram_pad=$((70 - vram_len))
-                [ "$vram_pad" -lt 0 ] && vram_pad=0
-                printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$vram_text" "$vram_pad" "" "$CYAN" "$NC"
-
-                # Load Line
-                load_bar_part=$(draw_bar "$util" "$BAR_WIDTH")
-                load_text="  Load: ${load_bar_part} ${util}% | ${temp}°C | ${pwr}W"
-                load_len=$(get_visible_length "$load_text")
-                load_pad=$((70 - load_len))
-                [ "$load_pad" -lt 0 ] && load_pad=0
-                printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$load_text" "$load_pad" "" "$CYAN" "$NC"
-
-                # Spacer
-                printf "%b║%b%b%b║%b\n" "$CYAN" "$NC" "$(printf ' %.0s' {1..70})" "$CYAN" "$NC"
-            done
+                    $GUM_CMD style \
+                        --border rounded --border-foreground 14 \
+                        --width 74 --padding "0 1" \
+                        "$(echo -e "$card_content")"
+                        
+                done <<< "$gpu_data"
+            fi
         else
-            err_text="✘ Failed to query GPU stats"
-            err_colored="${RED}${err_text}${NC}"
-            err_len=$(get_visible_length "$err_colored")
-            err_pad=$((70 - err_len))
-            [ "$err_pad" -lt 0 ] && err_pad=0
-            printf "%b║%b %b%*s%b║%b\n" "$CYAN" "$NC" "$err_colored" "$err_pad" "" "$CYAN" "$NC"
+            $GUM_CMD style \
+                --border rounded --border-foreground 1 \
+                --foreground 1 --align center --width 74 \
+                "✘  NVIDIA GPU details could not be queried or nvidia-smi is missing"
         fi
 
-        draw_separator
-
-        # Display engine health
+        # 3. RENDER ENGINE STATUS CARD (Dynamic Borders matching health state)
         get_engine_health
         health_raw=$(cat "$_ENGINE_TMP" 2>/dev/null || true)
-        rm -f "$_ENGINE_TMP"
+
+        local engine_status_text=""
         if echo "$health_raw" | grep -q '"ok"'; then
-            # Engine is up. Slot detail is best-effort: /slots stalls while a
-            # prompt is being processed, which just means "busy", not offline.
             get_engine_slots
             slots_raw=$(cat "$_SLOTS_TMP" 2>/dev/null || true)
-            rm -f "$_SLOTS_TMP"
+
             if [ -n "$slots_raw" ]; then
                 total_slots=$(echo "$slots_raw" | { grep -o '"id"' || true; } | wc -l | xargs)
                 active_slots=$(echo "$slots_raw" | { grep -o '"is_processing":true' || true; } | wc -l | xargs)
-                slot_info="${total_slots} slot(s) | ${active_slots} active"
+                slot_info="$total_slots slot(s) | $active_slots active"
             else
-                slot_info="${YELLOW}busy processing${NC}${BOLD}"
+                slot_info="busy processing tasks"
             fi
+
             model_name=$(get_model_name)
-
-            health_text="${BOLD}ENGINE HUB: ${GREEN}● Online${NC}${BOLD} | ${slot_info}${NC}"
-            health_len=$(get_visible_length "$health_text")
-            health_pad=$((70 - health_len))
-            [ "$health_pad" -lt 0 ] && health_pad=0
-            printf "%b║%b%b%*s%b║%b\n" \
-                "$CYAN" "$NC" "$health_text" "$health_pad" "" "$CYAN" "$NC"
-
-            if [ -n "$model_name" ]; then
-                model_text="  Model: ${CYAN}${model_name}${NC}"
-                model_len=$(get_visible_length "$model_text")
-                model_pad=$((70 - model_len))
-                [ "$model_pad" -lt 0 ] && model_pad=0
-                printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$model_text" "$model_pad" "" "$CYAN" "$NC"
-            fi
-
-            # Network isolation status
+            
+            engine_status_text="⚙️  \e[1mENGINE HUB:\e[0m   \e[32m🟢  ONLINE\e[0m${E_PAD}
+📦  \e[1mActive Model:\e[0m \e[36m$model_name\e[0m
+🔄  \e[1mCapacity:\e[0m     $slot_info"
+            
+            # --- RESTORED ORIGINAL ISOLATION LOGIC ---
             _iso_val="no"
             _settings_file="$SCRIPT_DIR/user/settings.conf"
             [ -f "$_settings_file" ] && _iso_val=$(grep '^isolated=' "$_settings_file" 2>/dev/null | cut -d= -f2- || echo "no")
+
+            # Clean carriage returns
+            _iso_val=$(echo "$_iso_val" | tr -d '\r' | xargs)
+
             if [ "$_iso_val" = "yes" ]; then
-                net_text="  Network: ${YELLOW}⊘ Isolated${NC}${DIM} (ai-engineering-isolated)${NC}"
+                engine_status_text="$engine_status_text
+🔒  \e[1mNetwork:\e[0m      \e[33m⊘ Isolated\e[0m \e[90m(ai-engineering-isolated)\e[0m"
             else
-                net_text="  Network: ${GREEN}◎ Standard${NC}${DIM} (ai-engineering-net)${NC}"
+                engine_status_text="$engine_status_text
+🌐  \e[1mNetwork:\e[0m      \e[32m◎ Standard\e[0m \e[90m(ai-engineering-net)\e[0m"
             fi
-            net_len=$(get_visible_length "$net_text")
-            net_pad=$((70 - net_len))
-            [ "$net_pad" -lt 0 ] && net_pad=0
-            printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$net_text" "$net_pad" "" "$CYAN" "$NC"
+
+            $GUM_CMD style \
+                --border rounded --border-foreground 2 \
+                --width 74 --padding "0 2" \
+                "$(echo -e "$engine_status_text")"
         else
-            # Non-empty /health without "ok" means the server is up but the
-            # model is still loading; empty means unreachable.
             if [ -n "$health_raw" ]; then
-                health_text="${BOLD}ENGINE HUB: ${YELLOW}● Loading model...${NC}"
+                engine_status_text="⚙️  \e[1mENGINE HUB:\e[0m   \e[33m🟡  LOADING MODEL...\e[0m${E_PAD}
+⏳  Please wait while weights are allocated."
+                $GUM_CMD style \
+                    --border rounded --border-foreground 3 \
+                    --width 74 --padding "0 2" \
+                    "$(echo -e "$engine_status_text")"
             else
-                health_text="${BOLD}ENGINE HUB: ${RED}● Offline${NC}"
+                engine_status_text="⚙️  \e[1mENGINE HUB:\e[0m   \e[31m🔴  OFFLINE / DISCONNECTED\e[0m${E_PAD}
+❌  Verify that the '$ENGINE_NAME' container is running."
+                $GUM_CMD style \
+                    --border rounded --border-foreground 1 \
+                    --width 74 --padding "0 2" \
+                    "$(echo -e "$engine_status_text")"
             fi
-            health_len=$(get_visible_length "$health_text")
-            health_pad=$((70 - health_len))
-            [ "$health_pad" -lt 0 ] && health_pad=0
-            printf "%b║%b%b%*s%b║%b\n" \
-                "$CYAN" "$NC" "$health_text" "$health_pad" "" "$CYAN" "$NC"
         fi
 
-        draw_footer
         printf "\033[J"
-
         sleep "$UPDATE_INTERVAL"
     done
 }
