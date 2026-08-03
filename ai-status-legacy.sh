@@ -19,7 +19,7 @@ readonly SEPARATOR_LINE=$(printf '═%.0s' {1..70})
 
 
 # Platform detection
-readonly IS_GITBASH=$(expr "$(uname -s)" : '.*MINGW.*' >/dev/null 2>&1 && echo "true" || echo "false")
+readonly IS_GITBASH=$({ expr "$(uname -s)" : '.*MINGW.*' >/dev/null 2>&1 && echo "true"; } || echo "false")
 readonly SMI="$([[ "$IS_GITBASH" == "true" ]] && echo "nvidia-smi.exe" || echo "nvidia-smi")"
 
 # --- [ UTILITY FUNCTIONS ] ---------------------------------------------------
@@ -27,7 +27,8 @@ readonly SMI="$([[ "$IS_GITBASH" == "true" ]] && echo "nvidia-smi.exe" || echo "
 # Returns visible string length (stripping ANSI codes)
 get_visible_length() {
     local str="$1"
-    echo -ne "$str" | sed 's/\x1b\[[0-9;]*m//g' | wc -c | xargs
+    # Remove ANSI codes, then remove invisible variation selectors (U+FE0F)
+    echo -ne "$str" | sed 's/\x1b\[[0-9;]*m//g' | sed 's/\xef\xb8\x8f//g' | wc -m | xargs
 }
 
 # Draws a colored progress bar
