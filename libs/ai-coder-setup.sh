@@ -117,21 +117,24 @@ cmd_setup() {
         rc_file="$HOME/.zshrc"
     fi
 
-    echo -e "\n${CYAN}Shell alias — '${ALIAS_NAME}' shortcut in $rc_file${NC}"
-    echo -e "${DIM}  Skip if you prefer to add ai-coder to your PATH manually.${NC}"
+    ui_init
+
     _alias_exists=false
     grep -q "alias $ALIAS_NAME=" "$rc_file" 2>/dev/null && _alias_exists=true
-    echo -e "${DIM}  Current: $([ "$_alias_exists" = "true" ] && echo "set" || echo "not set")${NC}"
-    echo -n "  Add alias? [y/n, Enter to keep]: "
-    read -r _alias_input
-    case "${_alias_input,,}" in
-        y|yes)
+    _alias_input=$(ui_yesno "Shell alias" \
+        "Shell alias — '${ALIAS_NAME}' shortcut in $rc_file" \
+        "Skip if you prefer to add ai-coder to your PATH manually." \
+        "Add alias? [y/n, Enter to keep]:" \
+        "$([ "$_alias_exists" = "true" ] && echo "set" || echo "not set")" \
+        "$([ "$_alias_exists" = "true" ] && echo "yes" || echo "no")")
+    case "$_alias_input" in
+        yes)
             touch "$rc_file"
             sed -i.bak "/alias $ALIAS_NAME=/d" "$rc_file"
             echo "alias $ALIAS_NAME='\"$(realpath "$0")\"'" >> "$rc_file"
             echo -e "${ICON_OK} Alias '${ALIAS_NAME}' added to $rc_file. Run: ${CYAN}source $rc_file${NC}"
             ;;
-        n|no)
+        no)
             touch "$rc_file"
             sed -i.bak "/alias $ALIAS_NAME=/d" "$rc_file"
             echo -e "${DIM}  Alias removed from $rc_file.${NC}"
@@ -141,12 +144,13 @@ cmd_setup() {
             ;;
     esac
 
-    echo -e "\n${CYAN}Proxy configuration:${NC}"
     _cur_proxy=$(read_pref "$SETTINGS_FILE" proxy "")
-    [ -n "$_cur_proxy" ] && printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_proxy" "$NC" || printf "%s%s%s\n" "$DIM" "  Current: none" "$NC"
-    echo -e "${DIM}  Enter a URL to set, '-' to clear, or leave blank to keep.${NC}"
-    echo -n "  Proxy URL: "
-    read -r _proxy_input
+    _proxy_input=$(ui_input "Proxy" \
+        "Proxy configuration:" \
+        "Enter a URL to set, '-' to clear, or leave blank to keep." \
+        "Proxy URL:" \
+        "${_cur_proxy:-none}" \
+        "$_cur_proxy")
     case "$_proxy_input" in
         "")
             echo -e "${DIM}  Proxy unchanged.${NC}"
@@ -161,18 +165,18 @@ cmd_setup() {
             ;;
     esac
 
-    echo -e "\n${CYAN}Network isolation — block all internet access from containers?${NC}"
-    echo -e "${DIM}  (Recommended for regulated environments. Leave blank to keep current setting.)${NC}"
     _cur_iso=$(read_pref "$SETTINGS_FILE" isolated no)
-    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_iso" "$NC"
-    echo -n "  Isolate containers? [y/N]: "
-    read -r _iso_input
-    case "${_iso_input,,}" in
-        y|yes)
+    _iso_input=$(ui_yesno "Network isolation" \
+        "Network isolation — block all internet access from containers?" \
+        "(Recommended for regulated environments. Leave blank to keep current setting.)" \
+        "Isolate containers? [y/N]:" \
+        "$_cur_iso" "$_cur_iso")
+    case "$_iso_input" in
+        yes)
             write_pref "$SETTINGS_FILE" isolated yes
             echo -e "${ICON_OK} Network isolation ${GREEN}enabled${NC}."
             ;;
-        n|no)
+        no)
             write_pref "$SETTINGS_FILE" isolated no
             echo -e "${DIM}  Network isolation disabled.${NC}"
             ;;
@@ -185,17 +189,19 @@ cmd_setup() {
     _gpu_count=1
     _gpu_count=$($SMI --query-gpu=name --format=csv,noheader,nounits 2>/dev/null | grep -c '.' || echo 1)
     if [ "${_gpu_count:-1}" -gt 1 ]; then
-        echo -e "\n${CYAN}GPU mode — ${_gpu_count} GPUs detected. Use all for inference?${NC}"
         _cur_gpu=$(read_pref "$SETTINGS_FILE" gpu_mode multi)
-        printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_gpu" "$NC"
-        echo -n "  Use all GPUs? [Y/n]: "
-        read -r _gpu_input
-        case "${_gpu_input,,}" in
-            n|no)
+        _gpu_input=$(ui_yesno "GPU mode" \
+            "GPU mode — ${_gpu_count} GPUs detected. Use all for inference?" \
+            "" \
+            "Use all GPUs? [Y/n]:" \
+            "$_cur_gpu" \
+            "$([ "$_cur_gpu" = "multi" ] && echo "yes" || echo "no")")
+        case "$_gpu_input" in
+            no)
                 write_pref "$SETTINGS_FILE" gpu_mode single
                 echo -e "${DIM}  GPU mode set to single.${NC}"
                 ;;
-            y|yes)
+            yes)
                 write_pref "$SETTINGS_FILE" gpu_mode multi
                 echo -e "${ICON_OK} GPU mode set to ${GREEN}multi${NC}."
                 ;;
@@ -205,14 +211,20 @@ cmd_setup() {
         esac
     fi
 
-    echo -e "\n${CYAN}Context window level — how many tokens of context should the model keep?${NC}"
-    echo -e "${DIM}  4k / 8k / 16k / 32k / 64k (default) / 128k / 256k${NC}"
-    echo -e "${DIM}  Larger = more context, but higher VRAM usage and slower responses.${NC}"
     _cur_ctx=$(read_pref "$SETTINGS_FILE" ctx_level 64k)
-    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_ctx" "$NC"
-    echo -n "  Context level [${_cur_ctx}]: "
-    read -r _ctx_input
-    _ctx_input="${_ctx_input:-}"
+    _ctx_input=$(ui_menu "Context window" \
+        "Context window level — how many tokens of context should the model keep?" \
+        "4k / 8k / 16k / 32k / 64k (default) / 128k / 256k
+Larger = more context, but higher VRAM usage and slower responses." \
+        "Context level [${_cur_ctx}]:" \
+        "$_cur_ctx" \
+        "4k"   "Smallest — minimal VRAM usage" \
+        "8k"   "Small tasks" \
+        "16k"  "Light coding sessions" \
+        "32k"  "Medium projects" \
+        "64k"  "Default — balanced" \
+        "128k" "Large codebases" \
+        "256k" "Largest — highest VRAM usage, slowest")
     case "${_ctx_input}" in
         4k|8k|16k|32k|64k|128k|256k)
             write_pref "$SETTINGS_FILE" ctx_level "$_ctx_input"
@@ -226,23 +238,23 @@ cmd_setup() {
             ;;
     esac
 
-    echo -e "\n${CYAN}Low-VRAM KV cache — quantize both K and V cache to q4_0?${NC}"
-    echo -e "${DIM}  Roughly halves the KV-cache VRAM reserve vs the family's default (usually${NC}"
-    echo -e "${DIM}  q8_0), which can unlock a bigger model tier or larger context on low-VRAM${NC}"
-    echo -e "${DIM}  cards. Real quality cost on long-context recall — keys are more${NC}"
-    echo -e "${DIM}  quantization-sensitive than values. K and V stay matched, so llama.cpp${NC}"
-    echo -e "${DIM}  keeps using its fast fused Flash Attention kernel (mismatched K/V types${NC}"
-    echo -e "${DIM}  silently fall back to a much slower CPU-bound path).${NC}"
     _cur_kvq4=$(read_pref "$SETTINGS_FILE" kv_q4 no)
-    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_kvq4" "$NC"
-    echo -n "  Enable low-VRAM (q4_0) KV cache? [y/N]: "
-    read -r _kvq4_input
-    case "${_kvq4_input,,}" in
-        y|yes)
+    _kvq4_input=$(ui_yesno "Low-VRAM KV cache" \
+        "Low-VRAM KV cache — quantize both K and V cache to q4_0?" \
+        "Roughly halves the KV-cache VRAM reserve vs the family's default (usually
+q8_0), which can unlock a bigger model tier or larger context on low-VRAM
+cards. Real quality cost on long-context recall — keys are more
+quantization-sensitive than values. K and V stay matched, so llama.cpp
+keeps using its fast fused Flash Attention kernel (mismatched K/V types
+silently fall back to a much slower CPU-bound path)." \
+        "Enable low-VRAM (q4_0) KV cache? [y/N]:" \
+        "$_cur_kvq4" "$_cur_kvq4")
+    case "$_kvq4_input" in
+        yes)
             write_pref "$SETTINGS_FILE" kv_q4 yes
             echo -e "${ICON_OK} Low-VRAM KV cache ${GREEN}enabled${NC} (q4_0/q4_0) — applied on next engine start."
             ;;
-        n|no)
+        no)
             write_pref "$SETTINGS_FILE" kv_q4 no
             echo -e "${DIM}  Low-VRAM KV cache disabled — using the family's default KV type.${NC}"
             ;;
@@ -251,13 +263,13 @@ cmd_setup() {
             ;;
     esac
 
-    echo -e "\n${CYAN}VRAM overhead reserve — how many GB of VRAM should be reserved for CUDA/system overhead?${NC}"
-    echo -e "${DIM}  Recommended: 1GB. Larger values can prevent OOMs on high-load GPUs.${NC}"
     _cur_vram_oh=$(read_pref "$SETTINGS_FILE" vram_overhead 1)
-    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_vram_oh" "$NC"
-    echo -n "  Reserve (GB) [${_cur_vram_oh}]: "
-    read -r _vram_oh_input
-    _vram_oh_input="${_vram_oh_input:-}"
+    _vram_oh_input=$(ui_input "VRAM overhead" \
+        "VRAM overhead reserve — how many GB of VRAM should be reserved for CUDA/system overhead?" \
+        "Recommended: 1GB. Larger values can prevent OOMs on high-load GPUs." \
+        "Reserve (GB) [${_cur_vram_oh}]:" \
+        "$_cur_vram_oh" \
+        "$_cur_vram_oh")
     case "${_vram_oh_input}" in
         *[!0-9]*)
             printf "%s⚠ Not a number — keeping %s%s\n" "$YELLOW" "$_cur_vram_oh" "$NC"
@@ -271,21 +283,21 @@ cmd_setup() {
             ;;
     esac
 
-    echo -e "\n${CYAN}MCP extras — register the optional MCP servers with each agent?${NC}"
-    echo -e "${DIM}  Extras: memory, sequential-thinking, conan, context7, brave-search, github, fetch, time.${NC}"
-    echo -e "${DIM}  Every registered server adds tool definitions to the model's context on every${NC}"
-    echo -e "${DIM}  request — small local models get slower and worse at tool selection as the${NC}"
-    echo -e "${DIM}  list grows. Core servers (filesystem, git, shell) are always registered.${NC}"
     _cur_extras=$(read_pref "$SETTINGS_FILE" mcp_extras no)
-    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_extras" "$NC"
-    echo -n "  Enable MCP extras? [y/N]: "
-    read -r _extras_input
-    case "${_extras_input,,}" in
-        y|yes)
+    _extras_input=$(ui_yesno "MCP extras" \
+        "MCP extras — register the optional MCP servers with each agent?" \
+        "Extras: memory, sequential-thinking, conan, context7, brave-search, github, fetch, time.
+Every registered server adds tool definitions to the model's context on every
+request — small local models get slower and worse at tool selection as the
+list grows. Core servers (filesystem, git, shell) are always registered." \
+        "Enable MCP extras? [y/N]:" \
+        "$_cur_extras" "$_cur_extras")
+    case "$_extras_input" in
+        yes)
             write_pref "$SETTINGS_FILE" mcp_extras yes
             echo -e "${ICON_OK} MCP extras ${GREEN}enabled${NC} — applied on next launch (no rebuild needed)."
             ;;
-        n|no)
+        no)
             write_pref "$SETTINGS_FILE" mcp_extras no
             echo -e "${DIM}  MCP extras disabled — only core servers are registered.${NC}"
             ;;
@@ -294,20 +306,24 @@ cmd_setup() {
             ;;
     esac
 
-    echo -e "\n${CYAN}Keep hub warm — leave the engine running after the last session exits?${NC}"
-    echo -e "${DIM}  Skips the model load on your next launch. Uses GPU VRAM while idle;${NC}"
-    echo -e "${DIM}  stop it any time with: ai --clean${NC}"
     _cur_keep=$(read_pref "$SETTINGS_FILE" keep_hub no)
-    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_keep" "$NC"
-    echo -n "  Keep hub warm? [y/N]: "
-    read -r _keep_input
-    case "${_keep_input,,}" in
-        y|yes)
+    _keep_input=$(ui_yesno "Keep hub warm" \
+        "Keep hub warm — leave the engine running after the last session exits?" \
+        "Skips the model load on your next launch. Uses GPU VRAM while idle;
+stop it any time with: ai --clean" \
+        "Keep hub warm? [y/N]:" \
+        "$_cur_keep" "$_cur_keep")
+    case "$_keep_input" in
+        yes)
             write_pref "$SETTINGS_FILE" keep_hub yes
             echo -e "${ICON_OK} Hub will ${GREEN}stay warm${NC} after sessions end."
             _cur_timeout=$(read_pref "$SETTINGS_FILE" keep_hub_timeout 60)
-            echo -n "  Auto-stop after how many idle minutes? [${_cur_timeout}] (0 = keep forever): "
-            read -r _timeout_input
+            _timeout_input=$(ui_input "Idle timeout" \
+                "" \
+                "" \
+                "Auto-stop after how many idle minutes? [${_cur_timeout}] (0 = keep forever):" \
+                "" \
+                "$_cur_timeout")
             case "$_timeout_input" in
                 "")
                     printf "%s  Idle timeout unchanged (%s min)%s\n" "$DIM" "$_cur_timeout" "$NC"
@@ -325,7 +341,7 @@ cmd_setup() {
                     ;;
             esac
             ;;
-        n|no)
+        no)
             write_pref "$SETTINGS_FILE" keep_hub no
             echo -e "${DIM}  Hub will shut down when the last session exits.${NC}"
             ;;
@@ -334,22 +350,22 @@ cmd_setup() {
             ;;
     esac
 
-    echo -e "\n${CYAN}Fast model storage — cache the model in a Docker volume?${NC}"
-    echo -e "${DIM}  The engine loads the model from the Docker VM's native disk instead of${NC}"
-    echo -e "${DIM}  the much slower Windows filesystem bridge — engine cold starts drop from${NC}"
-    echo -e "${DIM}  minutes to seconds. Costs a one-time copy per model and duplicates the${NC}"
-    echo -e "${DIM}  active model's disk usage inside the Docker VM.${NC}"
-    echo -e "${DIM}  Reclaim the space any time with: docker volume rm ai-coder-models${NC}"
     _cur_mvol=$(read_pref "$SETTINGS_FILE" model_volume "$MODEL_VOLUME_DEFAULT")
-    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_mvol" "$NC"
-    echo -n "  Use fast model storage? [y/n, Enter to keep]: "
-    read -r _mvol_input
-    case "${_mvol_input,,}" in
-        y|yes)
+    _mvol_input=$(ui_yesno "Fast model storage" \
+        "Fast model storage — cache the model in a Docker volume?" \
+        "The engine loads the model from the Docker VM's native disk instead of
+the much slower Windows filesystem bridge — engine cold starts drop from
+minutes to seconds. Costs a one-time copy per model and duplicates the
+active model's disk usage inside the Docker VM.
+Reclaim the space any time with: docker volume rm ai-coder-models" \
+        "Use fast model storage? [y/n, Enter to keep]:" \
+        "$_cur_mvol" "$_cur_mvol")
+    case "$_mvol_input" in
+        yes)
             write_pref "$SETTINGS_FILE" model_volume yes
             echo -e "${ICON_OK} Fast model storage ${GREEN}enabled${NC} — model syncs on next engine start."
             ;;
-        n|no)
+        no)
             write_pref "$SETTINGS_FILE" model_volume no
             echo -e "${DIM}  Fast model storage disabled — engine mounts the host model folder directly.${NC}"
             echo -e "${DIM}  Reclaim volume space with: docker volume rm ai-coder-models${NC}"
@@ -359,20 +375,20 @@ cmd_setup() {
             ;;
     esac
 
-    echo -e "\n${CYAN}Speculative decoding — speed up generation with a small draft model?${NC}"
-    echo -e "${DIM}  A tiny draft model proposes tokens the main model verifies in one pass —${NC}"
-    echo -e "${DIM}  typically 1.5-2x faster code generation. Costs ~1GB extra VRAM.${NC}"
-    echo -e "${DIM}  Applies only to model families that define a draft (currently Qwen3).${NC}"
     _cur_spec=$(read_pref "$SETTINGS_FILE" spec_decode yes)
-    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_spec" "$NC"
-    echo -n "  Use speculative decoding? [Y/n]: "
-    read -r _spec_input
-    case "${_spec_input,,}" in
-        n|no)
+    _spec_input=$(ui_yesno "Speculative decoding" \
+        "Speculative decoding — speed up generation with a small draft model?" \
+        "A tiny draft model proposes tokens the main model verifies in one pass —
+typically 1.5-2x faster code generation. Costs ~1GB extra VRAM.
+Applies only to model families that define a draft (currently Qwen3)." \
+        "Use speculative decoding? [Y/n]:" \
+        "$_cur_spec" "$_cur_spec")
+    case "$_spec_input" in
+        no)
             write_pref "$SETTINGS_FILE" spec_decode no
             echo -e "${DIM}  Speculative decoding disabled.${NC}"
             ;;
-        y|yes)
+        yes)
             write_pref "$SETTINGS_FILE" spec_decode yes
             echo -e "${ICON_OK} Speculative decoding ${GREEN}enabled${NC} — draft downloads on next launch."
             ;;
@@ -381,20 +397,20 @@ cmd_setup() {
             ;;
     esac
 
-    echo -e "\n${CYAN}Host port exposure — publish the engine on localhost:8080?${NC}"
-    echo -e "${DIM}  Allows external applications (e.g. Open WebUI) to connect directly.${NC}"
-    echo -e "${DIM}  Leave disabled if you only need the AI coding tools inside Docker.${NC}"
     _cur_expose=$(read_pref "$SETTINGS_FILE" expose_host_port no)
-    printf "%s%s %s%s\n" "$DIM" "  Current:" "$_cur_expose" "$NC"
-    echo -n "  Expose engine on localhost:8080? [y/N]: "
-    read -r _expose_input
-    case "${_expose_input,,}" in
-        y|yes)
+    _expose_input=$(ui_yesno "Host port exposure" \
+        "Host port exposure — publish the engine on localhost:8080?" \
+        "Allows external applications (e.g. Open WebUI) to connect directly.
+Leave disabled if you only need the AI coding tools inside Docker." \
+        "Expose engine on localhost:8080? [y/N]:" \
+        "$_cur_expose" "$_cur_expose")
+    case "$_expose_input" in
+        yes)
             write_pref "$SETTINGS_FILE" expose_host_port yes
             echo -e "${ICON_OK} Engine will be published on ${CYAN}localhost:8080${NC}."
             echo -e "${DIM}  Next launch will also offer to start Open WebUI alongside your agent.${NC}"
             ;;
-        n|no)
+        no)
             write_pref "$SETTINGS_FILE" expose_host_port no
             echo -e "${DIM}  Engine port not exposed to host.${NC}"
             ;;
@@ -403,16 +419,24 @@ cmd_setup() {
             ;;
     esac
 
-    echo -e "\n${CYAN}Git identity for commits inside containers:${NC}"
     _cur_git_email=$(read_pref "$SETTINGS_FILE" git_email "")
     _cur_git_name=$(read_pref  "$SETTINGS_FILE" git_name  "")
     [ -z "$_cur_git_email" ] && _cur_git_email=$(git config --global user.email 2>/dev/null || true)
     [ -z "$_cur_git_name" ]  && _cur_git_name=$(git config --global user.name 2>/dev/null || true)
-    [ -n "$_cur_git_email" ] && printf "%s%s %s <%s>%s\n" "$DIM" "  Current:" "$_cur_git_name" "$_cur_git_email" "$NC"
-    echo -n "  Email (leave blank to keep): "
-    read -r _git_email_input
-    echo -n "  Name  (leave blank to keep): "
-    read -r _git_name_input
+    _git_cur_label=""
+    [ -n "$_cur_git_email" ] && _git_cur_label="${_cur_git_name} <${_cur_git_email}>"
+    _git_email_input=$(ui_input "Git identity — email" \
+        "Git identity for commits inside containers:" \
+        "" \
+        "Email (leave blank to keep):" \
+        "$_git_cur_label" \
+        "$_cur_git_email")
+    _git_name_input=$(ui_input "Git identity — name" \
+        "" \
+        "" \
+        "Name  (leave blank to keep):" \
+        "" \
+        "$_cur_git_name")
     _final_git_email="${_git_email_input:-$_cur_git_email}"
     _final_git_name="${_git_name_input:-$_cur_git_name}"
     if [ -n "$_final_git_email" ] || [ -n "$_final_git_name" ]; then

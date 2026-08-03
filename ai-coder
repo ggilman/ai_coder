@@ -20,6 +20,7 @@ fi
 source "$CORE_SCRIPT"
 
 # Load additional libraries
+source "$(dirname "$(realpath "$0")")/libs/ai-coder-ui.sh"
 source "$(dirname "$(realpath "$0")")/libs/ai-coder-setup.sh"
 source "$(dirname "$(realpath "$0")")/libs/ai-coder-menus.sh"
 
