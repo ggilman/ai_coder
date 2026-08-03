@@ -77,6 +77,29 @@ _render_gum_prompt() {
 }
 
 # ==============================================================================
+# PLAIN-READ FALLBACK
+# ==============================================================================
+
+# Renders the same header/help/current block as _render_gum_prompt, then prints
+# the prompt text with no trailing newline so a plain `read` lands on the same
+# line. All output goes to stderr — callers capture only the answer.
+_ui_plain_header() {
+    local _header="$1" _help="$2" _current="$3" _prompt="$4"
+
+    echo -e "\n${COLOR_ACCENT}${COLOR_BOLD}${_header}${COLOR_RESET}" >&2
+
+    if [ -n "$_help" ]; then
+        echo -e "${COLOR_DIM}${_help}${COLOR_RESET}" >&2
+    fi
+
+    if [ -n "$_current" ]; then
+        echo -e "${COLOR_DIM}Current:${COLOR_RESET} ${COLOR_HIGHLIGHT}${_current}${COLOR_RESET}" >&2
+    fi
+
+    echo -n "${_prompt} " >&2
+}
+
+# ==============================================================================
 # GUM ABSTRACTIONS (THEMED)
 # ==============================================================================
 

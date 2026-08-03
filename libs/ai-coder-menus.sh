@@ -4,13 +4,57 @@
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
-# _run_selection_menu — shared numbered-list picker used by both menu functions
+# _menu_ui_init — lazily bootstrap gum for the menus, once per run
+#
+# Downloads gum if missing (ensure_gum) and resolves UI_GUM/GUM_CMD (ui_init).
+# Only called when a menu is actually about to be shown, so normal launches
+# with saved preferences never touch gum at all.
+# ------------------------------------------------------------------------------
+_MENU_UI_READY=""
+_menu_ui_init() {
+    [ -n "$_MENU_UI_READY" ] && return 0
+    ensure_gum
+    ui_init
+    _MENU_UI_READY=1
+}
+
+# ------------------------------------------------------------------------------
+# _run_selection_menu — shared list picker used by both menu functions.
+# Uses gum choose when available, falling back to a numbered plain-text
+# picker with input validation when gum can't be installed or run.
 # Usage: _run_selection_menu <prompt> <state_file> <pref_key> <current_key> [name:key ...]
 # ------------------------------------------------------------------------------
 _run_selection_menu() {
     local prompt="$1" state_file="$2" pref_key="$3" current_key="$4"
     shift 4
     local pairs=("$@")
+
+    _menu_ui_init
+
+    if [ "$UI_GUM" = "true" ]; then
+        local names=() current_name=""
+        for pair in "${pairs[@]}"; do
+            local _key="${pair#*:}" _name="${pair%%:*}"
+            names+=("$_name")
+            [ "$_key" = "$current_key" ] && current_name="$_name"
+        done
+
+        local choice
+        choice=$(_gum_choose "$prompt" "" "$current_name" "$current_name" "${names[@]}")
+        if [ -z "$choice" ]; then
+            exit 0
+        fi
+
+        for pair in "${pairs[@]}"; do
+            if [ "${pair%%:*}" = "$choice" ]; then
+                write_pref "$state_file" "$pref_key" "${pair#*:}"
+                echo -e "${ICON_OK} ${choice} selected."
+                return
+            fi
+        done
+        return
+    fi
+
     while true; do
         echo -e "\n${CYAN}${prompt}${NC}"
         local i=1 default_choice=""
@@ -80,15 +124,21 @@ show_menu() {
 # ------------------------------------------------------------------------------
 # show_webui_prompt — ask whether to start Open WebUI alongside the agent.
 # Only offered when the engine port is exposed to the host (see --setup).
+# Uses gum when available, falling back to a plain y/n read.
 # ------------------------------------------------------------------------------
 show_webui_prompt() {
     local prev="${1:-}"
-    local def="n" hint="[y/N]"
-    if [ "$prev" = "yes" ]; then def="y"; hint="[Y/n]"; fi
-    echo -e "\n${CYAN}Start Open WebUI alongside your coding agent?${NC}"
-    echo -e "${DIM}  Chat with the same local model at http://localhost:${OPEN_WEBUI_HOST_PORT} while you code.${NC}"
-    echo -n "  Start Open WebUI? $hint: "
-    read -r _webui_input
+    local def="no" hint="[y/N]"
+    if [ "$prev" = "yes" ]; then def="yes"; hint="[Y/n]"; fi
+
+    _menu_ui_init
+
+    local _webui_input
+    _webui_input=$(ui_yesno "Open WebUI" \
+        "Start Open WebUI alongside your coding agent?" \
+        "Chat with the same local model at http://localhost:${OPEN_WEBUI_HOST_PORT} while you code." \
+        "Start Open WebUI? $hint:" \
+        "" "$def")
     [ -z "$_webui_input" ] && _webui_input="$def"
     case "${_webui_input,,}" in
         y|yes)
