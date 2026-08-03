@@ -1,86 +1,141 @@
 #!/bin/bash
 # ==============================================================================
 # AI-CODER-UI.SH | Setup Wizard UI Helpers
-# whiptail dialogs when available (Ubuntu/WSL), plain read prompts otherwise
-# (Git Bash ships no whiptail). Helpers render the question and echo the raw
-# answer on stdout; all screen output goes to stderr so command substitution
-# captures only the answer. Interpretation of the answer (validation,
-# write_pref, outcome messages) stays with the caller. Every helper returns 0
-# so callers are safe under `set -euo pipefail`.
+# Gum-based dialogs with plain-read fallback. Gum works on WSL and Git Bash;
+# the fallback is used only when gum cannot be installed or run. Helpers render
+# the question and echo the raw answer on stdout; all screen output goes to
+# stderr so command substitution captures only the answer. Interpretation of
+# the answer (validation, write_pref, outcome messages) stays with the caller.
+# Every helper returns 0 so callers are safe under `set -euo pipefail`.
 # ==============================================================================
 
-UI_WHIPTAIL=false
+UI_GUM=false
+GUM_CMD=""
 UI_BACKTITLE="ai-coder setup"
 
-# Decide whether whiptail dialogs can be used for this run.
-# AI_CODER_NO_WHIPTAIL=1 forces the plain-read fallback (for testing).
+# Beautiful CLI Theme Colors (256-color compatible)
+COLOR_ACCENT='\033[38;5;81m'     # Cyan
+COLOR_DIM='\033[38;5;244m'       # Grey
+COLOR_HIGHLIGHT='\033[38;5;118m' # Green
+COLOR_BOLD='\033[1m'
+COLOR_RESET='\033[0m'
+
+# Ensure gum is available; resolve GUM_CMD to the active binary.
+_ensure_gum() {
+    if command -v gum >/dev/null 2>&1; then
+        GUM_CMD="gum"
+        return 0
+    fi
+
+    local gum_exe_name="gum"
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+        gum_exe_name="gum.exe"
+    fi
+
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local gum_path="$script_dir/../.assets/$gum_exe_name"
+
+    if [[ -f "$gum_path" ]]; then
+        GUM_CMD="$gum_path"
+        export GUM_CMD
+        return 0
+    fi
+
+    return 1
+}
+
 ui_init() {
-    UI_WHIPTAIL=false
-    [ "${AI_CODER_NO_WHIPTAIL:-0}" = "1" ] && return 0
-    command -v whiptail >/dev/null 2>&1 || return 0
-    { [ -t 0 ] && [ -t 1 ]; } || return 0
-    UI_WHIPTAIL=true
+    UI_GUM=false
+    [ "${AI_CODER_NO_GUM:-0}" = "1" ] && return 0
+    if ! _ensure_gum; then return 0; fi
+    if ! "$GUM_CMD" version-check 0.17.0 >/dev/null 2>&1; then return 0; fi
+    UI_GUM=true
     return 0
 }
 
-# Dialog height for a text block: wrapped line count + frame/button rows.
-# $1 = dialog text, $2 = extra rows (input field, menu list, ...)
-_ui_height() {
-    local _lines
-    _lines=$(printf '%s\n' "$1" | fold -s -w 66 | wc -l)
-    echo $(( _lines + ${2:-0} + 7 ))
-    return 0
-}
+# ==============================================================================
+# UI RENDERERS
+# ==============================================================================
 
-# Compose the whiptail dialog body: question + help + current-value footer.
-# $1 = header (full question line), $2 = help text, $3 = current label ("" = omit)
-_ui_text() {
-    local _text="$1"
-    if [ -n "$2" ]; then
-        [ -n "$_text" ] && _text="${_text}"$'\n\n'
-        _text="${_text}$2"
+# Renders the formatted text above interactive Gum prompts
+_render_gum_prompt() {
+    local _header="$1" _help="$2" _current="$3"
+    
+    # Add a subtle visual divider before the new step begins
+    echo -e "\n${COLOR_DIM}──────────────────────────────────────────────────────────${COLOR_RESET}" >&2
+    echo -e "${COLOR_ACCENT}${COLOR_BOLD}${_header}${COLOR_RESET}" >&2
+    
+    if [ -n "$_help" ]; then
+        echo -e "${COLOR_DIM}${_help}${COLOR_RESET}" >&2
     fi
-    if [ -n "$3" ]; then
-        [ -n "$_text" ] && _text="${_text}"$'\n\n'
-        _text="${_text}Current: $3 — ESC keeps current."
+    
+    if [ -n "$_current" ]; then
+        echo -e "${COLOR_DIM}Current:${COLOR_RESET} ${COLOR_HIGHLIGHT}${_current}${COLOR_RESET}" >&2
     fi
-    printf '%s' "$_text"
-    return 0
+    echo "" >&2 # Blank line spacing before the interactive element
 }
 
-# Classic plain-mode question block, written to stderr.
-# $1 = header, $2 = help text, $3 = current label ("" = omit), $4 = prompt
-_ui_plain_header() {
-    local _line
-    [ -n "$1" ] && echo -e "\n${CYAN}$1${NC}" >&2
-    if [ -n "$2" ]; then
-        while IFS= read -r _line; do
-            echo -e "${DIM}  ${_line}${NC}" >&2
-        done <<< "$2"
+# ==============================================================================
+# GUM ABSTRACTIONS (THEMED)
+# ==============================================================================
+
+_gum_confirm() {
+    local _header="$1" _help="$2" _current="$3" _default="$4"
+    _render_gum_prompt "$_header" "$_help" "$_current"
+    
+    local _def_val="true"
+    if [[ "${_default,,}" == "no" || "${_default,,}" == "n" ]]; then
+        _def_val="false"
     fi
-    [ -n "$3" ] && echo -e "${DIM}  Current: $3${NC}" >&2
-    echo -n "  $4 " >&2
-    return 0
+    
+    # Ghost button style with explicitly cleared backgrounds to kill the default pink
+    "$GUM_CMD" confirm " " --default="${_def_val}" \
+        --selected.foreground="81" --selected.background="" \
+        --selected.padding="0 2" --selected.margin="0 1" \
+        --selected.border="rounded" --selected.border-foreground="81" \
+        --unselected.foreground="250" --unselected.background="" \
+        --unselected.padding="0 2" --unselected.margin="0 1" \
+        --unselected.border="rounded" --unselected.border-foreground="236"
 }
 
-# ui_yesno TITLE HEADER HELP PROMPT CURRENT DEFAULT(yes|no)
-# stdout: "yes" | "no" | "" (keep current) | raw input (plain mode, caught by
-# the caller's *) arm exactly like the pre-whiptail wizard).
-# Whiptail: the focused button follows DEFAULT so bare Enter re-selects the
-# current value; ESC keeps current.
+_gum_input() {
+    # Added $_prompt as the 5th argument
+    local _header="$1" _help="$2" _current="$3" _prefill="$4" _prompt="$5"
+    _render_gum_prompt "$_header" "$_help" "$_current"
+    
+    local _p_text=" ❯ "
+    [ -n "$_prompt" ] && _p_text=" ${_prompt} "
+    
+    "$GUM_CMD" input --value="${_prefill}" \
+        --prompt="${_p_text}" --prompt.foreground="81" \
+        --cursor.foreground="81" --width=60
+}
+
+_gum_choose() {
+    local _header="$1" _help="$2" _current="$3" _selected="$4"
+    shift 4
+    _render_gum_prompt "$_header" "$_help" "$_current"
+    
+    # Added --height to keep the menu compact
+    "$GUM_CMD" choose --selected="${_selected}" \
+        --cursor=" ❯ " --cursor.foreground="81" \
+        --item.foreground="250" --selected.foreground="81" \
+        --height=10 \
+        -- "$@"
+}
+
+# ==============================================================================
+# EXPORTED UI FUNCTIONS
+# ==============================================================================
+
 ui_yesno() {
     local _title="$1" _header="$2" _help="$3" _prompt="$4" _current="$5" _default="$6"
-    local _input _rc=0 _text
-    if [ "$UI_WHIPTAIL" = "true" ]; then
-        _text=$(_ui_text "$_header" "$_help" "$_current")
-        local _args=(--backtitle "$UI_BACKTITLE" --title "$_title")
-        [ "$_default" = "no" ] && _args+=(--defaultno)
-        whiptail "${_args[@]}" --yesno "$_text" "$(_ui_height "$_text")" 72 1>&2 || _rc=$?
-        case "$_rc" in
-            0) echo "yes" ;;
-            1) echo "no" ;;
-            *) echo "" ;;
-        esac
+    local _input
+    
+    if [ "$UI_GUM" = "true" ]; then
+        _gum_confirm "$_header" "$_help" "$_current" "$_default"
+        if [ $? -eq 0 ]; then echo "yes"; else echo "no"; fi
     else
         _ui_plain_header "$_header" "$_help" "$_current" "$_prompt"
         read -r _input || _input=""
@@ -93,21 +148,14 @@ ui_yesno() {
     return 0
 }
 
-# ui_input TITLE HEADER HELP PROMPT CURRENT PREFILL
-# stdout: entered text; "" = keep current (blank entry, ESC or Cancel).
-# Whiptail: the box is prefilled with the current value, so OK without edits
-# is an idempotent re-write of the current value.
 ui_input() {
     local _title="$1" _header="$2" _help="$3" _prompt="$4" _current="$5" _prefill="$6"
-    local _input _rc=0 _text
-    if [ "$UI_WHIPTAIL" = "true" ]; then
-        _text=$(_ui_text "$_header" "$_help" "$_current")
-        [ -n "$_text" ] && _text="${_text}"$'\n\n'
-        _text="${_text}${_prompt}"
-        _input=$(whiptail --backtitle "$UI_BACKTITLE" --title "$_title" \
-            --inputbox "$_text" "$(_ui_height "$_text" 2)" 72 "$_prefill" \
-            3>&1 1>&2 2>&3) || _rc=$?
-        if [ "$_rc" -eq 0 ]; then echo "$_input"; else echo ""; fi
+    local _input
+    
+    if [ "$UI_GUM" = "true" ]; then
+        # Passed $_prompt into _gum_input
+        _input=$(_gum_input "$_header" "$_help" "$_current" "$_prefill" "$_prompt")
+        echo "$_input"
     else
         _ui_plain_header "$_header" "$_help" "$_current" "$_prompt"
         read -r _input || _input=""
@@ -116,22 +164,40 @@ ui_input() {
     return 0
 }
 
-# ui_menu TITLE HEADER HELP PROMPT CURRENT TAG1 DESC1 [TAG2 DESC2 ...]
-# stdout: chosen tag; "" = keep current (ESC or Cancel).
-# Plain mode echoes the raw typed value — invalid entries fall through to the
-# caller's existing "unknown value" arm, same as the pre-whiptail wizard.
 ui_menu() {
     local _title="$1" _header="$2" _help="$3" _prompt="$4" _current="$5"
     shift 5
-    local _input _rc=0 _text _count
-    _count=$(( $# / 2 ))
-    if [ "$UI_WHIPTAIL" = "true" ]; then
-        _text=$(_ui_text "$_header" "$_help" "$_current")
-        _input=$(whiptail --backtitle "$UI_BACKTITLE" --title "$_title" \
-            --default-item "$_current" \
-            --menu "$_text" "$(_ui_height "$_text" "$_count")" 72 "$_count" "$@" \
-            3>&1 1>&2 2>&3) || _rc=$?
-        if [ "$_rc" -eq 0 ]; then echo "$_input"; else echo ""; fi
+
+    _current=$(echo "$_current" | tr -d '\n\r')
+    [ -z "$_current" ] && _current=""
+
+    local _input
+    
+    if [ "$UI_GUM" = "true" ]; then
+        local _items=()
+        while [ $# -gt 0 ]; do
+            _items+=("$1")
+            shift 2
+        done
+
+        if [ ${#_items[@]} -eq 0 ]; then
+            _input=""
+        else
+            local _found=false
+            for _item in "${_items[@]}"; do
+                if [ "$_item" = "$_current" ]; then
+                    _found=true
+                    break
+                fi
+            done
+            
+            if [ "$_found" = false ] && [ -n "$_current" ]; then
+                _current=""
+            fi
+
+            _input=$(_gum_choose "$_header" "$_help" "$_current" "$_current" "${_items[@]}")
+        fi
+        echo "$_input"
     else
         _ui_plain_header "$_header" "$_help" "$_current" "$_prompt"
         read -r _input || _input=""

@@ -1,63 +1,40 @@
 #!/bin/bash
 
 # ==============================================================================
-# AI-STATUS-GUM.SH v4.6 | GPU & Engine Dashboard via Gum
+# AI-STATUS-GUM.SH v4.7 | GPU & Engine Dashboard via Gum
 # Monitors GPU utilization, VRAM, and AI Hub engine health.
+# Includes automated offline fallback to ai-status-legacy.sh.
 # ==============================================================================
 set -euo pipefail
 
 # BULLETPROOF PATH RESOLUTION
 SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 
+# Source shared library for ensure_gum and other utilities
+source "$SCRIPT_DIR/libs/ai-coder-setup.sh"
+
+# Fallback function to launch the legacy script
+launch_legacy_fallback() {
+    local legacy_script="$SCRIPT_DIR/ai-status-legacy.sh"
+    echo "⚠️  Unable to initialize modern GUM interface (offline or download failed)."
+    if [ -f "$legacy_script" ]; then
+        echo "🔄 Launching legacy text-based dashboard..."
+        sleep 2
+        exec "$legacy_script"
+    else
+        echo "❌ Error: Legacy fallback script not found at: $legacy_script"
+        exit 1
+    fi
+}
+
 # --- [ AUTO-DEPENDENCY GUM BOOTSTRAP ] ----------------------------------------
-GUM_DIR="$HOME/.ai_tool_setup_assets"
+GUM_DIR="$SCRIPT_DIR/.assets"
 mkdir -p "$GUM_DIR"
 
-GUM_EXE_NAME="gum"
-if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-    GUM_EXE_NAME="gum.exe"
-fi
+ensure_gum || true
 
-if ! command -v gum &> /dev/null && [ ! -f "$GUM_DIR/$GUM_EXE_NAME" ]; then
-    echo "⚡ Bootstrapping status interface engine..."
-    ARCH=$(uname -m)
-    case "$ARCH" in
-        x86_64|amd64) GUM_ARCH="x86_64" ;;
-        aarch64|arm64) GUM_ARCH="arm64" ;;
-        *) GUM_ARCH="x86_64" ;;
-    esac
-    
-    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-        PLATFORM="Windows"
-        EXT=".zip"
-    else
-        PLATFORM="Linux"
-        EXT=".tar.gz"
-    fi
-    
-    DOWNLOAD_URL=$(curl -sL "https://api.github.com/repos/charmbracelet/gum/releases/latest" | grep "browser_download_url" | grep "${PLATFORM}_${GUM_ARCH}${EXT}" | cut -d '"' -f 4 | head -n 1)
-    TMP_EXTRACT=$(mktemp -d)
-    
-    echo "📥 Downloading asset from: $DOWNLOAD_URL"
-    if [ "$PLATFORM" == "Windows" ]; then
-        curl -L "$DOWNLOAD_URL" -o "$TMP_EXTRACT/gum.zip"
-        unzip -j -o "$TMP_EXTRACT/gum.zip" "gum.exe" -d "$GUM_DIR" || unzip -j -o "$TMP_EXTRACT/gum.zip" "*/gum.exe" -d "$GUM_DIR"
-    else
-        curl -L "$DOWNLOAD_URL" -o "$TMP_EXTRACT/gum.tar.gz"
-        tar -xzf "$TMP_EXTRACT/gum.tar.gz" -C "$TMP_EXTRACT"
-        find "$TMP_EXTRACT" -type f -name "gum" -exec mv {} "$GUM_DIR/" \;
-    fi
-    
-    rm -rf "$TMP_EXTRACT"
-    chmod +x "$GUM_DIR/$GUM_EXE_NAME"
-    echo "✅ Setup interface engine ready!"
-fi
-
-if command -v gum &> /dev/null; then
-    GUM_CMD="gum"
-else
-    GUM_CMD="$GUM_DIR/$GUM_EXE_NAME"
-fi
+# Map the active command binary
+resolve_gum_cmd || launch_legacy_fallback
 
 # --- [ CONFIGURATION ] --------------------------------------------------------
 readonly UPDATE_INTERVAL=2

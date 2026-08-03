@@ -1,4 +1,5 @@
 test_*
+**/.assets
 .ai-coder/
 .vs/
 .vscode/

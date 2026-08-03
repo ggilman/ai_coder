@@ -31,7 +31,7 @@ The environment uses a **Hub & Spoke** model:
 | `agents/ai-coder-webui.sh` | Open WebUI mode — starts the engine + Open WebUI chat interface at `localhost:3000` |
 | `libs/ai-coder-menus.sh` | Interactive family and tool selection menus (sourced by `ai-coder`) |
 | `libs/ai-coder-setup.sh` | Setup wizard and `--fix-project` command (sourced by `ai-coder`) |
-| `libs/ai-coder-ui.sh` | Setup wizard UI helpers — whiptail dialogs with a plain-read fallback (sourced by `ai-coder`) |
+| `libs/ai-coder-ui.sh` | Setup wizard UI helpers — gum dialogs with a plain-read fallback (sourced by `ai-coder`) |
 | `libs/fixpath.sh` | WSL path resolver — converts Docker Desktop bind mounts to native WSL paths |
 | `ai-status.sh` | System health dashboard |
 | `offline/bundle.sh` | Offline bundle creator — packages scripts, Docker images, and a model for air-gapped deployment |
@@ -394,7 +394,7 @@ ai-coder also checks for updates automatically once per day on launch and prints
 
 ### Setup (`--setup`)
 
-**`--setup` must be run once before first launch.** It walks through up to fourteen configuration steps. On Ubuntu/WSL, where `whiptail` is available, each step is shown as a dialog box; on Git Bash (which has no `whiptail`) it automatically falls back to plain text prompts. Either way the questions and defaults are the same:
+**`--setup` must be run once before first launch.** It walks through up to fourteen configuration steps. On first run the installer downloads [gum](https://github.com/charmbracelet/gum) — a CLI tool for beautiful interactive prompts — and uses it for the wizard on both WSL and Git Bash. If gum is unavailable it falls back to plain text prompts. Either way the questions and defaults are the same:
 
 ```bash
 ./ai-coder --setup
@@ -415,7 +415,7 @@ ai-coder also checks for updates automatically once per day on launch and prints
 13. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
 14. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
 
-In whiptail mode, pressing **Esc** or **Cancel** on any step keeps that setting unchanged and moves to the next question — nothing is lost mid-wizard. To force the plain-text prompts even where `whiptail` is installed, set `AI_CODER_NO_WHIPTAIL=1`.
+In gum mode, pressing **Esc** or **Cancel** on any step keeps that setting unchanged and moves to the next question — nothing is lost mid-wizard. To force the plain-text prompts even where gum is installed, set `AI_CODER_NO_GUM=1`.
 
 After completing setup, if you added the alias:
 

@@ -4,6 +4,148 @@
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
+# ensure_gum — download and install charmbracelet/gum if unavailable
+#
+# On first call downloads gum from GitHub releases into $HOME/.ai_tool_setup_assets.
+# If gum is already on PATH or installed in that directory, returns immediately.
+# Falls back to launch_legacy_fallback() when the download fails.
+# ------------------------------------------------------------------------------
+ensure_gum() {
+    local gum_exe_name="gum"
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+        gum_exe_name="gum.exe"
+    fi
+
+    local _gum_dir="./.assets"
+    mkdir -p "$_gum_dir"
+
+    echo -ne "⚡ Checking for interface engine (gum)... "
+    command -v gum &>/dev/null && { echo "found in PATH"; return 0; }
+    [ -f "$_gum_dir/$gum_exe_name" ] && { echo "found locally"; return 0; }
+    echo "not found."
+
+    echo "⚡ Bootstrapping status interface engine..."
+
+    local arch; arch=$(uname -m)
+    local gum_arch="x86_64"
+    case "$arch" in
+        x86_64|amd64) gum_arch="x86_64" ;;
+        aarch64|arm64) gum_arch="arm64" ;;
+    esac
+
+    local platform="Linux" ext=".tar.gz"
+    [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && { platform="Windows"; ext=".zip"; }
+
+
+    set +e
+    local _proxy_opt=""
+    # Use grep to fetch the proxy manually to avoid dependency on functions defined later
+    local _cur_proxy
+    _cur_proxy=$(grep "^proxy=" "$(dirname "${BASH_SOURCE[0]}")/../user/settings.conf" 2>/dev/null | cut -d= -f2- || true)
+    # Also check if HTTP_PROXY/HTTPS_PROXY environment variables are set
+    [ -z "$_cur_proxy" ] && _cur_proxy=${HTTPS_PROXY:-${HTTP_PROXY:-${https_proxy:-${http_proxy:-}}}}
+    # Ensure we use -x for curl proxy
+    [ -n "$_cur_proxy" ] && _proxy_opt="-x $(resolve_proxy_to_ip "$(echo "$_cur_proxy" | sed 's|^https://|http://|')")"
+
+    set +e
+    if [ "$platform" = "Windows" ]; then
+        download_url=$(curl -sL $_proxy_opt --max-time 15 \
+        "https://api.github.com/repos/charmbracelet/gum/releases/latest" \
+        | grep "browser_download_url" \
+        | grep -i "Windows_x86_64" \
+        | grep -i ".zip" \
+        | grep -v "sbom" \
+        | grep -v ".sig" \
+        | grep -v ".pem" \
+        | cut -d'"' -f4 | head -n1 || true)
+    else
+        download_url=$(curl -sL $_proxy_opt --max-time 15 \
+            "https://api.github.com/repos/charmbracelet/gum/releases/latest" \
+            | grep "browser_download_url" \
+            | grep -i "${platform}_${gum_arch}" \
+            | grep -i "${ext}" \
+            | grep -v "sbom" \
+            | grep -v ".sig" \
+            | grep -v ".pem" \
+            | cut -d'"' -f4 | head -n1 || true)
+    fi
+
+    if [ -z "$download_url" ]; then
+        echo "⚠ Proxy block detected or no match. Falling back to hardcoded URL for Gum..."
+        if [ "$platform" = "Windows" ]; then
+            download_url="https://github.com/charmbracelet/gum/releases/download/v0.17.0/gum_0.17.0_Windows_x86_64.zip"
+        else
+            download_url="https://github.com/charmbracelet/gum/releases/download/v0.17.0/gum_0.17.0_Linux_${gum_arch}.tar.gz"
+        fi
+    fi
+
+    local tmp_extract; tmp_extract=$(mktemp -d)
+
+    echo " Downloading asset from: $download_url"
+    if [ "$platform" = "Windows" ]; then
+        curl -sL $_proxy_opt --max-time 15 "$download_url" -o "$_gum_dir/gum.zip"
+        if command -v unzip >/dev/null 2>&1; then
+            unzip -o "$_gum_dir/gum.zip" -d "$_gum_dir" &>/dev/null
+        elif command -v tar >/dev/null 2>&1; then
+            tar -xf "$_gum_dir/gum.zip" -C "$_gum_dir" &>/dev/null
+        else
+            python3 -c "import zipfile; zipfile.ZipFile('$_gum_dir/gum.zip', 'r').extractall('$_gum_dir')" 2>/dev/null || \
+            python -c "import zipfile; zipfile.ZipFile('$_gum_dir/gum.zip', 'r').extractall('$_gum_dir')" 2>/dev/null
+        fi
+        [ -d "$_gum_dir/gum_0.17.0_Windows_x86_64" ] && mv "$_gum_dir/gum_0.17.0_Windows_x86_64/gum.exe" "$_gum_dir/gum.exe" 2>/dev/null
+        [ -d "$_gum_dir/gum_0.14.3_Windows_x86_64" ] && mv "$_gum_dir/gum_0.14.3_Windows_x86_64/gum.exe" "$_gum_dir/gum.exe" 2>/dev/null
+        [ -f "$_gum_dir/gum.exe" ] || find "$_gum_dir" -name "gum.exe" -exec mv {} "$_gum_dir/gum.exe" \; 2>/dev/null
+        rm -f "$_gum_dir/gum.zip"
+        find "$_gum_dir" -maxdepth 1 -type d -name "gum_*" -exec rm -rf {} + 2>/dev/null
+    else
+        curl -sL $_proxy_opt --max-time 15 "$download_url" -o "$_gum_dir/gum.tar.gz"
+        tar -xzf "$_gum_dir/gum.tar.gz" -C "$_gum_dir" &>/dev/null
+        find "$_gum_dir" -type f -name "gum" -exec mv {} "$_gum_dir/" \; &>/dev/null
+        rm -f "$_gum_dir/gum.tar.gz"
+        find "$_gum_dir" -maxdepth 1 -type d -name "gum_*" -exec rm -rf {} + 2>/dev/null
+    fi
+    local dl_status=$?
+    rm -rf "$tmp_extract"
+    set -e
+
+    # duplicate block removed
+
+    if [ $dl_status -ne 0 ] || [ ! -f "$_gum_dir/$gum_exe_name" ]; then
+        echo "⚠ Failed to download gum — running without interface enhancements."
+        return 0
+    fi
+
+    chmod +x "$_gum_dir/$gum_exe_name" &>/dev/null
+    echo "✅ Setup interface engine ready!"
+}
+
+# ------------------------------------------------------------------------------
+# resolve_gum_cmd — resolve the active gum binary into GUM_CMD
+#
+# Priority: PATH binary > installed binary (gum.exe preferred on Windows).
+# Returns 0 on success, 1 if gum is not found anywhere.
+# ------------------------------------------------------------------------------
+resolve_gum_cmd() {
+    local _gum_dir="./.assets"
+    local gum_exe_name="gum"
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+        gum_exe_name="gum.exe"
+    fi
+
+    if command -v gum &> /dev/null; then
+        GUM_CMD="gum"
+        return 0
+    fi
+
+    if [ -f "$_gum_dir/$gum_exe_name" ]; then
+        GUM_CMD="$_gum_dir/$gum_exe_name"
+        return 0
+    fi
+
+    return 1
+}
+
+# ------------------------------------------------------------------------------
 # cmd_fix_project — normalize line endings in the current git project
 # ------------------------------------------------------------------------------
 cmd_fix_project() {
@@ -117,7 +259,16 @@ cmd_setup() {
         rc_file="$HOME/.zshrc"
     fi
 
+    # Ensure gum is available before initializing the UI
+    ensure_gum
     ui_init
+	# --- ADD THIS BANNER BLOCK ---
+    clear
+    echo -e "${CYAN}${BOLD}==========================================================${NC}"
+    echo -e "${CYAN}${BOLD}                  AI-CODER SETUP WIZARD                   ${NC}"
+    echo -e "${CYAN}${BOLD}==========================================================${NC}"
+    echo -e "${DIM}Configure your local agent environment and preferences.${NC}"
+    # -----------------------------
 
     _alias_exists=false
     grep -q "alias $ALIAS_NAME=" "$rc_file" 2>/dev/null && _alias_exists=true
@@ -453,20 +604,21 @@ Leave disabled if you only need the AI coding tools inside Docker." \
     _cur_git_name=$(read_pref  "$SETTINGS_FILE" git_name  "")
     [ -z "$_cur_git_email" ] && _cur_git_email=$(git config --global user.email 2>/dev/null || true)
     [ -z "$_cur_git_name" ]  && _cur_git_name=$(git config --global user.name 2>/dev/null || true)
-    _git_cur_label=""
-    [ -n "$_cur_git_email" ] && _git_cur_label="${_cur_git_name} <${_cur_git_email}>"
+
     _git_email_input=$(ui_input "Git identity — email" \
-        "Git identity for commits inside containers:" \
-        "" \
-        "Email (leave blank to keep):" \
-        "$_git_cur_label" \
+        "Git Identity (1/2): Email" \
+        "Used for commits inside containers. Leave blank to keep current." \
+        "Email:" \
+        "$_cur_git_email" \
         "$_cur_git_email")
+        
     _git_name_input=$(ui_input "Git identity — name" \
-        "" \
-        "" \
-        "Name  (leave blank to keep):" \
-        "" \
+        "Git Identity (2/2): Name" \
+        "Used for commits inside containers. Leave blank to keep current." \
+        "Name:" \
+        "$_cur_git_name" \
         "$_cur_git_name")
+        
     _final_git_email="${_git_email_input:-$_cur_git_email}"
     _final_git_name="${_git_name_input:-$_cur_git_name}"
     if [ -n "$_final_git_email" ] || [ -n "$_final_git_name" ]; then
