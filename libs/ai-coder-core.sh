@@ -508,6 +508,26 @@ ensure_overhead_config() {
     esac
 }
 
+# Reads the CPU offload threshold from settings.conf: the minimum percentage
+# of a bigger model's weights that must fit in VRAM before it is selected
+# with the remaining layers on CPU (see select_model_for_vram). 0 disables
+# partial offload. Anything else outside 50-99 falls back to the default of
+# 90 — below 50% the CPU carries most layers and generation crawls.
+ensure_offload_config() {
+    local _pct; _pct=$(read_pref "$SETTINGS_FILE" cpu_offload_pct 90)
+    case "$_pct" in
+        0)           MODEL_CPU_OFFLOAD_PCT=0 ;;
+        ''|*[!0-9]*) MODEL_CPU_OFFLOAD_PCT=90 ;;
+        *)
+            if [ "$_pct" -ge 50 ] && [ "$_pct" -le 99 ]; then
+                MODEL_CPU_OFFLOAD_PCT="$_pct"
+            else
+                MODEL_CPU_OFFLOAD_PCT=90
+            fi
+            ;;
+    esac
+}
+
 # Write a ~/.gitconfig-container file that gets mounted into containers as
 # /root/.gitconfig so git commands in any repo (including newly init'd ones)
 # pick up the correct author identity.
@@ -651,38 +671,70 @@ _estimate_kv_reserve_gb() {
 # Walks the MODEL_1..MODEL_N candidate list defined by the active family conf,
 # in priority order (best quality first), and selects the first entry whose
 # MODEL_N_WEIGHTS_GB fits within the supplied VRAM headroom (already KV-cache
-# and draft reserve subtracted). Sets MODEL_FILE, MODEL_URL, MODEL_SHA256, and
-# MODEL_TIER in the caller's environment.
+# and draft reserve subtracted). Sets MODEL_FILE, MODEL_URL, MODEL_SHA256,
+# MODEL_TIER, MODEL_LAYERS, and MODEL_NGL in the caller's environment.
+#
+# Partial CPU offload: when MODEL_CPU_OFFLOAD_PCT > 0, an entry ranked above
+# the full-fit choice may be selected with some layers left on CPU, provided
+# at least that percentage of its weights fits in VRAM. The shortfall
+# fraction equals the fraction of layers pushed to CPU, and a CPU layer is
+# roughly 10x slower than a GPU layer, so slowdown ≈ 1 + 9 × fraction
+# offloaded — the default 90% caps the worst case around half speed. Only
+# entries whose MODEL_N_LAYERS differs from the full-fit choice qualify:
+# quants of the same model share a layer count, and halving generation speed
+# for a quant bump is a bad trade. MODEL_NGL is the -ngl value for llama.cpp
+# (99 = all layers on GPU, the pre-offload behaviour).
 # The last candidate should have MODEL_N_WEIGHTS_GB=0 — it is always selected
 # unconditionally as the fallback when nothing larger fits.
 select_model_for_vram() {
-    local vram="${1:-0}" i _fv _wv _uv _sv _dv _w
+    local vram="${1:-0}" i _fv _wv _lv _uv _sv _dv _w
     local _count="${MODEL_COUNT:-0}"
+    MODEL_NGL=99
+
+    # Pass 1: first entry that fits entirely in VRAM (the full-fit choice).
+    # When no entry fits (malformed conf without a WEIGHTS_GB=0 fallback),
+    # use the last defined candidate.
+    local _full=0
     for (( i=1; i<=_count; i++ )); do
         _fv="MODEL_${i}_FILE"
         [ -z "${!_fv:-}" ] && break
         _wv="MODEL_${i}_WEIGHTS_GB"
-        _w="${!_wv:-0}"
-        if [ "$vram" -ge "$_w" ]; then
-            _uv="MODEL_${i}_URL"
-            _sv="MODEL_${i}_SHA256"
-            _dv="MODEL_${i}_DESC"
-            MODEL_FILE="${!_fv}"
-            MODEL_URL="${!_uv:-}"
-            MODEL_SHA256="${!_sv:-}"
-            MODEL_TIER="${!_dv:-model-$i}"
-            return
-        fi
+        if [ "$vram" -ge "${!_wv:-0}" ]; then _full=$i; break; fi
     done
-    # Should not reach here when the last entry has WEIGHTS_GB=0.
-    # Safety fallback: use last defined candidate.
-    i=$(( _count > 0 ? _count : 1 ))
-    _fv="MODEL_${i}_FILE"; _uv="MODEL_${i}_URL"
-    _sv="MODEL_${i}_SHA256"; _dv="MODEL_${i}_DESC"
+    [ "$_full" -eq 0 ] && _full=$(( _count > 0 ? _count : 1 ))
+    local _sel=$_full
+
+    # Pass 2: partial CPU offload — the best-ranked entry above the full-fit
+    # choice wins if enough of it fits and it is a different model.
+    local _pct="${MODEL_CPU_OFFLOAD_PCT:-90}"
+    _lv="MODEL_${_full}_LAYERS"
+    local _full_layers="${!_lv:-0}"
+    if [ "$_pct" -gt 0 ] 2>/dev/null; then
+        for (( i=1; i<_full; i++ )); do
+            _wv="MODEL_${i}_WEIGHTS_GB"; _w="${!_wv:-0}"
+            _lv="MODEL_${i}_LAYERS"
+            [ "$_w" -gt 0 ] || continue
+            [ -n "${!_lv:-}" ] || continue
+            [ "${!_lv}" -ne "$_full_layers" ] || continue
+            if [ $(( vram * 100 / _w )) -ge "$_pct" ]; then
+                _sel=$i
+                # Floor division is deliberately conservative: WEIGHTS_GB also
+                # covers tensors that never offload per-layer (embeddings,
+                # output head), so the true per-layer cost is slightly lower.
+                MODEL_NGL=$(( ${!_lv} * vram / _w ))
+                break
+            fi
+        done
+    fi
+
+    _fv="MODEL_${_sel}_FILE"; _uv="MODEL_${_sel}_URL"
+    _sv="MODEL_${_sel}_SHA256"; _dv="MODEL_${_sel}_DESC"
+    _lv="MODEL_${_sel}_LAYERS"
     MODEL_FILE="${!_fv:-}"
     MODEL_URL="${!_uv:-}"
     MODEL_SHA256="${!_sv:-}"
-    MODEL_TIER="${!_dv:-fallback}"
+    MODEL_TIER="${!_dv:-model-$_sel}"
+    MODEL_LAYERS="${!_lv:-}"
 }
 
 # Download a URL to a local path. Selects the best available tool and handles proxy.
@@ -938,6 +990,9 @@ detect_model() {
     select_model_for_vram "$EFFECTIVE_VRAM_GB"
     echo -e "${ICON_GEAR} Model: ${BOLD}${MODEL_TIER}${NC}"
     echo -e "${ICON_GEAR} File:  ${CYAN}${MODEL_FILE}${NC}"
+    if [ "${MODEL_NGL:-99}" -lt 99 ]; then
+        echo -e "${YELLOW}⚠ CPU offload: ${MODEL_NGL}/${MODEL_LAYERS} layers on GPU — running a bigger model at reduced speed (threshold ${MODEL_CPU_OFFLOAD_PCT:-90}%, disable via --setup)${NC}"
+    fi
 
     if [ -f "$MODEL_STORAGE_DIR/$MODEL_FILE" ]; then
         echo -e "${ICON_OK} Target Model: ${CYAN}${MODEL_FILE}${NC}"
@@ -1415,7 +1470,7 @@ start_hub_engine() {
         -v "${_models_src}:/models" \
         "$LLAMA_IMAGE" \
         -m "/models/$MODEL_FILE" --host 0.0.0.0 --port 8080 \
-        --parallel "$MODEL_MAX_SLOTS" -ngl 99 -c "$MODEL_CTX_SIZE" --flash-attn on \
+        --parallel "$MODEL_MAX_SLOTS" -ngl "${MODEL_NGL:-99}" -c "$MODEL_CTX_SIZE" --flash-attn on \
         -ctk "${MODEL_KV_TYPE:-q8_0}" -ctv "${MODEL_KV_TYPE:-q8_0}" \
         --batch-size "${MODEL_BATCH_SIZE:-1024}" --ubatch-size "${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}" --defrag-thold 0.1 \
         --cache-reuse "${MODEL_CACHE_REUSE:-256}" \
@@ -1425,6 +1480,13 @@ start_hub_engine() {
 
     write_pref "$STATE_FILE" engine_gpu_mode "${GPU_MODE:-multi}"
     write_pref "$STATE_FILE" engine_model "${MODEL_FILE:-}"
+    # Informational only — deliberately NOT part of the restart-detection
+    # comparison in ai-coder: with the engine running, detect_model budgets
+    # from capacity instead of free VRAM, so the recomputed layer count can
+    # differ by a few layers every launch and would restart-flap the engine.
+    # A settings change that matters flips the selected model file instead,
+    # which the engine_model comparison already catches.
+    write_pref "$STATE_FILE" engine_ngl "${MODEL_NGL:-99}"
     write_pref "$STATE_FILE" engine_ctx "${MODEL_CTX_SIZE:-}"
     write_pref "$STATE_FILE" engine_kv "${MODEL_KV_TYPE:-q8_0}"
     write_pref "$STATE_FILE" engine_batch "${MODEL_BATCH_SIZE:-1024}/${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}"

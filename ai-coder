@@ -267,6 +267,7 @@ ensure_gpu_config
 ensure_ctx_config
 ensure_kv_config
 ensure_overhead_config
+ensure_offload_config
 detect_model || true
 download_model || {
     echo -e "${RED}✘ Model download failed${NC}"

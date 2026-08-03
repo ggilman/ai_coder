@@ -283,6 +283,36 @@ silently fall back to a much slower CPU-bound path)." \
             ;;
     esac
 
+    _cur_offload=$(read_pref "$SETTINGS_FILE" cpu_offload_pct 90)
+    _offload_input=$(ui_input "CPU offload" \
+        "CPU offload threshold — run a bigger model with a few layers on CPU when at least this % of it fits in VRAM?" \
+        "Recommended: 90 — worst case is roughly half generation speed. Range
+50-99; 0 keeps only models that fit fully on the GPU. Never applies to a
+higher quant of the same model, only to a genuinely bigger one." \
+        "Threshold in % (0 disables) [${_cur_offload}]:" \
+        "$_cur_offload" \
+        "$_cur_offload")
+    case "${_offload_input}" in
+        *[!0-9]*)
+            printf "%s⚠ Not a number — keeping %s%s\n" "$YELLOW" "$_cur_offload" "$NC"
+            ;;
+        "")
+            printf "%s  CPU offload threshold unchanged (%s)%s\n" "$DIM" "$_cur_offload" "$NC"
+            ;;
+        0)
+            write_pref "$SETTINGS_FILE" cpu_offload_pct 0
+            echo -e "${ICON_OK} CPU offload ${YELLOW}disabled${NC} — only fully GPU-resident models will be selected."
+            ;;
+        *)
+            if [ "$_offload_input" -ge 50 ] && [ "$_offload_input" -le 99 ]; then
+                write_pref "$SETTINGS_FILE" cpu_offload_pct "$_offload_input"
+                echo -e "${ICON_OK} CPU offload threshold set to ${GREEN}${_offload_input}%${NC}."
+            else
+                printf "%s⚠ Out of range (50-99, or 0 to disable) — keeping %s%s\n" "$YELLOW" "$_cur_offload" "$NC"
+            fi
+            ;;
+    esac
+
     _cur_extras=$(read_pref "$SETTINGS_FILE" mcp_extras no)
     _extras_input=$(ui_yesno "MCP extras" \
         "MCP extras — register the optional MCP servers with each agent?" \

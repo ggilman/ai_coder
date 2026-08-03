@@ -48,6 +48,9 @@ Each family configuration file in `config/families/` defines an ordered candidat
 - `MODEL_N_DESC`: Human-readable label shown in logs and menus.
 - `MODEL_N_SHA256`: Expected sha256 (blank = skip verification).
 - `MODEL_N_WEIGHTS_GB`: Ceiling of model file size in GB; `0` = unconditional fallback.
+- `MODEL_N_LAYERS`: Total transformer layer count (HF `config.json` `num_hidden_layers`). Optional; required for the entry to be reachable via partial CPU offload (see below).
+
+The launcher normally picks the first (best) entry whose `WEIGHTS_GB` fits in effective VRAM with all layers on GPU. With partial CPU offload enabled (default), an entry ranked higher can win instead when at least the configured percentage of it fits (default 90%) — llama.cpp then runs the shortfall's worth of layers on the CPU (`-ngl` below the full count). This only happens between genuinely different models (detected by differing `MODEL_N_LAYERS`), never to reach a higher quant of the same model — each percent of layers on CPU costs roughly 9% generation speed, which is a bad trade for a quant bump.
 
 **Speculative Decoding (Optional):**
 - `MODEL_DRAFT_FILE`: Draft GGUF filename.
@@ -319,7 +322,7 @@ echo "@some-org/server | key | cmd | args" >> packages/mcp-opencode.txt
 | OpenCode | Config, provider settings | `.ai-coder/opencode/opencode-config/` (per project) |
 | Aider | Aider config, input history | `~/.aider-config/` (directory) |
 | Gemini CLI | Auth tokens, session state, settings | `~/.gemini-config/` (directory) |
-| ai-coder | **All settings** — proxy, isolation, GPU mode, context level, low-VRAM KV cache, MCP extras, keep-hub, model volume, speculative decoding, port exposure, git identity | `<install-dir>/user/settings.conf` |
+| ai-coder | **All settings** — proxy, isolation, GPU mode, context level, low-VRAM KV cache, VRAM overhead, CPU offload threshold, MCP extras, keep-hub, model volume, speculative decoding, port exposure, git identity | `<install-dir>/user/settings.conf` |
 | ai-coder | **Runtime state** — tool + family + Open WebUI preferences, update-check hash/timestamp, running-engine settings | `<install-dir>/user/state.conf` |
 | ai-coder | Setup completion sentinel | `<install-dir>/user/.setup-done` |
 | ai-coder | Git identity mounted into containers as `/root/.gitconfig` | `~/.gitconfig-container` |
@@ -391,7 +394,7 @@ ai-coder also checks for updates automatically once per day on launch and prints
 
 ### Setup (`--setup`)
 
-**`--setup` must be run once before first launch.** It walks through up to thirteen configuration steps. On Ubuntu/WSL, where `whiptail` is available, each step is shown as a dialog box; on Git Bash (which has no `whiptail`) it automatically falls back to plain text prompts. Either way the questions and defaults are the same:
+**`--setup` must be run once before first launch.** It walks through up to fourteen configuration steps. On Ubuntu/WSL, where `whiptail` is available, each step is shown as a dialog box; on Git Bash (which has no `whiptail`) it automatically falls back to plain text prompts. Either way the questions and defaults are the same:
 
 ```bash
 ./ai-coder --setup
@@ -404,12 +407,13 @@ ai-coder also checks for updates automatically once per day on launch and prints
 5. **Context window level** — how many tokens of context the model retains (4k–256k, default 64k). Higher values use more VRAM and slow responses; local coding agents rarely benefit past 64k.
 6. **Low-VRAM KV cache** — quantize both K and V cache to `q4_0`, roughly halving the KV VRAM reserve vs the family default. Off by default; real quality cost on long-context recall, but K and V stay matched so llama.cpp keeps using its fast fused Flash Attention kernel.
 7. **VRAM overhead reserve** — how many GB of VRAM to reserve for CUDA/system overhead when sizing the model tier (default 1 GB). Larger values can prevent OOMs on high-load GPUs.
-8. **MCP extras** — register the optional MCP servers (memory, thinking, conan, context7, brave-search, github, fetch, time) with each agent. Off by default: fewer registered tools means faster prompts and better tool selection on small local models.
-9. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Also asks for an idle timeout (default 60 min, `0` = forever) after which the warm hub stops itself to release VRAM; stop it immediately with `--clean`.
-10. **Fast model storage** — cache models in a Docker volume so engine cold starts load from the VM's native disk instead of the slow Windows filesystem bridge. Default on for WSL/Git Bash; see [Model Storage](#model-storage).
-11. **Speculative decoding** — use a small draft model to speed up generation, typically 1.5–2× on code. Default on; costs ~1 GB VRAM and applies only to families that define a draft (currently Qwen3). See [Speculative Decoding](#speculative-decoding).
-12. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
-13. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
+8. **CPU offload threshold** — run a bigger model with a few layers on CPU when at least this percentage of it fits in VRAM (default 90, range 50–99, `0` disables). At 90% the worst case is roughly half generation speed; only fires for a genuinely bigger model, never for a higher quant of the same one. See [Family Configuration Format](#family-configuration-format).
+9. **MCP extras** — register the optional MCP servers (memory, thinking, conan, context7, brave-search, github, fetch, time) with each agent. Off by default: fewer registered tools means faster prompts and better tool selection on small local models.
+10. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Also asks for an idle timeout (default 60 min, `0` = forever) after which the warm hub stops itself to release VRAM; stop it immediately with `--clean`.
+11. **Fast model storage** — cache models in a Docker volume so engine cold starts load from the VM's native disk instead of the slow Windows filesystem bridge. Default on for WSL/Git Bash; see [Model Storage](#model-storage).
+12. **Speculative decoding** — use a small draft model to speed up generation, typically 1.5–2× on code. Default on; costs ~1 GB VRAM and applies only to families that define a draft (currently Qwen3). See [Speculative Decoding](#speculative-decoding).
+13. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
+14. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
 
 In whiptail mode, pressing **Esc** or **Cancel** on any step keeps that setting unchanged and moves to the next question — nothing is lost mid-wizard. To force the plain-text prompts even where `whiptail` is installed, set `AI_CODER_NO_WHIPTAIL=1`.
 
