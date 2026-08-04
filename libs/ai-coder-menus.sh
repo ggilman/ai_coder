@@ -39,8 +39,16 @@ _run_selection_menu() {
             [ "$_key" = "$current_key" ] && current_name="$_name"
         done
 
-        local choice
+        local choice _gum_rc
         choice=$(_gum_choose "$prompt" "" "$current_name" "$current_name" "${names[@]}")
+        _gum_rc=$?
+        # 126/127 mean the gum binary itself failed to run (not executable /
+        # not found) — a real error, not the user cancelling. Anything else
+        # with empty output (e.g. Escape) is a normal cancel.
+        if [ "$_gum_rc" -eq 126 ] || [ "$_gum_rc" -eq 127 ]; then
+            echo -e "${RED}✘ gum failed to run (exit ${_gum_rc}) — try: $(basename "$0") --setup${NC}" >&2
+            exit 1
+        fi
         if [ -z "$choice" ]; then
             exit 0
         fi

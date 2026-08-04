@@ -302,14 +302,34 @@ read_pref() {
 
 # Write or update a single key=value entry in a preference file.
 # Creates the file and its parent directory if needed. Clears the key when value is empty.
+# STATE_FILE/SETTINGS_FILE are global (not per-project), so concurrent
+# ai-coder sessions for unrelated projects can call this on the same file at
+# once. A mkdir lock (atomic on both WSL and Git Bash) plus a PID-unique temp
+# file prevent one session's read-modify-write from clobbering another's.
 write_pref() {
     local file="$1" key="$2" value="$3"
     mkdir -p "$(dirname "$file")"
-    if [ -f "$file" ] && grep -q "^${key}=" "$file" 2>/dev/null; then
-        grep -v "^${key}=" "$file" > "${file}.tmp" 2>/dev/null || true
-        mv "${file}.tmp" "$file"
+
+    local _lock_dir="${file}.lock"
+    local _waited=0
+    while ! mkdir "$_lock_dir" 2>/dev/null; do
+        sleep 0.1
+        _waited=$((_waited + 1))
+        # Failsafe against a lock dir orphaned by a killed session: proceed
+        # anyway after ~10s rather than hang forever.
+        [ "$_waited" -gt 100 ] && break
+    done
+
+    local _tmp="${file}.tmp.$$"
+    if [ -f "$file" ]; then
+        grep -v "^${key}=" "$file" > "$_tmp" 2>/dev/null || true
+    else
+        : > "$_tmp"
     fi
-    [ -n "$value" ] && printf '%s=%s\n' "$key" "$value" >> "$file" || true
+    [ -n "$value" ] && printf '%s=%s\n' "$key" "$value" >> "$_tmp"
+    mv "$_tmp" "$file"
+
+    rmdir "$_lock_dir" 2>/dev/null || true
 }
 
 # Resolve proxy hostname to IP so Docker build containers can reach it.

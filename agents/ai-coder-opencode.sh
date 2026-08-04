@@ -58,13 +58,13 @@ execute_tool() {
 #exec_in_container "$WORKBENCH" opencode
 #Lengthy setup to ignore Ctrl-C in Opencode
     exec_in_container "$WORKBENCH" python3 -c '
-import pty, os, sys, termios, struct, fcntl, signal
+import pty, os, sys, termios, struct, fcntl, select
 
 # 1. Capture current host window dimensions
 def get_terminal_size():
     try:
         return struct.unpack("hh", fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, "1234"))
-    except:
+    except OSError:
         return 24, 80
 
 # 2. Advanced filter: Remove Ctrl-C completely without closing the stream
@@ -91,7 +91,7 @@ def spawn_with_dimensions(argv):
     # Push terminal size
     try:
         fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-    except:
+    except OSError:
         pass
 
     pid = os.fork()
@@ -108,7 +108,7 @@ def spawn_with_dimensions(argv):
         
         try:
             fcntl.ioctl(0, termios.TIOCSPGRP, struct.pack("i", os.getpgrp()))
-        except:
+        except OSError:
             pass
 
         os.execvp(argv[0], argv)
@@ -122,8 +122,7 @@ def spawn_with_dimensions(argv):
         try:
             # Custom copy loop to prevent the EOF lockup when discarding bytes
             while True:
-                # Use select to wait for input
-                import select
+                # Wait for input
                 rfds, _, _ = select.select([sys.stdin.fileno(), master_fd], [], [])
                 
                 if sys.stdin.fileno() in rfds:

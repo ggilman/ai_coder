@@ -35,8 +35,18 @@ _download_gum_binary() {
     _cur_proxy=$(grep "^proxy=" "$(dirname "${BASH_SOURCE[0]}")/../user/settings.conf" 2>/dev/null | cut -d= -f2- || true)
     # Also check if HTTP_PROXY/HTTPS_PROXY environment variables are set
     [ -z "$_cur_proxy" ] && _cur_proxy=${HTTPS_PROXY:-${HTTP_PROXY:-${https_proxy:-${http_proxy:-}}}}
-    # Ensure we use -x for curl proxy
-    [ -n "$_cur_proxy" ] && _proxy_opt="-x $(resolve_proxy_to_ip "$(echo "$_cur_proxy" | sed 's|^https://|http://|')")"
+    # Ensure we use -x for curl proxy. resolve_proxy_to_ip (ai-coder-env.sh) is
+    # only available via the full launch chain; this file is also sourced
+    # standalone (see header), so fall back to the raw proxy URL when it's
+    # not defined rather than erroring on an undefined function.
+    if [ -n "$_cur_proxy" ]; then
+        local _proxy_normalized; _proxy_normalized=$(echo "$_cur_proxy" | sed 's|^https://|http://|')
+        if declare -f resolve_proxy_to_ip >/dev/null 2>&1; then
+            _proxy_opt="-x $(resolve_proxy_to_ip "$_proxy_normalized")"
+        else
+            _proxy_opt="-x $_proxy_normalized"
+        fi
+    fi
 
     local download_url
     if [ "$platform" = "Windows" ]; then
@@ -100,7 +110,7 @@ _download_gum_binary() {
         return 1
     fi
 
-    chmod +x "$_gum_dir/$gum_exe_name" &>/dev/null
+    chmod +x "$_gum_dir/$gum_exe_name" 2>/dev/null || return 1
     return 0
 }
 

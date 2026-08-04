@@ -228,54 +228,53 @@ ensure_model_in_volume() {
         -c 'for p in /vol/*.gguf; do [ -f "$p" ] && printf "%s %s\n" "${p##*/}" "$(stat -c%s "$p")"; done; true' \
         2>/dev/null | tr -d '\r') || vol_listing=""
 
-    local keep_expr="" sync_list="" total_sz=0 host_sz vol_sz
+    local sync_files=() total_sz=0 host_sz vol_sz
     for f in "${files[@]}"; do
-        keep_expr+=" ! -name '$f'"
         host_sz=$(stat -c%s "$MODEL_STORAGE_DIR/$f" 2>/dev/null || echo 0)
         [ "$host_sz" -gt 0 ] || return 1
         vol_sz=$(printf '%s\n' "$vol_listing" | awk -v n="$f" '$1==n{print $2}')
         if [ "${vol_sz:-0}" != "$host_sz" ]; then
-            sync_list+=" $f"
+            sync_files+=("$f")
             total_sz=$(( total_sz + host_sz ))
         fi
     done
 
-    if [ -z "$sync_list" ]; then
-        # Nothing to copy — still prune files no longer wanted (e.g. a draft
-        # model after speculative decoding was turned off, or an old model).
-        # Skip pruning — keep all models in volume:
-        # docker run --rm --entrypoint /bin/sh -v "$MODEL_VOLUME_NAME:/vol" "$LLAMA_IMAGE" \
-        #     -c "find /vol -maxdepth 1 -name '*.gguf' $keep_expr -delete" >/dev/null 2>&1 || true
+    if [ "${#sync_files[@]}" -eq 0 ]; then
+        # Nothing to copy — files no longer wanted (e.g. a draft model after
+        # speculative decoding was turned off, or an old model) are left in
+        # the volume rather than pruned.
         return 0
     fi
 
     echo -e "${ICON_GEAR} Syncing model(s) to fast storage volume ${DIM}(one-time per model)...${NC}"
     local _sync_name="ai-coder-model-sync"
     docker rm -f "$_sync_name" >/dev/null 2>&1 || true
+    # Filenames are passed as positional args ("$@"), not interpolated into
+    # the script text, so a filename with spaces/backticks/$() can't inject
+    # shell commands into the container's sh -c.
     docker run -d --name "$_sync_name" --entrypoint /bin/sh \
         -v "$MODEL_VOLUME_NAME:/vol" \
         -v "$(to_host_path "$MODEL_STORAGE_DIR"):/src:ro" \
-        "$LLAMA_IMAGE" -c "
-            # find /vol -maxdepth 1 -name '*.gguf' $keep_expr -delete # Skip pruning
-            for f in $sync_list; do
-                rm -f \"/vol/\$f.part\" \"/vol/\$f\"
-                cp \"/src/\$f\" \"/vol/\$f.part\" && mv \"/vol/\$f.part\" \"/vol/\$f\" || exit 1
+        "$LLAMA_IMAGE" -c '
+            for f; do
+                rm -f "/vol/$f.part" "/vol/$f"
+                cp "/src/$f" "/vol/$f.part" && mv "/vol/$f.part" "/vol/$f" || exit 1
             done
-        " >/dev/null || return 1
+        ' sh "${sync_files[@]}" >/dev/null || return 1
 
     local human_total; human_total=$(_human_size "$total_sz")
     while [ -n "$(docker ps -q -f name=^/${_sync_name}$ 2>/dev/null)" ]; do
         local cur
-        cur=$(docker exec "$_sync_name" /bin/sh -c "
+        cur=$(docker exec "$_sync_name" /bin/sh -c '
             tot=0
-            for f in $sync_list; do
-                if [ -f \"/vol/\$f\" ]; then s=\$(stat -c%s \"/vol/\$f\")
-                elif [ -f \"/vol/\$f.part\" ]; then s=\$(stat -c%s \"/vol/\$f.part\")
+            for f; do
+                if [ -f "/vol/$f" ]; then s=$(stat -c%s "/vol/$f")
+                elif [ -f "/vol/$f.part" ]; then s=$(stat -c%s "/vol/$f.part")
                 else s=0; fi
-                tot=\$((tot+s))
+                tot=$((tot+s))
             done
-            echo \$tot
-        " 2>/dev/null | tr -d '\r') || cur=0
+            echo $tot
+        ' sh "${sync_files[@]}" 2>/dev/null | tr -d '\r') || cur=0
         case "$cur" in ''|*[!0-9]*) cur=0 ;; esac
         printf "\r  Synced: %s / %s (%d%%)   " "$(_human_size "$cur")" "$human_total" "$(( cur * 100 / total_sz ))"
         sleep 3
@@ -433,15 +432,32 @@ start_hub_engine() {
 
 # Sets WORKBENCH_STARTED_BY_US so the caller's cleanup only stops containers
 # this session actually started (not one shared with a concurrent session).
+# The check-then-start is guarded by a mkdir lock (atomic on both WSL and Git
+# Bash) so two sessions launched close together in the same project+tool
+# can't both decide they "started" the container and race to stop it on exit.
 ensure_workbench_running() {
     WORKBENCH_STARTED_BY_US=false
+    local _lock_dir="${TMPDIR:-/tmp}/.ai-coder-wb-lock-${WORKBENCH}"
+    local _waited=0
+    while ! mkdir "$_lock_dir" 2>/dev/null; do
+        sleep 0.2
+        _waited=$((_waited + 1))
+        # Failsafe against a lock dir orphaned by a killed session: proceed
+        # anyway after ~30s rather than hang forever.
+        [ "$_waited" -gt 150 ] && break
+    done
+
+    local _rc=0
     if [ -n "$(docker ps -q -f name=^/${WORKBENCH}$ 2>/dev/null)" ]; then
-        return 0
+        :
+    elif [ -n "$(docker ps -aq -f name=^/${WORKBENCH}$ 2>/dev/null)" ]; then
+        WORKBENCH_STARTED_BY_US=true
+        docker start "$WORKBENCH" >/dev/null 2>&1 || _rc=1
+    else
+        WORKBENCH_STARTED_BY_US=true
+        start_workbench || _rc=1
     fi
-    WORKBENCH_STARTED_BY_US=true
-    if [ -n "$(docker ps -aq -f name=^/${WORKBENCH}$ 2>/dev/null)" ]; then
-        docker start "$WORKBENCH" >/dev/null 2>&1 || return 1
-        return 0
-    fi
-    start_workbench
+
+    rmdir "$_lock_dir" 2>/dev/null || true
+    return $_rc
 }

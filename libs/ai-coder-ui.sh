@@ -157,8 +157,20 @@ ui_yesno() {
     local _input
     
     if [ "$UI_GUM" = "true" ]; then
+        local _gum_rc
         _gum_confirm "$_header" "$_help" "$_current" "$_default"
-        if [ $? -eq 0 ]; then echo "yes"; else echo "no"; fi
+        _gum_rc=$?
+        # 126/127 mean the gum binary itself failed to run (not executable /
+        # not found) — surface it rather than silently recording "no", which
+        # would get written to settings.conf as if the user had declined.
+        if [ "$_gum_rc" -eq 126 ] || [ "$_gum_rc" -eq 127 ]; then
+            echo "gum failed to run (exit ${_gum_rc})" >&2
+            echo "no"
+        elif [ "$_gum_rc" -eq 0 ]; then
+            echo "yes"
+        else
+            echo "no"
+        fi
     else
         _ui_plain_header "$_header" "$_help" "$_current" "$_prompt"
         read -r _input || _input=""

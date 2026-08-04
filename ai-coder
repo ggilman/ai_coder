@@ -223,10 +223,18 @@ WORKBENCH="${WORKBENCH_PREFIX}-${TOOL_PREF}-${PROJECT_ID}"
 # stopped regardless of how the user exits.
 _cleanup_done=false
 _workbench_started=false
+_hub_lock_dir="$USER_DIR/.hub-start.lock"
+_hub_lock_held=false
 cleanup() {
     $_cleanup_done && return
     _cleanup_done=true
     trap - EXIT INT TERM
+    # Safety net for the hub-start lock (see below): normally released right
+    # after the check-then-restart section, but an early `exit 1` in that
+    # section (Hub startup failure) would otherwise leave it orphaned.
+    if $_hub_lock_held; then
+        rmdir "$_hub_lock_dir" 2>/dev/null || true
+    fi
     # Only stop the workbench container if this process started it.
     # Guarding here prevents --build-only (or any early-exit path) from stopping
     # a workbench that belongs to a concurrently running session in the same project.
@@ -311,6 +319,21 @@ if [ "${NETWORK_INTERNAL:-false}" = "true" ]; then
     docker network create --internal "$HUB_ISOLATED_NET" 2>/dev/null || true
 fi
 
+# GLOBAL_ENGINE_NAME is a machine-wide singleton, so the check-then-restart
+# sequence below (docker rm followed by docker run --name "$GLOBAL_ENGINE_NAME")
+# is guarded by a lock: two ai-coder sessions for different projects launched
+# close together could otherwise both decide the Hub needs a cold start and
+# race to create the same-named container, crashing whichever loses. The same
+# lock also covers ensure_model_in_volume's model-sync container, which is
+# only ever invoked from within start_hub_engine below.
+_hub_waited=0
+while ! mkdir "$_hub_lock_dir" 2>/dev/null; do
+    sleep 0.2
+    _hub_waited=$((_hub_waited + 1))
+    [ "$_hub_waited" -gt 150 ] && break
+done
+_hub_lock_held=true
+
 _engine_running=false
 [ -n "$(docker ps -q -f name=^/${GLOBAL_ENGINE_NAME}$ 2>/dev/null)" ] && _engine_running=true
 _need_engine_restart=false
@@ -355,6 +378,9 @@ elif [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ] && \
     docker rm "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
     start_hub_engine || { echo -e "${RED}✘ Hub startup failed${NC}"; exit 1; }
 fi
+
+rmdir "$_hub_lock_dir" 2>/dev/null || true
+_hub_lock_held=false
 
 apply_git_identity
 configure_workbench
