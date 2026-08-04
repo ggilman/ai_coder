@@ -320,7 +320,7 @@ echo "@some-org/server | key | cmd | args" >> packages/mcp-opencode.txt
 | --- | --- | --- |
 | Claude Code | Conversation history, sessions, telemetry | `~/.claude-config/` (directory) |
 | Claude Code | First-run preferences, accepted permissions, settings | `~/.claude-config.json` (file) |
-| OpenCode | Config, provider settings | `.ai-coder/opencode/opencode-config/` (per project) |
+| OpenCode | Config, provider settings | `~/.opencode-config/` (directory) |
 | Aider | Aider config, input history | `~/.aider-config/` (directory) |
 | Gemini CLI | Auth tokens, session state, settings | `~/.gemini-config/` (directory) |
 | ai-coder | **All settings** — proxy, isolation, GPU mode, context level, low-VRAM KV cache, VRAM overhead, CPU offload threshold, MCP extras, keep-hub, model volume, speculative decoding, port exposure, git identity | `<install-dir>/user/settings.conf` |

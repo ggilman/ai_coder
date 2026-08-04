@@ -12,7 +12,7 @@ build_image() {
 }
 
 configure_workbench() {
-    local config_dir="$LOCAL_STACK_DIR/opencode-config"
+    local config_dir="$HOME/.opencode-config"
     # Docker runs as root so mounted dir files can become root-owned on the WSL host.
     ensure_host_dir_writable "$config_dir"
     cat > "$config_dir/opencode.json" <<EOF
@@ -51,7 +51,7 @@ start_workbench() {
     run_workbench \
         -e OPENCODE_DISABLE_MODELS_FETCH=1 \
         -v "$(to_host_path "$HOME/.npm-cache"):/root/.npm" \
-        -v "$(to_host_path "$LOCAL_STACK_DIR/opencode-config"):/root/.config/opencode"
+        -v "$(to_host_path "$HOME/.opencode-config"):/root/.config/opencode"
 }
 
 execute_tool() {

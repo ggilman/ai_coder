@@ -208,8 +208,6 @@ if [ -z "$WEBUI_PREF" ] && [ "$TOOL_PREF" != "webui" ] && \
     WEBUI_PREF=$(read_pref "$STATE_FILE" webui_pref "")
 fi
 
-LOCAL_STACK_DIR="$(pwd)/.ai-coder/${TOOL_PREF}"
-
 source "$CHILD_SCRIPT"
 
 # Ensure local stack dir exists (needed before core logic starts using it)

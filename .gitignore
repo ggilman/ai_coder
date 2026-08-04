@@ -1,6 +1,5 @@
 test_*
 **/.assets
-.ai-coder/
 .vs/
 .vscode/
 ai_coder.zip

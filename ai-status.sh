@@ -144,11 +144,20 @@ main() {
                     local util_bar
                     util_bar=$(make_progress_string "$util" "40")
 
+                    # Temp/power fields are padded to a fixed width so the
+                    # E_PAD cursor-skip at end of line always lands on the
+                    # same column across frames (see comment at E_PAD's
+                    # definition) — otherwise a frame with fewer digits can
+                    # leave a stale glyph from a wider previous frame behind.
+                    local _temp_field _pwr_field
+                    printf -v _temp_field "%-6s" "${temp}°C"
+                    printf -v _pwr_field "%-10s" "${pwr}W"
+
                     # Formatting text with bold/dim tokens to preserve contrast
                     local card_content="📟  \e[1mGPU $id:\e[0m \e[36m$name\e[0m
 📊  \e[1mVRAM:\e[0m $vram_bar $m_perc% (${m_used}/${m_total} MB)
 🔥  \e[1mLoad:\e[0m $util_bar $util%
-🌡️  \e[1mTemp:\e[0m \e[33m${temp}°C\e[0m   |  ⚡  \e[1mPower:\e[0m \e[33m${pwr}W\e[0m${E_PAD}"
+🌡️  \e[1mTemp:\e[0m \e[33m${_temp_field}\e[0m   |  ⚡  \e[1mPower:\e[0m \e[33m${_pwr_field}\e[0m${E_PAD}"
 
                     $GUM_CMD style \
                         --border rounded --border-foreground 14 \
@@ -182,8 +191,14 @@ main() {
             fi
 
             model_name=$(get_model_name)
-            
-            engine_status_text="⚙️  \e[1mENGINE HUB:\e[0m   \e[32m🟢  ONLINE\e[0m${E_PAD}
+
+            # Status word is padded to a fixed width so the E_PAD cursor-skip
+            # (see comment at its definition) always lands on the same column
+            # across ONLINE/LOADING/OFFLINE frames — otherwise a shorter status
+            # can leave a stale glyph from a longer previous status un-overwritten.
+            local _status_word
+            printf -v _status_word "%-22s" "ONLINE"
+            engine_status_text="⚙️  \e[1mENGINE HUB:\e[0m   \e[32m🟢  ${_status_word}\e[0m${E_PAD}
 📦  \e[1mActive Model:\e[0m \e[36m$model_name\e[0m
 🔄  \e[1mCapacity:\e[0m     $slot_info"
             
@@ -209,14 +224,18 @@ main() {
                 "$(echo -e "$engine_status_text")"
         else
             if [ -n "$health_raw" ]; then
-                engine_status_text="⚙️  \e[1mENGINE HUB:\e[0m   \e[33m🟡  LOADING MODEL...\e[0m${E_PAD}
+                local _status_word
+                printf -v _status_word "%-22s" "LOADING MODEL..."
+                engine_status_text="⚙️  \e[1mENGINE HUB:\e[0m   \e[33m🟡  ${_status_word}\e[0m${E_PAD}
 ⏳  Please wait while weights are allocated."
                 $GUM_CMD style \
                     --border rounded --border-foreground 3 \
                     --width 74 --padding "0 2" \
                     "$(echo -e "$engine_status_text")"
             else
-                engine_status_text="⚙️  \e[1mENGINE HUB:\e[0m   \e[31m🔴  OFFLINE / DISCONNECTED\e[0m${E_PAD}
+                local _status_word
+                printf -v _status_word "%-22s" "OFFLINE / DISCONNECTED"
+                engine_status_text="⚙️  \e[1mENGINE HUB:\e[0m   \e[31m🔴  ${_status_word}\e[0m${E_PAD}
 ❌  Verify that the '$ENGINE_NAME' container is running."
                 $GUM_CMD style \
                     --border rounded --border-foreground 1 \
