@@ -46,7 +46,7 @@ HELP
     cmd_update
     exit $? ;;
 --status)
-    exec "$(dirname "$(realpath "$0")")/ai-status.sh" ;;
+    exec bash "$(dirname "$(realpath "$0")")/ai-status.sh" ;;
 --clean)
     check_docker || exit 1
     teardown
