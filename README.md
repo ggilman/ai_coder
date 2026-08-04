@@ -487,6 +487,8 @@ No internet connection is required on the target machine.
   ```
   This adds `.gitattributes` (`eol=lf`), `.editorconfig`, and normalizes all tracked files in one step.
 
+- **Qwen3.6 MTP vs non-MTP filename conflict**: The MTP and standard Qwen3.6 families share identical GGUF filenames. If you previously ran the non-MTP version, switching to the MTP family may load the non-MTP file from the download cache, resulting in a runtime error (the engine expects MTP draft heads but the file isn't). To resolve, rename or remove the conflicting file in `~/ai-models/` so the MTP version downloads fresh, or vice versa when switching back.
+
 ---
 
 Licensed under the [MIT License](LICENSE). &copy; 2026 George Gilman — ggilman@gmail.com

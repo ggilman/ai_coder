@@ -323,13 +323,31 @@ start_hub_engine() {
         pull_image_if_missing "$LITELLM_IMAGE" || return 1
     fi
 
-    # Speculative decoding: a small draft model proposes tokens the main
+    # Speculative decoding strategy: initialize flags and map to llama.cpp args.
+    # MTP uses built-in draft heads, ngram uses hashing, none disables it.
+    LLAMA_SPEC_FLAGS=""
+    case "${MODEL_SPEC_STRATEGY:-none}" in
+        mtp)
+            LLAMA_SPEC_FLAGS="--spec-type draft-mtp --spec-draft-n-max 3"
+            MODEL_MAX_SLOTS="1" # CRITICAL: MTP does not support concurrent requests yet
+            echo -e "${ICON_GEAR} Speculative decoding: ${GREEN}MTP (built-in draft heads)${NC}"
+            echo -e "${ICON_GEAR} MTP Override: ${YELLOW}Forcing --parallel 1${NC}"
+            ;;
+        ngram)
+            LLAMA_SPEC_FLAGS="--spec-type ngram-mod --spec-default"
+            echo -e "${ICON_GEAR} Speculative decoding: ${GREEN}ngram (hash-based)${NC}"
+            ;;
+        none|*)
+            ;;
+    esac
+
+    # External draft model: a small GGUF that proposes tokens the main
     # model verifies in one pass — typically 1.5-2x generation speed on code.
     local _draft_args=() _vol_files=("$MODEL_FILE")
     if spec_decode_enabled && [ -f "$MODEL_STORAGE_DIR/$MODEL_DRAFT_FILE" ]; then
         _draft_args=(--model-draft "/models/$MODEL_DRAFT_FILE" -ngld 99)
         _vol_files+=("$MODEL_DRAFT_FILE")
-        echo -e "${ICON_GEAR} Speculative decoding: ${GREEN}enabled${NC} ${DIM}(draft: ${MODEL_DRAFT_FILE})${NC}"
+        echo -e "${ICON_GEAR} External draft model: ${GREEN}enabled${NC} ${DIM}(draft: ${MODEL_DRAFT_FILE})${NC}"
     fi
 
     # Model mount: fast Docker volume when enabled (with fallback to the
@@ -401,6 +419,7 @@ start_hub_engine() {
         -ctk "${MODEL_KV_TYPE:-q8_0}" -ctv "${MODEL_KV_TYPE:-q8_0}" \
         --batch-size "${MODEL_BATCH_SIZE:-1024}" --ubatch-size "${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}" --defrag-thold 0.1 \
         --cache-reuse "${MODEL_CACHE_REUSE:-256}" \
+        ${LLAMA_SPEC_FLAGS} \
         "${_draft_args[@]}" "${_think_args[@]}" "${_rp_args[@]}" "${_jinja_args[@]}" "${_ts_args[@]}" > /dev/null || {
         echo -e "${RED}✘ Failed to start engine container${NC}"; return 1
     }
@@ -420,7 +439,8 @@ start_hub_engine() {
     write_pref "$STATE_FILE" engine_expose "$(read_pref "$SETTINGS_FILE" expose_host_port no)"
     write_pref "$STATE_FILE" engine_net "${NETWORK_INTERNAL:-false}"
     write_pref "$STATE_FILE" engine_mvol "$(read_pref "$SETTINGS_FILE" model_volume "$MODEL_VOLUME_DEFAULT")"
-    local _spec_state=no; [ "${#_draft_args[@]}" -gt 0 ] && _spec_state=yes
+	local _spec_state="${MODEL_SPEC_STRATEGY:-none}"
+    [ "${#_draft_args[@]}" -gt 0 ] && _spec_state="external-draft"
     write_pref "$STATE_FILE" engine_spec "$_spec_state"
 
     start_gpu_guard
