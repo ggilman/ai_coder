@@ -126,7 +126,8 @@ ensure_gum() {
         gum_exe_name="gum.exe"
     fi
 
-    local _gum_dir="./.assets"
+    local _gum_dir
+    _gum_dir="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)/../.assets"
     mkdir -p "$_gum_dir"
 
     echo -ne "⚡ Checking for interface engine (gum)... "
@@ -160,7 +161,8 @@ ensure_gum() {
 # Returns 0 on success, 1 if gum is not found anywhere.
 # ------------------------------------------------------------------------------
 resolve_gum_cmd() {
-    local _gum_dir="./.assets"
+    local _gum_dir
+    _gum_dir="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)/../.assets"
     local gum_exe_name="gum"
     if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
         gum_exe_name="gum.exe"
