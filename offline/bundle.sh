@@ -26,6 +26,9 @@ FAMILIES_DIR="$PROJECT_ROOT/config/families"
 
 # Load core library: colors, icons, SMI path, download helpers, image variables
 source "$PROJECT_ROOT/libs/ai-coder-core.sh"
+# Load UI helpers: gum dialogs with plain-read fallback (ensure_gum, ui_init, _gum_choose)
+source "$PROJECT_ROOT/libs/ai-coder-ui.sh"
+source "$PROJECT_ROOT/libs/ai-coder-setup.sh"
 
 echo -e "\n${BOLD}${CYAN}╔══════════════════════════════════════════════╗"
 echo -e "║        AI-CODER OFFLINE BUNDLE v1.0          ║"
@@ -33,6 +36,52 @@ echo -e "╚══════════════════════�
 echo -e "${DIM}Output: ${BUNDLE_DIR}${NC}\n"
 
 check_docker || exit 1
+
+# Bootstrap gum once for both selection prompts below; falls back to plain
+# numbered prompts if gum can't be installed or run (or with AI_CODER_NO_GUM=1).
+ensure_gum
+ui_init
+
+# --- [ Helper: gum-or-plain single-choice picker ] ----------------------------
+# Usage: _bundle_choose <prompt> <name> [name...]
+# Echoes the chosen 1-based index on stdout; exits 1 on invalid/cancelled input.
+_bundle_choose() {
+    local prompt="$1"; shift
+    local names=("$@")
+
+    if [ "$UI_GUM" = "true" ]; then
+        local choice
+        choice=$(_gum_choose "$prompt" "" "" "" "${names[@]}")
+        if [ -z "$choice" ]; then
+            echo -e "${RED}✘ No selection made.${NC}" >&2
+            exit 1
+        fi
+        local i
+        for i in "${!names[@]}"; do
+            if [ "${names[$i]}" = "$choice" ]; then
+                echo $(( i + 1 ))
+                return 0
+            fi
+        done
+        echo -e "${RED}✘ Invalid selection.${NC}" >&2
+        exit 1
+    fi
+
+    echo -e "${CYAN}${prompt}${NC}" >&2
+    local i=1
+    for _n in "${names[@]}"; do
+        echo -e "  $i)  $_n" >&2
+        (( i++ ))
+    done
+    echo -ne "\nSelection [1-${#names[@]}]: " >&2
+    local sel
+    read -r sel
+    if ! [[ "$sel" =~ ^[0-9]+$ ]] || (( sel < 1 || sel > ${#names[@]} )); then
+        echo -e "${RED}✘ Invalid selection.${NC}" >&2
+        exit 1
+    fi
+    echo "$sel"
+}
 
 # --- [ Family selection ] ----------------------------------------------------
 _bundle_family_pairs=()
@@ -50,38 +99,27 @@ if [ ${#_bundle_family_pairs[@]} -eq 0 ]; then
     exit 1
 fi
 
-echo -e "${CYAN}Select the model family to bundle:${NC}"
-_bfi=1
+_bundle_family_names=()
 for _pair in "${_bundle_family_pairs[@]}"; do
-    echo -e "  $_bfi)  ${_pair%%:*}"
-    (( _bfi++ ))
+    _bundle_family_names+=("${_pair%%:*}")
 done
-echo -ne "\nFamily [1-${#_bundle_family_pairs[@]}]: "
-read -r _family_sel
-if ! [[ "$_family_sel" =~ ^[0-9]+$ ]] || (( _family_sel < 1 || _family_sel > ${#_bundle_family_pairs[@]} )); then
-    echo -e "${RED}✘ Invalid selection.${NC}"; exit 1
-fi
+_family_sel=$(_bundle_choose "Select the model family to bundle:" "${_bundle_family_names[@]}")
 FAMILY_CONF_KEY="${_bundle_family_pairs[$((_family_sel-1))]#*:}"
 FAMILY_CONF_DISPLAY="${_bundle_family_pairs[$((_family_sel-1))]%%:*}"
 source "$FAMILIES_DIR/${FAMILY_CONF_KEY}.conf"
 echo -e "${ICON_OK} Family: ${CYAN}${FAMILY_CONF_DISPLAY}${NC}"
 
 # --- [ Model selection ] ------------------------------------------------------
-echo -e "${CYAN}Select the model to include in the bundle:${NC}"
+_bundle_model_names=()
 _bmi=1
 while true; do
     _bmfv="MODEL_${_bmi}_FILE"
     [ -z "${!_bmfv:-}" ] && break
     _bmdv="MODEL_${_bmi}_DESC"
-    echo -e "  ${_bmi})  ${!_bmdv:-${!_bmfv}}"
+    _bundle_model_names+=("${!_bmdv:-${!_bmfv}}")
     _bmi=$(( _bmi + 1 ))
 done
-_bm_max=$(( _bmi - 1 ))
-echo -ne "\nModel [1-${_bm_max}]: "
-read -r _model_sel
-if ! [[ "$_model_sel" =~ ^[0-9]+$ ]] || (( _model_sel < 1 || _model_sel > _bm_max )); then
-    echo -e "${RED}✘ Invalid selection.${NC}"; exit 1
-fi
+_model_sel=$(_bundle_choose "Select the model to include in the bundle:" "${_bundle_model_names[@]}")
 _bmfv="MODEL_${_model_sel}_FILE";  TARGET_MODEL_FILE="${!_bmfv}"
 _bmuv="MODEL_${_model_sel}_URL";   TARGET_MODEL_URL="${!_bmuv}"
 _bmdv="MODEL_${_model_sel}_DESC";  TARGET_MODEL_DESC="${!_bmdv:-$TARGET_MODEL_FILE}"
