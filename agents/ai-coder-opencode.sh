@@ -48,7 +48,6 @@ EOF
 }
 
 start_workbench() {
-    echo -e "${ICON_GEAR} Mapping Spoke for [$PROJECT_ID]..."
     run_workbench \
         -e OPENCODE_DISABLE_MODELS_FETCH=1 \
         -v "$(to_host_path "$HOME/.npm-cache"):/root/.npm" \

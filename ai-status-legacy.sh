@@ -57,51 +57,16 @@ get_gpu_stats() {
         --format=csv,noheader,nounits 2>/dev/null
 }
 
-# Checks engine health via curl (empty string on failure)
 # WSL2 workaround: docker exec output is lost when captured via $() command
 # substitution, and 'timeout' wrapping docker exec also drops output.
 # We use a fixed temp file and curl's --max-time instead of the timeout binary.
-#
-# Online/offline is decided by /health, which llama.cpp answers immediately
-# even while crunching a prompt. /slots must NOT be used for this: it is
-# queued as an internal task the engine only services between decode batches,
-# so under load it can take 30+ seconds — reading it as "offline" exactly
-# when the engine is busiest. Slot detail is fetched separately, best-effort.
 _ENGINE_TMP="/tmp/ai_status_engine_$$"
 _SLOTS_TMP="/tmp/ai_status_slots_$$"
 readonly SLOTS_TIMEOUT=2
 
-get_engine_health() {
-    # set -o pipefail (active globally) causes docker exec redirects to drop output.
-    # Disable pipefail locally for this call only.
-    local _old_opts; _old_opts=$(set +o | grep pipefail)
-    set +o pipefail
-    docker exec "$ENGINE_NAME" curl -s --max-time "$HEALTH_TIMEOUT" http://localhost:8080/health \
-        > "$_ENGINE_TMP" 2>/dev/null || true
-    eval "$_old_opts"
-}
-
-# Fetches slot detail (short timeout — may legitimately fail while the engine
-# is processing; callers must degrade gracefully, not report offline).
-get_engine_slots() {
-    local _old_opts; _old_opts=$(set +o | grep pipefail)
-    set +o pipefail
-    docker exec "$ENGINE_NAME" curl -s --max-time "$SLOTS_TIMEOUT" http://localhost:8080/slots \
-        > "$_SLOTS_TMP" 2>/dev/null || true
-    eval "$_old_opts"
-}
-
-# Fetches the loaded model name from the engine's /v1/models endpoint
-get_model_name() {
-    local _mtmp="/tmp/ai_status_model_$$"
-    local _old_opts; _old_opts=$(set +o | grep pipefail)
-    set +o pipefail
-    docker exec "$ENGINE_NAME" curl -s --max-time "$HEALTH_TIMEOUT" http://localhost:8080/v1/models \
-        > "$_mtmp" 2>/dev/null || true
-    eval "$_old_opts"
-    grep -o '"id":"[^"]*"' "$_mtmp" 2>/dev/null | head -1 | cut -d'"' -f4 || true
-    rm -f "$_mtmp"
-}
+# get_engine_health / get_engine_slots / get_model_name — shared with
+# ai-status.sh (both read the globals defined above).
+source "$SCRIPT_DIR/libs/ai-coder-engine-status.sh"
 
 # Draws the dashboard header
 draw_header() {

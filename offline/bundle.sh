@@ -253,14 +253,10 @@ for _agent_script in "$PROJECT_ROOT/agents"/ai-coder-*.sh; do
         build_image || { echo -e "    ${RED}✘ Build failed for ${IMAGE_NAME}${NC}"; exit 1; }
     fi
 
-    _tar_path="$BUNDLE_IMAGES_DIR/${_agent_tag}.tar.gz"
-    if [ -f "$_tar_path" ]; then
-        echo -e "    ${DIM}[already saved in bundle]${NC}"
-    else
-        echo -e "    Saving image..."
-        docker save "$IMAGE_NAME" | gzip > "$_tar_path"
-        echo -e "    ${ICON_OK} Saved → ${_agent_tag}.tar.gz"
-    fi
+    # build_image above already guarantees the image exists locally, so the
+    # pull branch inside ensure_image_saved never triggers here — it's just
+    # reused for its cache-check + save + report logic.
+    ensure_image_saved "$IMAGE_NAME" "$_agent_tag"
 done
 
 # --- [ Write bundle manifest ] ------------------------------------------------

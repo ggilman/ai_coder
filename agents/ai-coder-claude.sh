@@ -86,7 +86,6 @@ EOF
 }
 
 start_workbench() {
-    echo -e "${ICON_GEAR} Mapping Spoke for [$PROJECT_ID]..."
     local _model_id="${MODEL_FILE%.gguf}"
     run_workbench \
         -v "$(to_host_path "$HOME/.npm-cache"):/root/.npm" \

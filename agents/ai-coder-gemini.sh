@@ -36,7 +36,6 @@ EOF
 }
 
 start_workbench() {
-    echo -e "${ICON_GEAR} Mapping Spoke for [$PROJECT_ID]..."
     run_workbench \
         -v "$(to_host_path "$HOME/.npm-cache"):/root/.npm" \
         -v "$(to_host_path "$HOME/.gemini-config"):/root/.gemini" \

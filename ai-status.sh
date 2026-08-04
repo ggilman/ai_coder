@@ -60,39 +60,16 @@ _ENGINE_TMP="/tmp/ai_status_engine_$$"
 _SLOTS_TMP="/tmp/ai_status_slots_$$"
 readonly SLOTS_TIMEOUT=2
 
+# get_engine_health / get_engine_slots / get_model_name — shared with
+# ai-status-legacy.sh (both read the globals defined above).
+source "$SCRIPT_DIR/libs/ai-coder-engine-status.sh"
+
 get_gpu_stats() {
     if ! command -v "$SMI" &> /dev/null; then
         return 1
     fi
     "$SMI" --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw \
         --format=csv,noheader,nounits 2>/dev/null || return 1
-}
-
-get_engine_health() {
-    local _old_opts; _old_opts=$(set +o | grep pipefail)
-    set +o pipefail
-    docker exec "$ENGINE_NAME" curl -s --max-time "$HEALTH_TIMEOUT" http://localhost:8080/health \
-        > "$_ENGINE_TMP" 2>/dev/null || true
-    eval "$_old_opts"
-}
-
-get_engine_slots() {
-    local _old_opts; _old_opts=$(set +o | grep pipefail)
-    set +o pipefail
-    docker exec "$ENGINE_NAME" curl -s --max-time "$SLOTS_TIMEOUT" http://localhost:8080/slots \
-        > "$_SLOTS_TMP" 2>/dev/null || true
-    eval "$_old_opts"
-}
-
-get_model_name() {
-    local _mtmp="/tmp/ai_status_model_$$"
-    local _old_opts; _old_opts=$(set +o | grep pipefail)
-    set +o pipefail
-    docker exec "$ENGINE_NAME" curl -s --max-time "$HEALTH_TIMEOUT" http://localhost:8080/v1/models \
-        > "$_mtmp" 2>/dev/null || true
-    eval "$_old_opts"
-    grep -o '"id":"[^"]*"' "$_mtmp" 2>/dev/null | head -1 | cut -d'"' -f4 || true
-    rm -f "$_mtmp"
 }
 
 # Generates a standard colorized progress bar using ANSI-C quoting

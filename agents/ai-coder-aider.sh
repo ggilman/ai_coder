@@ -46,7 +46,6 @@ EOF
 }
 
 start_workbench() {
-    echo -e "${ICON_GEAR} Mapping Spoke for [$PROJECT_ID]..."
     run_workbench \
         -v "$(to_host_path "$HOME/.aider-config"):/root/.aider-config" \
         -e OPENAI_API_BASE="http://$GLOBAL_ENGINE_NAME:8080/v1" \

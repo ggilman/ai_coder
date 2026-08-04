@@ -129,6 +129,7 @@ exec_in_container() {
 run_workbench() {
     # Usage: run_workbench [extra docker run flags...] [-- <entrypoint-cmd>]
     # Starts the workbench with standard flags. Pass a custom entrypoint after --.
+    echo -e "${ICON_GEAR} Mapping Spoke for [$PROJECT_ID]..."
     local extra_flags=()
     local entrypoint="mkdir -p \"/$WORKSPACE_DIR\"; trap 'true' EXIT; while true; do sleep 3600; done"
     local past_sep=false

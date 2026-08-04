@@ -112,6 +112,35 @@ cmd_update() {
     write_pref "$STATE_FILE" last_check "$(date +%s 2>/dev/null || echo 0)"
 }
 
+# Prompts a yes/no setup question, writes the pref, and prints a status message.
+# Shared by every setup_step_* that is a plain on/off toggle.
+# Usage: setup_toggle_pref <pref_key> <title> <question> <detail> <prompt> \
+#            <cur_display> <cur_yesno> <yes_msg> <no_msg> [<yes_value>] [<no_value>]
+# <cur_display> is what the "unchanged" message shows; <cur_yesno> is what
+# ui_yesno pre-selects — normally the same value, but callers whose pref
+# stores something other than yes/no (e.g. gpu_mode: multi/single) pass the
+# raw value as <cur_display> and its yes/no-mapped equivalent as <cur_yesno>.
+# <yes_value>/<no_value> default to "yes"/"no" — override for those same callers.
+setup_toggle_pref() {
+    local key="$1" title="$2" question="$3" detail="$4" prompt="$5"
+    local cur_display="$6" cur_yesno="$7" yes_msg="$8" no_msg="$9"
+    local yes_value="${10:-yes}" no_value="${11:-no}"
+    local input; input=$(ui_yesno "$title" "$question" "$detail" "$prompt" "$cur_display" "$cur_yesno")
+    case "$input" in
+        yes)
+            write_pref "$SETTINGS_FILE" "$key" "$yes_value"
+            echo -e "$yes_msg"
+            ;;
+        no)
+            write_pref "$SETTINGS_FILE" "$key" "$no_value"
+            echo -e "$no_msg"
+            ;;
+        *)
+            printf "%s  %s unchanged (%s)%s\n" "$DIM" "$title" "$cur_display" "$NC"
+            ;;
+    esac
+}
+
 setup_step_alias() {
     local rc_file="$HOME/.bashrc"
     if [ "$IS_GITBASH" = "true" ]; then
@@ -171,24 +200,13 @@ setup_step_proxy() {
 
 setup_step_network() {
     local _cur_iso; _cur_iso=$(read_pref "$SETTINGS_FILE" isolated no)
-    local _iso_input; _iso_input=$(ui_yesno "Network isolation" \
+    setup_toggle_pref isolated "Network isolation" \
         "Network isolation — block all internet access from containers?" \
         "(Recommended for regulated environments. Leave blank to keep current setting.)" \
         "Isolate containers? [y/N]:" \
-        "$_cur_iso" "$_cur_iso")
-    case "$_iso_input" in
-        yes)
-            write_pref "$SETTINGS_FILE" isolated yes
-            echo -e "${ICON_OK} Network isolation ${GREEN}enabled${NC}."
-            ;;
-        no)
-            write_pref "$SETTINGS_FILE" isolated no
-            echo -e "${DIM}  Network isolation disabled.${NC}"
-            ;;
-        *)
-            printf "%s  Network isolation unchanged (%s)%s\n" "$DIM" "$_cur_iso" "$NC"
-            ;;
-    esac
+        "$_cur_iso" "$_cur_iso" \
+        "${ICON_OK} Network isolation ${GREEN}enabled${NC}." \
+        "${DIM}  Network isolation disabled.${NC}"
 }
 
 # GPU mode — only prompt if multiple GPUs are detected
@@ -197,25 +215,15 @@ setup_step_gpu() {
     [ "${_gpu_count:-1}" -gt 1 ] || return 0
 
     local _cur_gpu; _cur_gpu=$(read_pref "$SETTINGS_FILE" gpu_mode multi)
-    local _gpu_input; _gpu_input=$(ui_yesno "GPU mode" \
+    local _cur_gpu_yesno; _cur_gpu_yesno=$([ "$_cur_gpu" = "multi" ] && echo "yes" || echo "no")
+    setup_toggle_pref gpu_mode "GPU mode" \
         "GPU mode — ${_gpu_count} GPUs detected. Use all for inference?" \
         "" \
         "Use all GPUs? [Y/n]:" \
-        "$_cur_gpu" \
-        "$([ "$_cur_gpu" = "multi" ] && echo "yes" || echo "no")")
-    case "$_gpu_input" in
-        no)
-            write_pref "$SETTINGS_FILE" gpu_mode single
-            echo -e "${DIM}  GPU mode set to single.${NC}"
-            ;;
-        yes)
-            write_pref "$SETTINGS_FILE" gpu_mode multi
-            echo -e "${ICON_OK} GPU mode set to ${GREEN}multi${NC}."
-            ;;
-        *)
-            echo -e "${DIM}  GPU mode unchanged (${_cur_gpu}).${NC}"
-            ;;
-    esac
+        "$_cur_gpu" "$_cur_gpu_yesno" \
+        "${ICON_OK} GPU mode set to ${GREEN}multi${NC}." \
+        "${DIM}  GPU mode set to single.${NC}" \
+        multi single
 }
 
 setup_step_ctx() {
@@ -249,7 +257,7 @@ Larger = more context, but higher VRAM usage and slower responses." \
 
 setup_step_kv() {
     local _cur_kvq4; _cur_kvq4=$(read_pref "$SETTINGS_FILE" kv_q4 no)
-    local _kvq4_input; _kvq4_input=$(ui_yesno "Low-VRAM KV cache" \
+    setup_toggle_pref kv_q4 "Low-VRAM KV cache" \
         "Low-VRAM KV cache — quantize both K and V cache to q4_0?" \
         "Roughly halves the KV-cache VRAM reserve vs the family's default (usually
 q8_0), which can unlock a bigger model tier or larger context on low-VRAM
@@ -258,20 +266,9 @@ quantization-sensitive than values. K and V stay matched, so llama.cpp
 keeps using its fast fused Flash Attention kernel (mismatched K/V types
 silently fall back to a much slower CPU-bound path)." \
         "Enable low-VRAM (q4_0) KV cache? [y/N]:" \
-        "$_cur_kvq4" "$_cur_kvq4")
-    case "$_kvq4_input" in
-        yes)
-            write_pref "$SETTINGS_FILE" kv_q4 yes
-            echo -e "${ICON_OK} Low-VRAM KV cache ${GREEN}enabled${NC} (q4_0/q4_0) — applied on next engine start."
-            ;;
-        no)
-            write_pref "$SETTINGS_FILE" kv_q4 no
-            echo -e "${DIM}  Low-VRAM KV cache disabled — using the family's default KV type.${NC}"
-            ;;
-        *)
-            printf "%s  Low-VRAM KV cache unchanged (%s)%s\n" "$DIM" "$_cur_kvq4" "$NC"
-            ;;
-    esac
+        "$_cur_kvq4" "$_cur_kvq4" \
+        "${ICON_OK} Low-VRAM KV cache ${GREEN}enabled${NC} (q4_0/q4_0) — applied on next engine start." \
+        "${DIM}  Low-VRAM KV cache disabled — using the family's default KV type.${NC}"
 }
 
 setup_step_vram_overhead() {
@@ -330,27 +327,16 @@ higher quant of the same model, only to a genuinely bigger one." \
 
 setup_step_mcp_extras() {
     local _cur_extras; _cur_extras=$(read_pref "$SETTINGS_FILE" mcp_extras no)
-    local _extras_input; _extras_input=$(ui_yesno "MCP extras" \
+    setup_toggle_pref mcp_extras "MCP extras" \
         "MCP extras — register the optional MCP servers with each agent?" \
         "Extras: memory, sequential-thinking, conan, context7, brave-search, github, fetch, time.
 Every registered server adds tool definitions to the model's context on every
 request — small local models get slower and worse at tool selection as the
 list grows. Core servers (filesystem, git, shell) are always registered." \
         "Enable MCP extras? [y/N]:" \
-        "$_cur_extras" "$_cur_extras")
-    case "$_extras_input" in
-        yes)
-            write_pref "$SETTINGS_FILE" mcp_extras yes
-            echo -e "${ICON_OK} MCP extras ${GREEN}enabled${NC} — applied on next launch (no rebuild needed)."
-            ;;
-        no)
-            write_pref "$SETTINGS_FILE" mcp_extras no
-            echo -e "${DIM}  MCP extras disabled — only core servers are registered.${NC}"
-            ;;
-        *)
-            printf "%s  MCP extras unchanged (%s)%s\n" "$DIM" "$_cur_extras" "$NC"
-            ;;
-    esac
+        "$_cur_extras" "$_cur_extras" \
+        "${ICON_OK} MCP extras ${GREEN}enabled${NC} — applied on next launch (no rebuild needed)." \
+        "${DIM}  MCP extras disabled — only core servers are registered.${NC}"
 }
 
 setup_step_keep_hub() {
@@ -428,50 +414,28 @@ Reclaim the space any time with: docker volume rm ai-coder-models" \
 
 setup_step_spec_decode() {
     local _cur_spec; _cur_spec=$(read_pref "$SETTINGS_FILE" spec_decode yes)
-    local _spec_input; _spec_input=$(ui_yesno "Speculative decoding" \
+    setup_toggle_pref spec_decode "Speculative decoding" \
         "Speculative decoding — speed up generation with a small draft model?" \
         "A tiny draft model proposes tokens the main model verifies in one pass —
 typically 1.5-2x faster code generation. Costs ~1GB extra VRAM.
 Applies only to model families that define a draft (currently Qwen3)." \
         "Use speculative decoding? [Y/n]:" \
-        "$_cur_spec" "$_cur_spec")
-    case "$_spec_input" in
-        no)
-            write_pref "$SETTINGS_FILE" spec_decode no
-            echo -e "${DIM}  Speculative decoding disabled.${NC}"
-            ;;
-        yes)
-            write_pref "$SETTINGS_FILE" spec_decode yes
-            echo -e "${ICON_OK} Speculative decoding ${GREEN}enabled${NC} — draft downloads on next launch."
-            ;;
-        *)
-            printf "%s  Speculative decoding unchanged (%s)%s\n" "$DIM" "$_cur_spec" "$NC"
-            ;;
-    esac
+        "$_cur_spec" "$_cur_spec" \
+        "${ICON_OK} Speculative decoding ${GREEN}enabled${NC} — draft downloads on next launch." \
+        "${DIM}  Speculative decoding disabled.${NC}"
 }
 
 setup_step_expose_port() {
     local _cur_expose; _cur_expose=$(read_pref "$SETTINGS_FILE" expose_host_port no)
-    local _expose_input; _expose_input=$(ui_yesno "Host port exposure" \
+    setup_toggle_pref expose_host_port "Host port exposure" \
         "Host port exposure — publish the engine on localhost:8080?" \
         "Allows external applications (e.g. Open WebUI) to connect directly.
 Leave disabled if you only need the AI coding tools inside Docker." \
         "Expose engine on localhost:8080? [y/N]:" \
-        "$_cur_expose" "$_cur_expose")
-    case "$_expose_input" in
-        yes)
-            write_pref "$SETTINGS_FILE" expose_host_port yes
-            echo -e "${ICON_OK} Engine will be published on ${CYAN}localhost:8080${NC}."
-            echo -e "${DIM}  Next launch will also offer to start Open WebUI alongside your agent.${NC}"
-            ;;
-        no)
-            write_pref "$SETTINGS_FILE" expose_host_port no
-            echo -e "${DIM}  Engine port not exposed to host.${NC}"
-            ;;
-        *)
-            printf "%s  Host port exposure unchanged (%s)%s\n" "$DIM" "$_cur_expose" "$NC"
-            ;;
-    esac
+        "$_cur_expose" "$_cur_expose" \
+        "${ICON_OK} Engine will be published on ${CYAN}localhost:8080${NC}.
+${DIM}  Next launch will also offer to start Open WebUI alongside your agent.${NC}" \
+        "${DIM}  Engine port not exposed to host.${NC}"
 }
 
 setup_step_git_identity() {
