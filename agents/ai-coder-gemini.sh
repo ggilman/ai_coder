@@ -39,8 +39,8 @@ start_workbench() {
     run_workbench \
         -v "$(to_host_path "$HOME/.npm-cache"):/root/.npm" \
         -v "$(to_host_path "$HOME/.gemini-config"):/root/.gemini" \
-        -e GEMINI_API_KEY="sk-local-bypass" \
-        -e GOOGLE_GENERATIVE_AI_API_KEY="sk-local-bypass" \
+        -e GEMINI_API_KEY="${LOCAL_API_KEY}" \
+        -e GOOGLE_GENERATIVE_AI_API_KEY="${LOCAL_API_KEY}" \
         -e GEMINI_SANDBOX="false" \
         -e GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:4000" \
         -- "mkdir -p \"/$WORKSPACE_DIR\"; socat TCP-LISTEN:4000,fork,reuseaddr TCP:${GLOBAL_PROXY_NAME}:4000 & trap 'true' EXIT; while true; do sleep 3600; done"

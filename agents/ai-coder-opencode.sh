@@ -30,7 +30,7 @@ configure_workbench() {
       "name": "Local $MODEL_FAMILY (llama.cpp)",
       "options": {
         "baseURL": "http://$GLOBAL_ENGINE_NAME:8080/v1",
-        "apiKey": "sk-local-bypass"
+        "apiKey": "$LOCAL_API_KEY"
       },
       "models": {
         "hub-model": {

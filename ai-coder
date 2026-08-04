@@ -318,48 +318,33 @@ _engine_running=false
 _need_engine_restart=false
 
 if $_engine_running; then
-    # Restart if any engine-affecting setting changed since it was last started.
-    _eng_gpu=$(read_pref    "$STATE_FILE" engine_gpu_mode "")
-    _eng_model=$(read_pref  "$STATE_FILE" engine_model "")
-    _eng_ctx=$(read_pref    "$STATE_FILE" engine_ctx "")
-    _eng_kv=$(read_pref     "$STATE_FILE" engine_kv "")
-    _eng_batch=$(read_pref  "$STATE_FILE" engine_batch "")
-    _eng_expose=$(read_pref "$STATE_FILE" engine_expose "")
-    _eng_net=$(read_pref    "$STATE_FILE" engine_net "")
-    _eng_mvol=$(read_pref   "$STATE_FILE" engine_mvol "")
-    _eng_spec=$(read_pref   "$STATE_FILE" engine_spec "")
-    _cur_expose=$(read_pref "$SETTINGS_FILE" expose_host_port no)
-    _cur_mvol=$(read_pref   "$SETTINGS_FILE" model_volume "$MODEL_VOLUME_DEFAULT")
+    # Restart if any engine-affecting setting changed since it was last
+    # started. Each entry is "label|saved-state-value|current-value"; a
+    # mismatch with a non-empty saved value (i.e. the engine actually
+    # recorded one last start — absent on a first run) triggers a restart.
+    # All entries are checked (not just the first mismatch), so one restart
+    # reports every setting that actually changed. Add a new engine-affecting
+    # setting by appending a line here rather than a whole branch.
     _cur_spec=no
     spec_decode_enabled && [ -f "$MODEL_STORAGE_DIR/${MODEL_DRAFT_FILE:-}" ] && _cur_spec=yes
-    if [ -n "$_eng_gpu" ] && [ "$_eng_gpu" != "${GPU_MODE:-multi}" ]; then
-        echo -e "${YELLOW}◈ GPU mode changed (${_eng_gpu} → ${GPU_MODE:-multi}) — restarting engine...${NC}"
-        _need_engine_restart=true
-    elif [ -n "$_eng_model" ] && [ "$_eng_model" != "${MODEL_FILE:-}" ]; then
-        echo -e "${YELLOW}◈ Model changed (${_eng_model} → ${MODEL_FILE:-}) — restarting engine...${NC}"
-        _need_engine_restart=true
-    elif [ -n "$_eng_ctx" ] && [ "$_eng_ctx" != "${MODEL_CTX_SIZE:-}" ]; then
-        echo -e "${YELLOW}◈ Context size changed (${_eng_ctx} → ${MODEL_CTX_SIZE:-}) — restarting engine...${NC}"
-        _need_engine_restart=true
-    elif [ -n "$_eng_kv" ] && [ "$_eng_kv" != "${MODEL_KV_TYPE:-q8_0}" ]; then
-        echo -e "${YELLOW}◈ KV cache type changed (${_eng_kv} → ${MODEL_KV_TYPE:-q8_0}) — restarting engine...${NC}"
-        _need_engine_restart=true
-    elif [ -n "$_eng_batch" ] && [ "$_eng_batch" != "${MODEL_BATCH_SIZE:-1024}/${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}" ]; then
-        echo -e "${YELLOW}◈ Batch size changed (${_eng_batch} → ${MODEL_BATCH_SIZE:-1024}/${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}) — restarting engine...${NC}"
-        _need_engine_restart=true
-    elif [ -n "$_eng_expose" ] && [ "$_eng_expose" != "$_cur_expose" ]; then
-        echo -e "${YELLOW}◈ Host port exposure changed (${_eng_expose} → ${_cur_expose}) — restarting engine...${NC}"
-        _need_engine_restart=true
-    elif [ -n "$_eng_net" ] && [ "$_eng_net" != "${NETWORK_INTERNAL:-false}" ]; then
-        echo -e "${YELLOW}◈ Network isolation changed (${_eng_net} → ${NETWORK_INTERNAL:-false}) — restarting engine...${NC}"
-        _need_engine_restart=true
-    elif [ -n "$_eng_mvol" ] && [ "$_eng_mvol" != "$_cur_mvol" ]; then
-        echo -e "${YELLOW}◈ Model storage mode changed (${_eng_mvol} → ${_cur_mvol}) — restarting engine...${NC}"
-        _need_engine_restart=true
-    elif [ -n "$_eng_spec" ] && [ "$_eng_spec" != "$_cur_spec" ]; then
-        echo -e "${YELLOW}◈ Speculative decoding changed (${_eng_spec} → ${_cur_spec}) — restarting engine...${NC}"
-        _need_engine_restart=true
-    fi
+    _restart_checks=(
+        "GPU mode|$(read_pref "$STATE_FILE" engine_gpu_mode "")|${GPU_MODE:-multi}"
+        "Model|$(read_pref "$STATE_FILE" engine_model "")|${MODEL_FILE:-}"
+        "Context size|$(read_pref "$STATE_FILE" engine_ctx "")|${MODEL_CTX_SIZE:-}"
+        "KV cache type|$(read_pref "$STATE_FILE" engine_kv "")|${MODEL_KV_TYPE:-q8_0}"
+        "Batch size|$(read_pref "$STATE_FILE" engine_batch "")|${MODEL_BATCH_SIZE:-1024}/${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}"
+        "Host port exposure|$(read_pref "$STATE_FILE" engine_expose "")|$(read_pref "$SETTINGS_FILE" expose_host_port no)"
+        "Network isolation|$(read_pref "$STATE_FILE" engine_net "")|${NETWORK_INTERNAL:-false}"
+        "Model storage mode|$(read_pref "$STATE_FILE" engine_mvol "")|$(read_pref "$SETTINGS_FILE" model_volume "$MODEL_VOLUME_DEFAULT")"
+        "Speculative decoding|$(read_pref "$STATE_FILE" engine_spec "")|$_cur_spec"
+    )
+    for _check in "${_restart_checks[@]}"; do
+        IFS='|' read -r _label _old _new <<< "$_check"
+        if [ -n "$_old" ] && [ "$_old" != "$_new" ]; then
+            echo -e "${YELLOW}◈ ${_label} changed (${_old} → ${_new}) — restarting engine...${NC}"
+            _need_engine_restart=true
+        fi
+    done
 fi
 
 if ! $_engine_running || $_need_engine_restart; then

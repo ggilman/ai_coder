@@ -34,7 +34,7 @@ configure_workbench() {
     # but the connection settings must match the current infrastructure.
     cat > "$HOME/.aider-config/.aider.conf.yml" <<EOF
 openai-api-base: http://$GLOBAL_ENGINE_NAME:8080/v1
-openai-api-key: sk-local-bypass
+openai-api-key: $LOCAL_API_KEY
 model: openai/local
 no-auto-commits: false
 check-update: false
@@ -49,7 +49,7 @@ start_workbench() {
     run_workbench \
         -v "$(to_host_path "$HOME/.aider-config"):/root/.aider-config" \
         -e OPENAI_API_BASE="http://$GLOBAL_ENGINE_NAME:8080/v1" \
-        -e OPENAI_API_KEY="sk-local-bypass"
+        -e OPENAI_API_KEY="${LOCAL_API_KEY}"
 }
 
 execute_tool() {

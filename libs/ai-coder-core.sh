@@ -31,6 +31,10 @@ if [ -z "$DOWNLOAD_PROXY" ] && [ -f "$SETTINGS_FILE" ]; then
     DOWNLOAD_PROXY=$(grep '^proxy=' "$SETTINGS_FILE" 2>/dev/null | cut -d= -f2- || true)
 fi
 BASE_IMAGE="node:24-bookworm-slim"
+# Placeholder credential sent to every agent/sidecar — the engine and proxy
+# don't check auth, so this exists only to satisfy clients that require a
+# non-empty API key. Single source of truth so it never drifts between agents.
+LOCAL_API_KEY="sk-local-bypass"
 
 # --- [ ENVIRONMENT & SHELL ] --------------------------------------------------
 export MSYS_NO_PATHCONV=1
@@ -275,8 +279,8 @@ run_open_webui_container() {
         -p "127.0.0.1:${OPEN_WEBUI_HOST_PORT}:8080" \
         -e "OPENAI_API_BASE_URL=http://${GLOBAL_ENGINE_NAME}:8080/v1" \
         -e "OPENAI_API_BASE_URLS=http://${GLOBAL_ENGINE_NAME}:8080/v1" \
-        -e "OPENAI_API_KEY=sk-local-bypass" \
-        -e "OPENAI_API_KEYS=sk-local-bypass" \
+        -e "OPENAI_API_KEY=${LOCAL_API_KEY}" \
+        -e "OPENAI_API_KEYS=${LOCAL_API_KEY}" \
         -e "ENABLE_OPENAI_API=True" \
         -e "ENABLE_OLLAMA_API=False" \
         -e "WEBUI_AUTH=False" \
