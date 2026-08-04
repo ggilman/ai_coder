@@ -43,6 +43,20 @@ else
     MODEL_STORAGE_DIR="$HOME/ai-models"
 fi
 
+# --- [ Optional gum UI ] -------------------------------------------------------
+# bundle.sh ships both gum platform builds at scripts/.assets so the prompts
+# below can use them with no internet access. ai-coder-ui.sh is self-contained
+# (no core.sh dependency), so it's safe to source straight from the bundle
+# before anything is installed. Falls back to the plain prompts below if the
+# bundle predates this feature or gum can't run on this machine.
+UI_GUM=false
+if [ -f "$SCRIPTS_DIR/libs/ai-coder-ui.sh" ]; then
+    chmod +x "$SCRIPTS_DIR/.assets"/gum* 2>/dev/null || true
+    # shellcheck source=/dev/null
+    source "$SCRIPTS_DIR/libs/ai-coder-ui.sh"
+    ui_init
+fi
+
 # --- [ Banner ] ---------------------------------------------------------------
 echo ""
 echo "╔══════════════════════════════════════════════╗"
@@ -170,12 +184,21 @@ normalize_path() {
 }
 
 echo ""
-echo "► Script installation directory"
-echo "  Enter the path where ai-coder scripts should be installed."
-echo "  Accepts Windows (C:\\path), Git Bash (/c/path), or POSIX (/home/...) paths."
-echo "  Press Enter to use the default: ~/ai-coder"
-echo -n "  Install path: "
-read -r _raw_install_dir
+if [ "$UI_GUM" = "true" ]; then
+    _raw_install_dir=$(ui_input "Script installation directory" \
+        "Enter the path where ai-coder scripts should be installed." \
+        "Accepts Windows (C:\\path), Git Bash (/c/path), or POSIX (/home/...) paths.
+Press Enter to use the default: ~/ai-coder" \
+        "Install path:" \
+        "" "")
+else
+    echo "► Script installation directory"
+    echo "  Enter the path where ai-coder scripts should be installed."
+    echo "  Accepts Windows (C:\\path), Git Bash (/c/path), or POSIX (/home/...) paths."
+    echo "  Press Enter to use the default: ~/ai-coder"
+    echo -n "  Install path: "
+    read -r _raw_install_dir
+fi
 
 if [ -z "$_raw_install_dir" ]; then
     INSTALL_DIR="$HOME/ai-coder"
@@ -187,8 +210,16 @@ echo "  Installing to: $INSTALL_DIR"
 
 if [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/ai-coder" ]; then
     echo ""
-    echo -n "  Directory already exists. Overwrite? [y/N]: "
-    read -r _overwrite
+    if [ "$UI_GUM" = "true" ]; then
+        _overwrite=$(ui_yesno "Overwrite existing install" \
+            "Directory already exists: $INSTALL_DIR" \
+            "" \
+            "Overwrite? [y/N]:" \
+            "" "no")
+    else
+        echo -n "  Directory already exists. Overwrite? [y/N]: "
+        read -r _overwrite
+    fi
     case "${_overwrite,,}" in
         y|yes) ;;
         *) echo "  Skipping script installation."; INSTALL_DIR="" ;;

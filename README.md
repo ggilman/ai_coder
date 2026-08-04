@@ -449,6 +449,8 @@ It will prompt for:
 
 The script then downloads the selected model (if not already cached), saves all required Docker images as `.tar.gz` archives, copies all project scripts (including `config/families/`), and writes a `bundle.manifest`. Everything lands in `bundle/`.
 
+It also fetches both platform builds of [gum](https://github.com/charmbracelet/gum) and ships them at `scripts/.assets/` — since the target has no internet access to fetch gum itself, this is what gives it the same gum-powered prompts as the source machine (`--setup`, `--menu`, `--status`, and `unbundle.sh`'s own prompts) instead of falling back to plain text.
+
 Transfer the entire `bundle/` folder to the target machine (USB drive, internal file share, etc.).
 
 ### Installing a bundle (`offline/unbundle.sh`)

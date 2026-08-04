@@ -4,38 +4,24 @@
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
-# ensure_gum — download and install charmbracelet/gum if unavailable
+# _download_gum_binary — download+extract a specific gum platform build
 #
-# On first call downloads gum from GitHub releases into $HOME/.ai_tool_setup_assets.
-# If gum is already on PATH or installed in that directory, returns immediately.
-# Falls back to launch_legacy_fallback() when the download fails.
+# Usage: _download_gum_binary <platform:Windows|Linux> <arch:x86_64|arm64> <dest_dir>
+# Skips the download if dest_dir already has the binary (cache hit). Used both
+# by ensure_gum (current-platform bootstrap) and offline/bundle.sh (which
+# fetches both platform builds to ship inside the air-gapped bundle).
+# Returns 0 with the binary present at dest_dir, 1 if download/extract failed.
 # ------------------------------------------------------------------------------
-ensure_gum() {
-    local gum_exe_name="gum"
-    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+_download_gum_binary() {
+    local platform="$1" gum_arch="$2" _gum_dir="$3"
+    local gum_exe_name="gum" ext=".tar.gz"
+    if [ "$platform" = "Windows" ]; then
         gum_exe_name="gum.exe"
+        ext=".zip"
     fi
 
-    local _gum_dir="./.assets"
     mkdir -p "$_gum_dir"
-
-    echo -ne "⚡ Checking for interface engine (gum)... "
-    command -v gum &>/dev/null && { echo "found in PATH"; return 0; }
-    [ -f "$_gum_dir/$gum_exe_name" ] && { echo "found locally"; return 0; }
-    echo "not found."
-
-    echo "⚡ Bootstrapping status interface engine..."
-
-    local arch; arch=$(uname -m)
-    local gum_arch="x86_64"
-    case "$arch" in
-        x86_64|amd64) gum_arch="x86_64" ;;
-        aarch64|arm64) gum_arch="arm64" ;;
-    esac
-
-    local platform="Linux" ext=".tar.gz"
-    [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && { platform="Windows"; ext=".zip"; }
-
+    [ -f "$_gum_dir/$gum_exe_name" ] && return 0
 
     set +e
     local _proxy_opt=""
@@ -47,7 +33,7 @@ ensure_gum() {
     # Ensure we use -x for curl proxy
     [ -n "$_cur_proxy" ] && _proxy_opt="-x $(resolve_proxy_to_ip "$(echo "$_cur_proxy" | sed 's|^https://|http://|')")"
 
-    set +e
+    local download_url
     if [ "$platform" = "Windows" ]; then
         download_url=$(curl -sL $_proxy_opt --max-time 15 \
         "https://api.github.com/repos/charmbracelet/gum/releases/latest" \
@@ -79,8 +65,6 @@ ensure_gum() {
         fi
     fi
 
-    local tmp_extract; tmp_extract=$(mktemp -d)
-
     echo " Downloading asset from: $download_url"
     if [ "$platform" = "Windows" ]; then
         curl -sL $_proxy_opt --max-time 15 "$download_url" -o "$_gum_dir/gum.zip"
@@ -105,18 +89,53 @@ ensure_gum() {
         find "$_gum_dir" -maxdepth 1 -type d -name "gum_*" -exec rm -rf {} + 2>/dev/null
     fi
     local dl_status=$?
-    rm -rf "$tmp_extract"
     set -e
 
-    # duplicate block removed
-
     if [ $dl_status -ne 0 ] || [ ! -f "$_gum_dir/$gum_exe_name" ]; then
-        echo "⚠ Failed to download gum — running without interface enhancements."
-        return 0
+        return 1
     fi
 
     chmod +x "$_gum_dir/$gum_exe_name" &>/dev/null
-    echo "✅ Setup interface engine ready!"
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# ensure_gum — download and install charmbracelet/gum if unavailable
+#
+# On first call downloads gum from GitHub releases into ./.assets. If gum is
+# already on PATH or installed in that directory, returns immediately.
+# ------------------------------------------------------------------------------
+ensure_gum() {
+    local gum_exe_name="gum"
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+        gum_exe_name="gum.exe"
+    fi
+
+    local _gum_dir="./.assets"
+    mkdir -p "$_gum_dir"
+
+    echo -ne "⚡ Checking for interface engine (gum)... "
+    command -v gum &>/dev/null && { echo "found in PATH"; return 0; }
+    [ -f "$_gum_dir/$gum_exe_name" ] && { echo "found locally"; return 0; }
+    echo "not found."
+
+    echo "⚡ Bootstrapping status interface engine..."
+
+    local arch; arch=$(uname -m)
+    local gum_arch="x86_64"
+    case "$arch" in
+        x86_64|amd64) gum_arch="x86_64" ;;
+        aarch64|arm64) gum_arch="arm64" ;;
+    esac
+
+    local platform="Linux"
+    [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && platform="Windows"
+
+    if _download_gum_binary "$platform" "$gum_arch" "$_gum_dir"; then
+        echo "✅ Setup interface engine ready!"
+    else
+        echo "⚠ Failed to download gum — running without interface enhancements."
+    fi
 }
 
 # ------------------------------------------------------------------------------

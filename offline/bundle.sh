@@ -137,6 +137,32 @@ for _item in ai-coder ai-status.sh agents libs config packages README.md; do
 done
 echo -e "${ICON_OK} Scripts copied."
 
+# --- [ Gum interface engine ] --------------------------------------------------
+# The target machine has no internet access, so gum can't bootstrap itself
+# there — fetch both platform builds here (cached in the project's own
+# .assets so repeat bundle runs don't re-download) and ship them inside the
+# bundle at scripts/.assets. ai-coder-ui.sh finds gum at that exact path
+# relative to libs/, so --setup/--menu/--status get gum-powered prompts on
+# the air-gapped target with no extra wiring needed.
+echo -e "\n${ICON_GEAR} Bundling gum interface engine..."
+mkdir -p "$BUNDLE_SCRIPTS_DIR/.assets"
+_gum_bundle_ok=true
+if _download_gum_binary "Windows" "x86_64" "$PROJECT_ROOT/.assets"; then
+    cp "$PROJECT_ROOT/.assets/gum.exe" "$BUNDLE_SCRIPTS_DIR/.assets/gum.exe"
+else
+    _gum_bundle_ok=false
+fi
+if _download_gum_binary "Linux" "x86_64" "$PROJECT_ROOT/.assets"; then
+    cp "$PROJECT_ROOT/.assets/gum" "$BUNDLE_SCRIPTS_DIR/.assets/gum"
+else
+    _gum_bundle_ok=false
+fi
+if [ "$_gum_bundle_ok" = "true" ]; then
+    echo -e "${ICON_OK} Gum interface engine bundled (Windows + Linux)."
+else
+    echo -e "${YELLOW}⚠ Gum download incomplete — target will fall back to plain-text prompts.${NC}"
+fi
+
 # --- [ Model ] ----------------------------------------------------------------
 echo -e "\n${ICON_GEAR} Model: ${CYAN}${TARGET_MODEL_FILE}${NC}"
 BUNDLE_MODEL_PATH="$BUNDLE_MODELS_DIR/$TARGET_MODEL_FILE"
