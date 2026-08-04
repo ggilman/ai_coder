@@ -28,31 +28,9 @@ launch_legacy_fallback() {
 }
 
 # --- [ AUTO-DEPENDENCY GUM BOOTSTRAP ] ----------------------------------------
-# Same gum resolution as ai-coder: look relative to script dir, not cwd
-GUM_DIR="$SCRIPT_DIR/.assets"
-mkdir -p "$GUM_DIR"
-
+# Ensure gum is available, then resolve the binary using library functions
 ensure_gum || true
-
-# Map the active command binary (script-relative path, fallback to PATH)
-# On Windows/Git Bash, prefer gum.exe over gum (Linux ELF binary won't run)
-if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-    if [ -f "$GUM_DIR/gum.exe" ]; then
-        GUM_CMD="$GUM_DIR/gum.exe"
-    elif command -v gum &>/dev/null; then
-        GUM_CMD="gum"
-    else
-        launch_legacy_fallback
-    fi
-else
-    if command -v gum &>/dev/null; then
-        GUM_CMD="gum"
-    elif [ -f "$GUM_DIR/gum" ]; then
-        GUM_CMD="$GUM_DIR/gum"
-    else
-        launch_legacy_fallback
-    fi
-fi
+resolve_gum_cmd || launch_legacy_fallback
 
 # --- [ CONFIGURATION ] --------------------------------------------------------
 readonly UPDATE_INTERVAL=2
