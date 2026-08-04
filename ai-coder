@@ -107,6 +107,19 @@ if [[ "${1:-}" == "--rebuild" ]]; then
     exit 0
 fi
 
+# Reject unknown commands before touching Docker/Hub state. Every recognized
+# command either already exited above (--help, --update, --status, --clean,
+# --fix-project, --setup, --rebuild) or is handled further down (--menu,
+# --build-only) — anything else here is a typo and should fail fast instead
+# of running the full family/tool/Hub flow and tripping the cleanup trap.
+case "${1:-}" in
+    ""|--menu|--build-only) ;;
+    *)
+        echo -e "${RED}Unknown command: ${1}${NC}"
+        echo "Run: $(basename "$0") --help"
+        exit 1 ;;
+esac
+
 # --- [ MAIN ENTRY ] -----------------------------------------------------------
 
 # Guard: require --setup to have been run at least once before launching.

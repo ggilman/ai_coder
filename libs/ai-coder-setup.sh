@@ -3,166 +3,11 @@
 # AI-CODER | Setup Wizard & Project-Fix Commands
 # ==============================================================================
 
-# ------------------------------------------------------------------------------
-# _download_gum_binary — download+extract a specific gum platform build
-#
-# Usage: _download_gum_binary <platform:Windows|Linux> <arch:x86_64|arm64> <dest_dir>
-# Skips the download if dest_dir already has the binary (cache hit). Used both
-# by ensure_gum (current-platform bootstrap) and offline/bundle.sh (which
-# fetches both platform builds to ship inside the air-gapped bundle).
-# Returns 0 with the binary present at dest_dir, 1 if download/extract failed.
-# ------------------------------------------------------------------------------
-_download_gum_binary() {
-    local platform="$1" gum_arch="$2" _gum_dir="$3"
-    local gum_exe_name="gum" ext=".tar.gz"
-    if [ "$platform" = "Windows" ]; then
-        gum_exe_name="gum.exe"
-        ext=".zip"
-    fi
-
-    mkdir -p "$_gum_dir"
-    [ -f "$_gum_dir/$gum_exe_name" ] && return 0
-
-    set +e
-    local _proxy_opt=""
-    # Use grep to fetch the proxy manually to avoid dependency on functions defined later
-    local _cur_proxy
-    _cur_proxy=$(grep "^proxy=" "$(dirname "${BASH_SOURCE[0]}")/../user/settings.conf" 2>/dev/null | cut -d= -f2- || true)
-    # Also check if HTTP_PROXY/HTTPS_PROXY environment variables are set
-    [ -z "$_cur_proxy" ] && _cur_proxy=${HTTPS_PROXY:-${HTTP_PROXY:-${https_proxy:-${http_proxy:-}}}}
-    # Ensure we use -x for curl proxy
-    [ -n "$_cur_proxy" ] && _proxy_opt="-x $(resolve_proxy_to_ip "$(echo "$_cur_proxy" | sed 's|^https://|http://|')")"
-
-    local download_url
-    if [ "$platform" = "Windows" ]; then
-        download_url=$(curl -sL $_proxy_opt --max-time 15 \
-        "https://api.github.com/repos/charmbracelet/gum/releases/latest" \
-        | grep "browser_download_url" \
-        | grep -i "Windows_x86_64" \
-        | grep -i ".zip" \
-        | grep -v "sbom" \
-        | grep -v ".sig" \
-        | grep -v ".pem" \
-        | cut -d'"' -f4 | head -n1 || true)
-    else
-        download_url=$(curl -sL $_proxy_opt --max-time 15 \
-            "https://api.github.com/repos/charmbracelet/gum/releases/latest" \
-            | grep "browser_download_url" \
-            | grep -i "${platform}_${gum_arch}" \
-            | grep -i "${ext}" \
-            | grep -v "sbom" \
-            | grep -v ".sig" \
-            | grep -v ".pem" \
-            | cut -d'"' -f4 | head -n1 || true)
-    fi
-
-    if [ -z "$download_url" ]; then
-        echo "⚠ Proxy block detected or no match. Falling back to hardcoded URL for Gum..."
-        if [ "$platform" = "Windows" ]; then
-            download_url="https://github.com/charmbracelet/gum/releases/download/v0.17.0/gum_0.17.0_Windows_x86_64.zip"
-        else
-            download_url="https://github.com/charmbracelet/gum/releases/download/v0.17.0/gum_0.17.0_Linux_${gum_arch}.tar.gz"
-        fi
-    fi
-
-    echo " Downloading asset from: $download_url"
-    if [ "$platform" = "Windows" ]; then
-        curl -sL $_proxy_opt --max-time 15 "$download_url" -o "$_gum_dir/gum.zip"
-        if command -v unzip >/dev/null 2>&1; then
-            unzip -o "$_gum_dir/gum.zip" -d "$_gum_dir" &>/dev/null
-        elif command -v tar >/dev/null 2>&1; then
-            tar -xf "$_gum_dir/gum.zip" -C "$_gum_dir" &>/dev/null
-        else
-            python3 -c "import zipfile; zipfile.ZipFile('$_gum_dir/gum.zip', 'r').extractall('$_gum_dir')" 2>/dev/null || \
-            python -c "import zipfile; zipfile.ZipFile('$_gum_dir/gum.zip', 'r').extractall('$_gum_dir')" 2>/dev/null
-        fi
-        [ -d "$_gum_dir/gum_0.17.0_Windows_x86_64" ] && mv "$_gum_dir/gum_0.17.0_Windows_x86_64/gum.exe" "$_gum_dir/gum.exe" 2>/dev/null
-        [ -d "$_gum_dir/gum_0.14.3_Windows_x86_64" ] && mv "$_gum_dir/gum_0.14.3_Windows_x86_64/gum.exe" "$_gum_dir/gum.exe" 2>/dev/null
-        [ -f "$_gum_dir/gum.exe" ] || find "$_gum_dir" -name "gum.exe" -exec mv {} "$_gum_dir/gum.exe" \; 2>/dev/null
-        rm -f "$_gum_dir/gum.zip"
-        find "$_gum_dir" -maxdepth 1 -type d -name "gum_*" -exec rm -rf {} + 2>/dev/null
-    else
-        curl -sL $_proxy_opt --max-time 15 "$download_url" -o "$_gum_dir/gum.tar.gz"
-        tar -xzf "$_gum_dir/gum.tar.gz" -C "$_gum_dir" &>/dev/null
-        find "$_gum_dir" -type f -name "gum" -exec mv {} "$_gum_dir/" \; &>/dev/null
-        rm -f "$_gum_dir/gum.tar.gz"
-        find "$_gum_dir" -maxdepth 1 -type d -name "gum_*" -exec rm -rf {} + 2>/dev/null
-    fi
-    local dl_status=$?
-    set -e
-
-    if [ $dl_status -ne 0 ] || [ ! -f "$_gum_dir/$gum_exe_name" ]; then
-        return 1
-    fi
-
-    chmod +x "$_gum_dir/$gum_exe_name" &>/dev/null
-    return 0
-}
-
-# ------------------------------------------------------------------------------
-# ensure_gum — download and install charmbracelet/gum if unavailable
-#
-# On first call downloads gum from GitHub releases into ./.assets. If gum is
-# already on PATH or installed in that directory, returns immediately.
-# ------------------------------------------------------------------------------
-ensure_gum() {
-    local gum_exe_name="gum"
-    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-        gum_exe_name="gum.exe"
-    fi
-
-    local _gum_dir="./.assets"
-    mkdir -p "$_gum_dir"
-
-    echo -ne "⚡ Checking for interface engine (gum)... "
-    command -v gum &>/dev/null && { echo "found in PATH"; return 0; }
-    [ -f "$_gum_dir/$gum_exe_name" ] && { echo "found locally"; return 0; }
-    echo "not found."
-
-    echo "⚡ Bootstrapping status interface engine..."
-
-    local arch; arch=$(uname -m)
-    local gum_arch="x86_64"
-    case "$arch" in
-        x86_64|amd64) gum_arch="x86_64" ;;
-        aarch64|arm64) gum_arch="arm64" ;;
-    esac
-
-    local platform="Linux"
-    [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && platform="Windows"
-
-    if _download_gum_binary "$platform" "$gum_arch" "$_gum_dir"; then
-        echo "✅ Setup interface engine ready!"
-    else
-        echo "⚠ Failed to download gum — running without interface enhancements."
-    fi
-}
-
-# ------------------------------------------------------------------------------
-# resolve_gum_cmd — resolve the active gum binary into GUM_CMD
-#
-# Priority: PATH binary > installed binary (gum.exe preferred on Windows).
-# Returns 0 on success, 1 if gum is not found anywhere.
-# ------------------------------------------------------------------------------
-resolve_gum_cmd() {
-    local _gum_dir="./.assets"
-    local gum_exe_name="gum"
-    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-        gum_exe_name="gum.exe"
-    fi
-
-    if command -v gum &> /dev/null; then
-        GUM_CMD="gum"
-        return 0
-    fi
-
-    if [ -f "$_gum_dir/$gum_exe_name" ]; then
-        GUM_CMD="$_gum_dir/$gum_exe_name"
-        return 0
-    fi
-
-    return 1
-}
+# gum bootstrap/resolution (ensure_gum, resolve_gum_cmd, _download_gum_binary).
+# Sourced here (rather than relying on the caller) since ai-status.sh and
+# offline/bundle.sh source this file directly without going through the full
+# ai-coder launch chain.
+source "$(dirname "${BASH_SOURCE[0]}")/ai-coder-gum.sh"
 
 # ------------------------------------------------------------------------------
 # cmd_fix_project — normalize line endings in the current git project
@@ -267,31 +112,17 @@ cmd_update() {
     write_pref "$STATE_FILE" last_check "$(date +%s 2>/dev/null || echo 0)"
 }
 
-# ------------------------------------------------------------------------------
-# cmd_setup — first-time and re-configuration wizard
-# ------------------------------------------------------------------------------
-cmd_setup() {
-    rc_file="$HOME/.bashrc"
+setup_step_alias() {
+    local rc_file="$HOME/.bashrc"
     if [ "$IS_GITBASH" = "true" ]; then
         rc_file="$HOME/.bash_profile"
     elif [ "$SHELL" != "${SHELL%zsh}" ]; then
         rc_file="$HOME/.zshrc"
     fi
 
-    # Ensure gum is available before initializing the UI
-    ensure_gum
-    ui_init
-	# --- ADD THIS BANNER BLOCK ---
-    clear
-    echo -e "${CYAN}${BOLD}==========================================================${NC}"
-    echo -e "${CYAN}${BOLD}                  AI-CODER SETUP WIZARD                   ${NC}"
-    echo -e "${CYAN}${BOLD}==========================================================${NC}"
-    echo -e "${DIM}Configure your local agent environment and preferences.${NC}"
-    # -----------------------------
-
-    _alias_exists=false
+    local _alias_exists=false
     grep -q "alias $ALIAS_NAME=" "$rc_file" 2>/dev/null && _alias_exists=true
-    _alias_input=$(ui_yesno "Shell alias" \
+    local _alias_input; _alias_input=$(ui_yesno "Shell alias" \
         "Shell alias — '${ALIAS_NAME}' shortcut in $rc_file" \
         "Skip if you prefer to add ai-coder to your PATH manually." \
         "Add alias? [y/n, Enter to keep]:" \
@@ -313,9 +144,11 @@ cmd_setup() {
             echo -e "${DIM}  Alias unchanged.${NC}"
             ;;
     esac
+}
 
-    _cur_proxy=$(read_pref "$SETTINGS_FILE" proxy "")
-    _proxy_input=$(ui_input "Proxy" \
+setup_step_proxy() {
+    local _cur_proxy; _cur_proxy=$(read_pref "$SETTINGS_FILE" proxy "")
+    local _proxy_input; _proxy_input=$(ui_input "Proxy" \
         "Proxy configuration:" \
         "Enter a URL to set, '-' to clear, or leave blank to keep." \
         "Proxy URL:" \
@@ -334,9 +167,11 @@ cmd_setup() {
             printf "%s  Proxy saved: %s%s%s\n" "${ICON_OK}" "${CYAN}" "$_proxy_input" "${NC}"
             ;;
     esac
+}
 
-    _cur_iso=$(read_pref "$SETTINGS_FILE" isolated no)
-    _iso_input=$(ui_yesno "Network isolation" \
+setup_step_network() {
+    local _cur_iso; _cur_iso=$(read_pref "$SETTINGS_FILE" isolated no)
+    local _iso_input; _iso_input=$(ui_yesno "Network isolation" \
         "Network isolation — block all internet access from containers?" \
         "(Recommended for regulated environments. Leave blank to keep current setting.)" \
         "Isolate containers? [y/N]:" \
@@ -354,35 +189,38 @@ cmd_setup() {
             printf "%s  Network isolation unchanged (%s)%s\n" "$DIM" "$_cur_iso" "$NC"
             ;;
     esac
+}
 
-    # GPU mode — only prompt if multiple GPUs are detected
-    _gpu_count=1
-    _gpu_count=$($SMI --query-gpu=name --format=csv,noheader,nounits 2>/dev/null | grep -c '.' || echo 1)
-    if [ "${_gpu_count:-1}" -gt 1 ]; then
-        _cur_gpu=$(read_pref "$SETTINGS_FILE" gpu_mode multi)
-        _gpu_input=$(ui_yesno "GPU mode" \
-            "GPU mode — ${_gpu_count} GPUs detected. Use all for inference?" \
-            "" \
-            "Use all GPUs? [Y/n]:" \
-            "$_cur_gpu" \
-            "$([ "$_cur_gpu" = "multi" ] && echo "yes" || echo "no")")
-        case "$_gpu_input" in
-            no)
-                write_pref "$SETTINGS_FILE" gpu_mode single
-                echo -e "${DIM}  GPU mode set to single.${NC}"
-                ;;
-            yes)
-                write_pref "$SETTINGS_FILE" gpu_mode multi
-                echo -e "${ICON_OK} GPU mode set to ${GREEN}multi${NC}."
-                ;;
-            *)
-                echo -e "${DIM}  GPU mode unchanged (${_cur_gpu}).${NC}"
-                ;;
-        esac
-    fi
+# GPU mode — only prompt if multiple GPUs are detected
+setup_step_gpu() {
+    local _gpu_count; _gpu_count=$($SMI --query-gpu=name --format=csv,noheader,nounits 2>/dev/null | grep -c '.' || echo 1)
+    [ "${_gpu_count:-1}" -gt 1 ] || return 0
 
-    _cur_ctx=$(read_pref "$SETTINGS_FILE" ctx_level 64k)
-    _ctx_input=$(ui_menu "Context window" \
+    local _cur_gpu; _cur_gpu=$(read_pref "$SETTINGS_FILE" gpu_mode multi)
+    local _gpu_input; _gpu_input=$(ui_yesno "GPU mode" \
+        "GPU mode — ${_gpu_count} GPUs detected. Use all for inference?" \
+        "" \
+        "Use all GPUs? [Y/n]:" \
+        "$_cur_gpu" \
+        "$([ "$_cur_gpu" = "multi" ] && echo "yes" || echo "no")")
+    case "$_gpu_input" in
+        no)
+            write_pref "$SETTINGS_FILE" gpu_mode single
+            echo -e "${DIM}  GPU mode set to single.${NC}"
+            ;;
+        yes)
+            write_pref "$SETTINGS_FILE" gpu_mode multi
+            echo -e "${ICON_OK} GPU mode set to ${GREEN}multi${NC}."
+            ;;
+        *)
+            echo -e "${DIM}  GPU mode unchanged (${_cur_gpu}).${NC}"
+            ;;
+    esac
+}
+
+setup_step_ctx() {
+    local _cur_ctx; _cur_ctx=$(read_pref "$SETTINGS_FILE" ctx_level 64k)
+    local _ctx_input; _ctx_input=$(ui_menu "Context window" \
         "Context window level — how many tokens of context should the model keep?" \
         "4k / 8k / 16k / 32k / 64k (default) / 128k / 256k
 Larger = more context, but higher VRAM usage and slower responses." \
@@ -407,9 +245,11 @@ Larger = more context, but higher VRAM usage and slower responses." \
             printf "%s⚠ Unknown level '%s' — keeping %s%s\n" "$YELLOW" "$_ctx_input" "$_cur_ctx" "$NC"
             ;;
     esac
+}
 
-    _cur_kvq4=$(read_pref "$SETTINGS_FILE" kv_q4 no)
-    _kvq4_input=$(ui_yesno "Low-VRAM KV cache" \
+setup_step_kv() {
+    local _cur_kvq4; _cur_kvq4=$(read_pref "$SETTINGS_FILE" kv_q4 no)
+    local _kvq4_input; _kvq4_input=$(ui_yesno "Low-VRAM KV cache" \
         "Low-VRAM KV cache — quantize both K and V cache to q4_0?" \
         "Roughly halves the KV-cache VRAM reserve vs the family's default (usually
 q8_0), which can unlock a bigger model tier or larger context on low-VRAM
@@ -432,9 +272,11 @@ silently fall back to a much slower CPU-bound path)." \
             printf "%s  Low-VRAM KV cache unchanged (%s)%s\n" "$DIM" "$_cur_kvq4" "$NC"
             ;;
     esac
+}
 
-    _cur_vram_oh=$(read_pref "$SETTINGS_FILE" vram_overhead 1)
-    _vram_oh_input=$(ui_input "VRAM overhead" \
+setup_step_vram_overhead() {
+    local _cur_vram_oh; _cur_vram_oh=$(read_pref "$SETTINGS_FILE" vram_overhead 1)
+    local _vram_oh_input; _vram_oh_input=$(ui_input "VRAM overhead" \
         "VRAM overhead reserve — how many GB of VRAM should be reserved for CUDA/system overhead?" \
         "Recommended: 1GB. Larger values can prevent OOMs on high-load GPUs." \
         "Reserve (GB) [${_cur_vram_oh}]:" \
@@ -452,9 +294,11 @@ silently fall back to a much slower CPU-bound path)." \
             echo -e "${ICON_OK} VRAM overhead reserve set to ${GREEN}${_vram_oh_input}GB${NC}."
             ;;
     esac
+}
 
-    _cur_offload=$(read_pref "$SETTINGS_FILE" cpu_offload_pct 90)
-    _offload_input=$(ui_input "CPU offload" \
+setup_step_cpu_offload() {
+    local _cur_offload; _cur_offload=$(read_pref "$SETTINGS_FILE" cpu_offload_pct 90)
+    local _offload_input; _offload_input=$(ui_input "CPU offload" \
         "CPU offload threshold — run a bigger model with a few layers on CPU when at least this % of it fits in VRAM?" \
         "Recommended: 90 — worst case is roughly half generation speed. Range
 50-99; 0 keeps only models that fit fully on the GPU. Never applies to a
@@ -482,9 +326,11 @@ higher quant of the same model, only to a genuinely bigger one." \
             fi
             ;;
     esac
+}
 
-    _cur_extras=$(read_pref "$SETTINGS_FILE" mcp_extras no)
-    _extras_input=$(ui_yesno "MCP extras" \
+setup_step_mcp_extras() {
+    local _cur_extras; _cur_extras=$(read_pref "$SETTINGS_FILE" mcp_extras no)
+    local _extras_input; _extras_input=$(ui_yesno "MCP extras" \
         "MCP extras — register the optional MCP servers with each agent?" \
         "Extras: memory, sequential-thinking, conan, context7, brave-search, github, fetch, time.
 Every registered server adds tool definitions to the model's context on every
@@ -505,9 +351,11 @@ list grows. Core servers (filesystem, git, shell) are always registered." \
             printf "%s  MCP extras unchanged (%s)%s\n" "$DIM" "$_cur_extras" "$NC"
             ;;
     esac
+}
 
-    _cur_keep=$(read_pref "$SETTINGS_FILE" keep_hub no)
-    _keep_input=$(ui_yesno "Keep hub warm" \
+setup_step_keep_hub() {
+    local _cur_keep; _cur_keep=$(read_pref "$SETTINGS_FILE" keep_hub no)
+    local _keep_input; _keep_input=$(ui_yesno "Keep hub warm" \
         "Keep hub warm — leave the engine running after the last session exits?" \
         "Skips the model load on your next launch. Uses GPU VRAM while idle;
 stop it any time with: ai --clean" \
@@ -517,8 +365,8 @@ stop it any time with: ai --clean" \
         yes)
             write_pref "$SETTINGS_FILE" keep_hub yes
             echo -e "${ICON_OK} Hub will ${GREEN}stay warm${NC} after sessions end."
-            _cur_timeout=$(read_pref "$SETTINGS_FILE" keep_hub_timeout 60)
-            _timeout_input=$(ui_input "Idle timeout" \
+            local _cur_timeout; _cur_timeout=$(read_pref "$SETTINGS_FILE" keep_hub_timeout 60)
+            local _timeout_input; _timeout_input=$(ui_input "Idle timeout" \
                 "" \
                 "" \
                 "Auto-stop after how many idle minutes? [${_cur_timeout}] (0 = keep forever):" \
@@ -549,9 +397,11 @@ stop it any time with: ai --clean" \
             printf "%s  Keep-hub setting unchanged (%s)%s\n" "$DIM" "$_cur_keep" "$NC"
             ;;
     esac
+}
 
-    _cur_mvol=$(read_pref "$SETTINGS_FILE" model_volume "$MODEL_VOLUME_DEFAULT")
-    _mvol_input=$(ui_yesno "Fast model storage" \
+setup_step_model_volume() {
+    local _cur_mvol; _cur_mvol=$(read_pref "$SETTINGS_FILE" model_volume "$MODEL_VOLUME_DEFAULT")
+    local _mvol_input; _mvol_input=$(ui_yesno "Fast model storage" \
         "Fast model storage — cache the model in a Docker volume?" \
         "The engine loads the model from the Docker VM's native disk instead of
 the much slower Windows filesystem bridge — engine cold starts drop from
@@ -574,9 +424,11 @@ Reclaim the space any time with: docker volume rm ai-coder-models" \
             printf "%s  Fast model storage unchanged (%s)%s\n" "$DIM" "$_cur_mvol" "$NC"
             ;;
     esac
+}
 
-    _cur_spec=$(read_pref "$SETTINGS_FILE" spec_decode yes)
-    _spec_input=$(ui_yesno "Speculative decoding" \
+setup_step_spec_decode() {
+    local _cur_spec; _cur_spec=$(read_pref "$SETTINGS_FILE" spec_decode yes)
+    local _spec_input; _spec_input=$(ui_yesno "Speculative decoding" \
         "Speculative decoding — speed up generation with a small draft model?" \
         "A tiny draft model proposes tokens the main model verifies in one pass —
 typically 1.5-2x faster code generation. Costs ~1GB extra VRAM.
@@ -596,9 +448,11 @@ Applies only to model families that define a draft (currently Qwen3)." \
             printf "%s  Speculative decoding unchanged (%s)%s\n" "$DIM" "$_cur_spec" "$NC"
             ;;
     esac
+}
 
-    _cur_expose=$(read_pref "$SETTINGS_FILE" expose_host_port no)
-    _expose_input=$(ui_yesno "Host port exposure" \
+setup_step_expose_port() {
+    local _cur_expose; _cur_expose=$(read_pref "$SETTINGS_FILE" expose_host_port no)
+    local _expose_input; _expose_input=$(ui_yesno "Host port exposure" \
         "Host port exposure — publish the engine on localhost:8080?" \
         "Allows external applications (e.g. Open WebUI) to connect directly.
 Leave disabled if you only need the AI coding tools inside Docker." \
@@ -618,28 +472,30 @@ Leave disabled if you only need the AI coding tools inside Docker." \
             printf "%s  Host port exposure unchanged (%s)%s\n" "$DIM" "$_cur_expose" "$NC"
             ;;
     esac
+}
 
-    _cur_git_email=$(read_pref "$SETTINGS_FILE" git_email "")
-    _cur_git_name=$(read_pref  "$SETTINGS_FILE" git_name  "")
+setup_step_git_identity() {
+    local _cur_git_email; _cur_git_email=$(read_pref "$SETTINGS_FILE" git_email "")
+    local _cur_git_name;  _cur_git_name=$(read_pref  "$SETTINGS_FILE" git_name  "")
     [ -z "$_cur_git_email" ] && _cur_git_email=$(git config --global user.email 2>/dev/null || true)
     [ -z "$_cur_git_name" ]  && _cur_git_name=$(git config --global user.name 2>/dev/null || true)
 
-    _git_email_input=$(ui_input "Git identity — email" \
+    local _git_email_input; _git_email_input=$(ui_input "Git identity — email" \
         "Git Identity (1/2): Email" \
         "Used for commits inside containers. Leave blank to keep current." \
         "Email:" \
         "$_cur_git_email" \
         "$_cur_git_email")
-        
-    _git_name_input=$(ui_input "Git identity — name" \
+
+    local _git_name_input; _git_name_input=$(ui_input "Git identity — name" \
         "Git Identity (2/2): Name" \
         "Used for commits inside containers. Leave blank to keep current." \
         "Name:" \
         "$_cur_git_name" \
         "$_cur_git_name")
-        
-    _final_git_email="${_git_email_input:-$_cur_git_email}"
-    _final_git_name="${_git_name_input:-$_cur_git_name}"
+
+    local _final_git_email="${_git_email_input:-$_cur_git_email}"
+    local _final_git_name="${_git_name_input:-$_cur_git_name}"
     if [ -n "$_final_git_email" ] || [ -n "$_final_git_name" ]; then
         if [[ "$_final_git_email" != "$_cur_git_email" || "$_final_git_name" != "$_cur_git_name" ]]; then
             touch "$USER_DIR/.rebuild-needed"
@@ -651,6 +507,36 @@ Leave disabled if you only need the AI coding tools inside Docker." \
     else
         echo -e "${DIM}  No git identity set — commits will use container defaults.${NC}"
     fi
+}
+
+# ------------------------------------------------------------------------------
+# cmd_setup — first-time and re-configuration wizard
+# ------------------------------------------------------------------------------
+cmd_setup() {
+    # Ensure gum is available before initializing the UI
+    ensure_gum
+    ui_init
+
+    clear
+    echo -e "${CYAN}${BOLD}==========================================================${NC}"
+    echo -e "${CYAN}${BOLD}                  AI-CODER SETUP WIZARD                   ${NC}"
+    echo -e "${CYAN}${BOLD}==========================================================${NC}"
+    echo -e "${DIM}Configure your local agent environment and preferences.${NC}"
+
+    setup_step_alias
+    setup_step_proxy
+    setup_step_network
+    setup_step_gpu
+    setup_step_ctx
+    setup_step_kv
+    setup_step_vram_overhead
+    setup_step_cpu_offload
+    setup_step_mcp_extras
+    setup_step_keep_hub
+    setup_step_model_volume
+    setup_step_spec_decode
+    setup_step_expose_port
+    setup_step_git_identity
 
     touch "$USER_DIR/.setup-done"
     echo -e "\n${ICON_OK} Setup complete."
