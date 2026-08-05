@@ -428,12 +428,12 @@ Applies only to model families that define a draft (currently Qwen3)." \
 setup_step_expose_port() {
     local _cur_expose; _cur_expose=$(read_pref "$SETTINGS_FILE" expose_host_port no)
     setup_toggle_pref expose_host_port "Host port exposure" \
-        "Host port exposure — publish the engine on localhost:8080?" \
+        "Host port exposure — publish the engine on localhost:${ENGINE_PORT}?" \
         "Allows external applications (e.g. Open WebUI) to connect directly.
 Leave disabled if you only need the AI coding tools inside Docker." \
-        "Expose engine on localhost:8080? [y/N]:" \
+        "Expose engine on localhost:${ENGINE_PORT}? [y/N]:" \
         "$_cur_expose" "$_cur_expose" \
-        "${ICON_OK} Engine will be published on ${CYAN}localhost:8080${NC}.
+        "${ICON_OK} Engine will be published on ${CYAN}localhost:${ENGINE_PORT}${NC}.
 ${DIM}  Next launch will also offer to start Open WebUI alongside your agent.${NC}" \
         "${DIM}  Engine port not exposed to host.${NC}"
 }

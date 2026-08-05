@@ -29,7 +29,7 @@ configure_workbench() {
       "npm": "@ai-sdk/openai-compatible",
       "name": "Local $MODEL_FAMILY (llama.cpp)",
       "options": {
-        "baseURL": "http://$GLOBAL_ENGINE_NAME:8080/v1",
+        "baseURL": "http://$GLOBAL_ENGINE_NAME:$ENGINE_PORT/v1",
         "apiKey": "$LOCAL_API_KEY"
       },
       "models": {

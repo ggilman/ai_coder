@@ -17,6 +17,13 @@ GLOBAL_PROXY_NAME="ai-hub-proxy"
 GLOBAL_WEBUI_NAME="ai-hub-webui"
 OPEN_WEBUI_IMAGE="ghcr.io/open-webui/open-webui:main"
 OPEN_WEBUI_HOST_PORT=3000
+# Container-internal ports for the Hub engine and LiteLLM proxy — every agent
+# and helper talks to $GLOBAL_ENGINE_NAME:$ENGINE_PORT / $GLOBAL_PROXY_NAME:
+# $PROXY_PORT over the Docker network. Not user-configurable: these are fixed
+# by llama.cpp's/LiteLLM's own defaults, not published to the host unless the
+# "expose host port" setting publishes ENGINE_PORT on localhost too.
+ENGINE_PORT=8080
+PROXY_PORT=4000
 MODEL_VOLUME_NAME="ai-coder-models"
 HUB_NETWORK="ai-engineering-net"
 HUB_ISOLATED_NET="ai-engineering-isolated"
@@ -124,7 +131,7 @@ get_litellm_config() {
     litellm_params:
       model: openai/local
       custom_llm_provider: openai
-      api_base: http://$GLOBAL_ENGINE_NAME:8080/v1
+      api_base: http://$GLOBAL_ENGINE_NAME:$ENGINE_PORT/v1
       api_key: sk-1234
       timeout: 600
       stream_timeout: 600
@@ -274,11 +281,13 @@ run_open_webui_container() {
     [ "${NETWORK_INTERNAL:-false}" = "true" ] && _wb_http_proxy=""
 
     # Bind to localhost only — WEBUI_AUTH is disabled, so the UI must not be
-    # reachable from the LAN.
+    # reachable from the LAN. The container-side :8080 below is Open WebUI's
+    # own internal port (its image default, unrelated to $ENGINE_PORT — they
+    # just happen to share the same number).
     docker run -d --name "$_name" --network "$_wb_network" \
         -p "127.0.0.1:${OPEN_WEBUI_HOST_PORT}:8080" \
-        -e "OPENAI_API_BASE_URL=http://${GLOBAL_ENGINE_NAME}:8080/v1" \
-        -e "OPENAI_API_BASE_URLS=http://${GLOBAL_ENGINE_NAME}:8080/v1" \
+        -e "OPENAI_API_BASE_URL=http://${GLOBAL_ENGINE_NAME}:${ENGINE_PORT}/v1" \
+        -e "OPENAI_API_BASE_URLS=http://${GLOBAL_ENGINE_NAME}:${ENGINE_PORT}/v1" \
         -e "OPENAI_API_KEY=${LOCAL_API_KEY}" \
         -e "OPENAI_API_KEYS=${LOCAL_API_KEY}" \
         -e "ENABLE_OPENAI_API=True" \

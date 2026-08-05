@@ -25,6 +25,9 @@ readonly UPDATE_INTERVAL=2
 readonly HEALTH_TIMEOUT=5
 readonly SLOTS_TIMEOUT=2
 readonly ENGINE_NAME="ai-hub-engine"
+# Mirrors ENGINE_PORT in libs/ai-coder-core.sh — kept as a separate constant
+# here (not sourced from core.sh) since both dashboards run standalone.
+readonly ENGINE_PORT=8080
 # WSL2 workaround: docker exec output is lost when captured via $() command
 # substitution, and 'timeout' wrapping docker exec also drops output. A fixed
 # temp file plus curl's --max-time is used instead of the timeout binary.

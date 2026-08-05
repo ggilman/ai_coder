@@ -30,7 +30,7 @@ configure_workbench() {
     # User customisations (model, flags) can be made in the file after first run
     # but the connection settings must match the current infrastructure.
     cat > "$HOME/.aider-config/.aider.conf.yml" <<EOF
-openai-api-base: http://$GLOBAL_ENGINE_NAME:8080/v1
+openai-api-base: http://$GLOBAL_ENGINE_NAME:$ENGINE_PORT/v1
 openai-api-key: $LOCAL_API_KEY
 model: openai/local
 no-auto-commits: false
@@ -45,7 +45,7 @@ EOF
 start_workbench() {
     run_workbench \
         -v "$(to_host_path "$HOME/.aider-config"):/root/.aider-config" \
-        -e OPENAI_API_BASE="http://$GLOBAL_ENGINE_NAME:8080/v1" \
+        -e OPENAI_API_BASE="http://$GLOBAL_ENGINE_NAME:$ENGINE_PORT/v1" \
         -e OPENAI_API_KEY="${LOCAL_API_KEY}"
 }
 

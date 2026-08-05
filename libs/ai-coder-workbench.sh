@@ -298,12 +298,16 @@ _start_litellm_proxy() {
 $config_content
 EOF
     # on-failure:3 (not always) so a host reboot doesn't resurrect the proxy
-    # orphaned without its engine. Port bound to localhost only.
-    docker run -d --name "$GLOBAL_PROXY_NAME" --network "$hub_net" -p 127.0.0.1:4000:4000 --restart on-failure:3 \
+    # orphaned without its engine. Port bound to localhost only. --port is
+    # passed explicitly (LiteLLM's own image default also happens to be
+    # 4000) so PROXY_PORT is a real single source of truth, not just a label
+    # that would silently mismatch the container's actual listen port if ever
+    # changed.
+    docker run -d --name "$GLOBAL_PROXY_NAME" --network "$hub_net" -p "127.0.0.1:${PROXY_PORT}:${PROXY_PORT}" --restart on-failure:3 \
         -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
         -e "no_proxy=localhost,127.0.0.1,$GLOBAL_ENGINE_NAME" \
         -v "$(to_host_path "$HOME/.ai-coder/litellm_config.yaml"):/app/config.yaml:ro" \
-        "$LITELLM_IMAGE" --config /app/config.yaml > /dev/null || {
+        "$LITELLM_IMAGE" --config /app/config.yaml --port "$PROXY_PORT" > /dev/null || {
         echo -e "${RED}✘ Failed to start proxy container${NC}"; return 1
     }
 }
@@ -371,8 +375,8 @@ start_hub_engine() {
     local _port_args=()
     if [ "$(read_pref "$SETTINGS_FILE" expose_host_port no)" = "yes" ]; then
         # Bind to localhost only so the engine is not reachable from the LAN.
-        _port_args=(-p 127.0.0.1:8080:8080)
-        echo -e "${ICON_GEAR} Engine port: ${GREEN}published on localhost:8080${NC}"
+        _port_args=(-p "127.0.0.1:${ENGINE_PORT}:${ENGINE_PORT}")
+        echo -e "${ICON_GEAR} Engine port: ${GREEN}published on localhost:${ENGINE_PORT}${NC}"
     fi
 
     local _jinja_args=()
@@ -414,7 +418,7 @@ start_hub_engine() {
         "${_port_args[@]}" "${_cuda_env[@]}" \
         -v "${_models_src}:/models" \
         "$LLAMA_IMAGE" \
-        -m "/models/$MODEL_FILE" --host 0.0.0.0 --port 8080 \
+        -m "/models/$MODEL_FILE" --host 0.0.0.0 --port "$ENGINE_PORT" \
         --parallel "$MODEL_MAX_SLOTS" -ngl "${MODEL_NGL:-99}" -c "$MODEL_CTX_SIZE" --flash-attn on \
         -ctk "${MODEL_KV_TYPE:-q8_0}" -ctv "${MODEL_KV_TYPE:-q8_0}" \
         --batch-size "${MODEL_BATCH_SIZE:-1024}" --ubatch-size "${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}" --defrag-thold 0.1 \

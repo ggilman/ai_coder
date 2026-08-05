@@ -91,7 +91,7 @@ start_workbench() {
         -v "$(to_host_path "$HOME/.npm-cache"):/root/.npm" \
         -v "$(to_host_path "$HOME/.claude-config"):/root/.claude" \
         -v "$(to_host_path "$HOME/.claude-config.json"):/root/.claude.json" \
-        -e ANTHROPIC_BASE_URL="http://$GLOBAL_ENGINE_NAME:8080" \
+        -e ANTHROPIC_BASE_URL="http://$GLOBAL_ENGINE_NAME:$ENGINE_PORT" \
         -e ANTHROPIC_API_KEY="${LOCAL_API_KEY}" \
         -e ANTHROPIC_MODEL="$_model_id"
 }

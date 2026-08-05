@@ -42,13 +42,13 @@ start_workbench() {
         -e GEMINI_API_KEY="${LOCAL_API_KEY}" \
         -e GOOGLE_GENERATIVE_AI_API_KEY="${LOCAL_API_KEY}" \
         -e GEMINI_SANDBOX="false" \
-        -e GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:4000" \
-        -- "mkdir -p \"/$WORKSPACE_DIR\"; socat TCP-LISTEN:4000,fork,reuseaddr TCP:${GLOBAL_PROXY_NAME}:4000 & trap 'true' EXIT; while true; do sleep 3600; done"
+        -e GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:${PROXY_PORT}" \
+        -- "mkdir -p \"/$WORKSPACE_DIR\"; socat TCP-LISTEN:${PROXY_PORT},fork,reuseaddr TCP:${GLOBAL_PROXY_NAME}:${PROXY_PORT} & trap 'true' EXIT; while true; do sleep 3600; done"
 }
 
 execute_tool() {
     exec_in_container \
         -e TERM=xterm-256color -e COLORTERM=truecolor \
-        -e GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:4000 \
+        -e GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:${PROXY_PORT}" \
         "$WORKBENCH" gemini --max_iterations 20
 }

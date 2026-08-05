@@ -398,7 +398,7 @@ while [ "$retry_count" -lt "$max_retries" ]; do
         break
     fi
     # Fire both checks in parallel to avoid waiting serially
-    docker exec "$GLOBAL_ENGINE_NAME" curl -s -m 2 http://localhost:8080/v1/models 2>/dev/null | grep -q '"id"' &
+    docker exec "$GLOBAL_ENGINE_NAME" curl -s -m 2 "http://localhost:${ENGINE_PORT}/v1/models" 2>/dev/null | grep -q '"id"' &
     _engine_pid=$!
 
     if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
@@ -406,7 +406,7 @@ while [ "$retry_count" -lt "$max_retries" ]; do
         # container) — on the isolated internal network the proxy's published
         # port is not reachable from the host, so a host-side curl would
         # never succeed.
-        docker exec "$GLOBAL_ENGINE_NAME" curl -s -m 2 "http://$GLOBAL_PROXY_NAME:4000/v1/models" 2>/dev/null | grep -q '"object"' &
+        docker exec "$GLOBAL_ENGINE_NAME" curl -s -m 2 "http://$GLOBAL_PROXY_NAME:${PROXY_PORT}/v1/models" 2>/dev/null | grep -q '"object"' &
         _proxy_pid=$!
         wait "$_engine_pid" && engine_ready=true
         wait "$_proxy_pid"  && proxy_ready=true
