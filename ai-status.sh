@@ -12,6 +12,10 @@ SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 
 # Source shared library for ensure_gum and other utilities
 source "$SCRIPT_DIR/libs/ai-coder-setup.sh"
+# Platform/SMI detection, engine-probe constants, get_gpu_stats,
+# render_progress_bar, get_network_isolation_status — shared with
+# ai-status-legacy.sh.
+source "$SCRIPT_DIR/libs/ai-coder-status-common.sh"
 
 # Fallback function to launch the legacy script
 launch_legacy_fallback() {
@@ -33,70 +37,19 @@ ensure_gum || true
 resolve_gum_cmd || launch_legacy_fallback
 
 # --- [ CONFIGURATION ] --------------------------------------------------------
-readonly UPDATE_INTERVAL=2
-readonly HEALTH_TIMEOUT=5
-readonly ENGINE_NAME="ai-hub-engine"
-
-IS_GITBASH=false
+# IS_GITBASH/SMI, UPDATE_INTERVAL/HEALTH_TIMEOUT/ENGINE_NAME, and the engine
+# temp-file paths come from ai-coder-status-common.sh (sourced above).
 E_PAD="" # Terminal cursor hack to fix Git Bash Mintty emoji width rendering
-if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-    IS_GITBASH=true
-    E_PAD=$'\e[C' # ANSI escape to force the cursor 1 space to the right
-fi
+[ "$IS_GITBASH" = "true" ] && E_PAD=$'\e[C' # ANSI escape to force the cursor 1 space to the right
 
-if [[ "$IS_GITBASH" == "true" ]]; then
-    export SMI="nvidia-smi.exe"
-else
-    export SMI="nvidia-smi"
-fi
-
-# --- [ UTILITY FUNCTIONS ] ---------------------------------------------------
-
-_ENGINE_TMP="/tmp/ai_status_engine_$$"
-_SLOTS_TMP="/tmp/ai_status_slots_$$"
-readonly SLOTS_TIMEOUT=2
+# This dashboard's progress-bar palette — thin, non-bold colors (the legacy
+# dashboard uses graphics.sh's bold palette instead). Passed into the shared
+# render_progress_bar() from ai-coder-status-common.sh.
+readonly C_GRN=$'\e[32m' C_YEL=$'\e[33m' C_RED=$'\e[31m' C_GRY=$'\e[90m' C_RST=$'\e[0m'
 
 # get_engine_health / get_engine_slots / get_model_name — shared with
-# ai-status-legacy.sh (both read the globals defined above).
+# ai-status-legacy.sh (both read the globals defined by ai-coder-status-common.sh).
 source "$SCRIPT_DIR/libs/ai-coder-engine-status.sh"
-
-get_gpu_stats() {
-    if ! command -v "$SMI" &> /dev/null; then
-        return 1
-    fi
-    "$SMI" --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw \
-        --format=csv,noheader,nounits 2>/dev/null || return 1
-}
-
-# Generates a standard colorized progress bar using ANSI-C quoting
-make_progress_string() {
-    local percentage=$1
-    local width=${2:-20}
-    if ! [[ "$percentage" =~ ^[0-9]+$ ]]; then percentage=0; fi
-    
-    local filled=$((percentage * width / 100))
-    local empty=$((width - filled))
-    
-    # ANSI-C quoted color codes (resolves universally in bash memory)
-    local c_grn=$'\e[32m'
-    local c_yel=$'\e[33m'
-    local c_red=$'\e[31m'
-    local c_gry=$'\e[90m'
-    local c_rst=$'\e[0m'
-    
-    local color="${c_grn}"
-    if [ "$percentage" -gt 70 ]; then color="${c_yel}"; fi
-    if [ "$percentage" -gt 90 ]; then color="${c_red}"; fi
-
-    # Assemble progress bar track
-    local bar="${color}"
-    for ((i=0; i<filled; i++)); do bar+="█"; done
-    bar+="${c_rst}${c_gry}"
-    for ((i=0; i<empty; i++)); do bar+="░"; done
-    bar+="${c_rst}"
-    
-    printf "%s" "$bar"
-}
 
 # --- [ MAIN LOOP ] -----------------------------------------------------------
 main() {
@@ -136,9 +89,9 @@ main() {
                     m_perc=$((m_used * 100 / m_total))
                     
                     local vram_bar
-                    vram_bar=$(make_progress_string "$m_perc" "40")
+                    vram_bar=$(render_progress_bar "$m_perc" "40" "$C_GRN" "$C_YEL" "$C_RED" "$C_GRY" "$C_RST")
                     local util_bar
-                    util_bar=$(make_progress_string "$util" "40")
+                    util_bar=$(render_progress_bar "$util" "40" "$C_GRN" "$C_YEL" "$C_RED" "$C_GRY" "$C_RST")
 
                     # Temp/power fields are padded to a fixed width so the
                     # E_PAD cursor-skip at end of line always lands on the
@@ -198,13 +151,7 @@ main() {
 📦  \e[1mActive Model:\e[0m \e[36m$model_name\e[0m
 🔄  \e[1mCapacity:\e[0m     $slot_info"
             
-            # --- RESTORED ORIGINAL ISOLATION LOGIC ---
-            _iso_val="no"
-            _settings_file="$SCRIPT_DIR/user/settings.conf"
-            [ -f "$_settings_file" ] && _iso_val=$(grep '^isolated=' "$_settings_file" 2>/dev/null | cut -d= -f2- || echo "no")
-
-            # Clean carriage returns
-            _iso_val=$(echo "$_iso_val" | tr -d '\r' | xargs)
+            _iso_val=$(get_network_isolation_status "$SCRIPT_DIR")
 
             if [ "$_iso_val" = "yes" ]; then
                 engine_status_text="$engine_status_text

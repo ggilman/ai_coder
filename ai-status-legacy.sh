@@ -9,63 +9,46 @@ set -euo pipefail
 # --- [ GRAPHICS ] -------------------------------------------------------------
 SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 source "$SCRIPT_DIR/libs/ai-coder-graphics.sh"
+# Platform/SMI detection, engine-probe constants, get_gpu_stats,
+# render_progress_bar, get_network_isolation_status — shared with ai-status.sh.
+source "$SCRIPT_DIR/libs/ai-coder-status-common.sh"
 
 # --- [ CONFIGURATION ] --------------------------------------------------------
+# UPDATE_INTERVAL/HEALTH_TIMEOUT/ENGINE_NAME, IS_GITBASH/SMI, and the engine
+# temp-file paths come from ai-coder-status-common.sh (sourced above).
 readonly BAR_WIDTH=35
-readonly UPDATE_INTERVAL=2
-readonly HEALTH_TIMEOUT=5
-readonly ENGINE_NAME="ai-hub-engine"
 readonly SEPARATOR_LINE=$(printf '═%.0s' {1..70})
-
-
-# Platform detection
-readonly IS_GITBASH=$({ expr "$(uname -s)" : '.*MINGW.*' >/dev/null 2>&1 && echo "true"; } || echo "false")
-readonly SMI="$([[ "$IS_GITBASH" == "true" ]] && echo "nvidia-smi.exe" || echo "nvidia-smi")"
 
 # --- [ UTILITY FUNCTIONS ] ---------------------------------------------------
 
-# Returns visible string length (stripping ANSI codes)
+# Returns the string's rendered terminal width (not its character count).
+# Strips ANSI codes and invisible variation selectors (U+FE0F), then counts
+# characters with wc -m — which counts each emoji as ONE character, same as
+# any other codepoint. Real terminals (WSL's, Windows Terminal, VS Code, ...)
+# render the pictographic icons used in this dashboard as TWO columns wide,
+# so wc -m undercounts by one column per icon and every right border printed
+# after it lands one (or more) columns too far right.
+#
+# Git Bash's mintty is the exception — it renders the same icons single-width,
+# so wc -m already matches there and no correction is applied. This is the
+# same mintty-vs-real-terminal gap the E_PAD hack in ai-status.sh compensates
+# for in the gum dashboard (see the comment at its definition); IS_GITBASH
+# comes from ai-coder-status-common.sh (sourced above).
 get_visible_length() {
     local str="$1"
-    # Remove ANSI codes, then remove invisible variation selectors (U+FE0F)
-    echo -ne "$str" | sed 's/\x1b\[[0-9;]*m//g' | sed 's/\xef\xb8\x8f//g' | wc -m | xargs
+    local stripped
+    stripped=$(echo -ne "$str" | sed 's/\x1b\[[0-9;]*m//g' | sed 's/\xef\xb8\x8f//g')
+    local len; len=$(printf '%s' "$stripped" | wc -m | xargs)
+    if [ "$IS_GITBASH" != "true" ]; then
+        local wide
+        wide=$(printf '%s' "$stripped" | grep -o '🎮\|💾\|📊\|🌡\|⚡\|🚀\|🤖\|🌐' | wc -l | xargs)
+        len=$((len + wide))
+    fi
+    echo "$len"
 }
-
-# Draws a colored progress bar
-draw_bar() {
-    perc=$1
-    width=${2:-$BAR_WIDTH}
-    filled=$((perc * width / 100))
-    remaining=$((width - filled))
-    
-    color="$GREEN"
-    [ "$perc" -gt 70 ] && color="$YELLOW"
-    [ "$perc" -gt 90 ] && color="$RED"
-    
-    printf "%b" "${color}"
-    i=0
-    while [ "$i" -lt "$filled" ]; do printf "█"; i=$((i + 1)); done
-    printf "%b" "${NC}${DIM}"
-    i=0
-    while [ "$i" -lt "$remaining" ]; do printf "░"; i=$((i + 1)); done
-    printf "%b" "${NC}"
-}
-
-# Fetches raw GPU stats via nvidia-smi
-get_gpu_stats() {
-    $SMI --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw \
-        --format=csv,noheader,nounits 2>/dev/null
-}
-
-# WSL2 workaround: docker exec output is lost when captured via $() command
-# substitution, and 'timeout' wrapping docker exec also drops output.
-# We use a fixed temp file and curl's --max-time instead of the timeout binary.
-_ENGINE_TMP="/tmp/ai_status_engine_$$"
-_SLOTS_TMP="/tmp/ai_status_slots_$$"
-readonly SLOTS_TIMEOUT=2
 
 # get_engine_health / get_engine_slots / get_model_name — shared with
-# ai-status.sh (both read the globals defined above).
+# ai-status.sh (both read the globals defined by ai-coder-status-common.sh).
 source "$SCRIPT_DIR/libs/ai-coder-engine-status.sh"
 
 # Draws the dashboard header
@@ -133,7 +116,7 @@ main() {
                     "$CYAN" "$NC" "$header_text" "$pad" "" "$CYAN" "$NC"
 
                 # VRAM Line
-                vram_bar_part=$(draw_bar "$m_perc" "$BAR_WIDTH")
+                vram_bar_part=$(render_progress_bar "$m_perc" "$BAR_WIDTH" "$GREEN" "$YELLOW" "$RED" "$DIM" "$NC")
                 vram_text="💾  VRAM: ${vram_bar_part} ${m_perc}% (${m_used} MB)"
                 vram_len=$(get_visible_length "$vram_text")
                 vram_pad=$((70 - vram_len))
@@ -141,7 +124,7 @@ main() {
                 printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$vram_text" "$vram_pad" "" "$CYAN" "$NC"
 
                 # Load Line
-                load_bar_part=$(draw_bar "$util" "$BAR_WIDTH")
+                load_bar_part=$(render_progress_bar "$util" "$BAR_WIDTH" "$GREEN" "$YELLOW" "$RED" "$DIM" "$NC")
                 load_text="📊  Load: ${load_bar_part} ${util}%"
                 load_len=$(get_visible_length "$load_text")
                 load_pad=$((70 - load_len))
@@ -204,9 +187,7 @@ main() {
             fi
 
             # Network isolation status
-            _iso_val="no"
-            _settings_file="$SCRIPT_DIR/user/settings.conf"
-            [ -f "$_settings_file" ] && _iso_val=$(grep '^isolated=' "$_settings_file" 2>/dev/null | cut -d= -f2- || echo "no")
+            _iso_val=$(get_network_isolation_status "$SCRIPT_DIR")
             if [ "$_iso_val" = "yes" ]; then
                 net_text="🌐  Network: ${YELLOW}⊘ Isolated${NC}${DIM} (ai-engineering-isolated)${NC}"
             else
