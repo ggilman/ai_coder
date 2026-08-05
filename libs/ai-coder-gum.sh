@@ -48,36 +48,25 @@ _download_gum_binary() {
         fi
     fi
 
+    # Windows builds are only published for x86_64 — gum_arch (which can be
+    # arm64) only matters for the Linux search/fallback below.
+    local search_arch="$gum_arch"
+    [ "$platform" = "Windows" ] && search_arch="x86_64"
+
     local download_url
-    if [ "$platform" = "Windows" ]; then
-        download_url=$(curl -sL $_proxy_opt --max-time 15 \
+    download_url=$(curl -sL $_proxy_opt --max-time 15 \
         "https://api.github.com/repos/charmbracelet/gum/releases/latest" \
         | grep "browser_download_url" \
-        | grep -i "Windows_x86_64" \
-        | grep -i ".zip" \
+        | grep -i "${platform}_${search_arch}" \
+        | grep -i "${ext}" \
         | grep -v "sbom" \
         | grep -v ".sig" \
         | grep -v ".pem" \
         | cut -d'"' -f4 | head -n1 || true)
-    else
-        download_url=$(curl -sL $_proxy_opt --max-time 15 \
-            "https://api.github.com/repos/charmbracelet/gum/releases/latest" \
-            | grep "browser_download_url" \
-            | grep -i "${platform}_${gum_arch}" \
-            | grep -i "${ext}" \
-            | grep -v "sbom" \
-            | grep -v ".sig" \
-            | grep -v ".pem" \
-            | cut -d'"' -f4 | head -n1 || true)
-    fi
 
     if [ -z "$download_url" ]; then
         echo "⚠ Proxy block detected or no match. Falling back to hardcoded URL for Gum..."
-        if [ "$platform" = "Windows" ]; then
-            download_url="https://github.com/charmbracelet/gum/releases/download/v0.17.0/gum_0.17.0_Windows_x86_64.zip"
-        else
-            download_url="https://github.com/charmbracelet/gum/releases/download/v0.17.0/gum_0.17.0_Linux_${gum_arch}.tar.gz"
-        fi
+        download_url="https://github.com/charmbracelet/gum/releases/download/v0.17.0/gum_0.17.0_${platform}_${search_arch}${ext}"
     fi
 
     echo " Downloading asset from: $download_url"

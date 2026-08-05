@@ -13,12 +13,9 @@ build_image() {
     fi
     echo -e "${ICON_GEAR} Building Aider Image..."
     local apt_pkgs; apt_pkgs="$(read_package_list "$PACKAGES_DIR/apt-common.txt") $(read_package_list "$PACKAGES_DIR/apt-aider.txt")"
+    local _pip_proxy; _pip_proxy=$(resolve_http_proxy_url)
     local _pip_proxy_flags=""
-    if [ -n "${DOWNLOAD_PROXY:-}" ]; then
-        local _build_proxy; _build_proxy=$(resolve_proxy_to_ip "$DOWNLOAD_PROXY")
-        local _pip_proxy; _pip_proxy=$(echo "$_build_proxy" | sed 's|^https://|http://|')
-        _pip_proxy_flags="--proxy $_pip_proxy --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org"
-    fi
+    [ -n "$_pip_proxy" ] && _pip_proxy_flags="--proxy $_pip_proxy --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org"
     build_standard_image "Dockerfile.aider" "$apt_pkgs" "" \
         "RUN env -u https_proxy -u HTTPS_PROXY -u http_proxy -u HTTP_PROXY python3 -m venv /opt/aider && env -u https_proxy -u HTTPS_PROXY -u http_proxy -u HTTP_PROXY /opt/aider/bin/pip install aider-chat ${_pip_proxy_flags}
 RUN /opt/aider/bin/aider --version"
