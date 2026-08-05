@@ -263,7 +263,7 @@ ensure_model_in_volume() {
         ' sh "${sync_files[@]}" >/dev/null || return 1
 
     local human_total; human_total=$(_human_size "$total_sz")
-    while [ -n "$(docker ps -q -f name=^/${_sync_name}$ 2>/dev/null)" ]; do
+    while container_running "$_sync_name"; do
         local cur
         cur=$(docker exec "$_sync_name" /bin/sh -c '
             tot=0
@@ -458,17 +458,10 @@ start_hub_engine() {
 ensure_workbench_running() {
     WORKBENCH_STARTED_BY_US=false
     local _lock_dir="${TMPDIR:-/tmp}/.ai-coder-wb-lock-${WORKBENCH}"
-    local _waited=0
-    while ! mkdir "$_lock_dir" 2>/dev/null; do
-        sleep 0.2
-        _waited=$((_waited + 1))
-        # Failsafe against a lock dir orphaned by a killed session: proceed
-        # anyway after ~30s rather than hang forever.
-        [ "$_waited" -gt 150 ] && break
-    done
+    acquire_lock "$_lock_dir" 0.2 150
 
     local _rc=0
-    if [ -n "$(docker ps -q -f name=^/${WORKBENCH}$ 2>/dev/null)" ]; then
+    if container_running "$WORKBENCH"; then
         :
     elif [ -n "$(docker ps -aq -f name=^/${WORKBENCH}$ 2>/dev/null)" ]; then
         WORKBENCH_STARTED_BY_US=true
@@ -478,6 +471,6 @@ ensure_workbench_running() {
         start_workbench || _rc=1
     fi
 
-    rmdir "$_lock_dir" 2>/dev/null || true
+    release_lock "$_lock_dir"
     return $_rc
 }

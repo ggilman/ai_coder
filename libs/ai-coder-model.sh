@@ -385,7 +385,7 @@ detect_model() {
     # back to capacity for that launch (the tier only matters if a config
     # change forces a restart, which frees the VRAM anyway).
     local _use_free=true
-    [ -n "$(docker ps -q -f name=^/${GLOBAL_ENGINE_NAME}$ 2>/dev/null)" ] && _use_free=false
+    container_running "$GLOBAL_ENGINE_NAME" && _use_free=false
 
     local total_vram=0 free_vram=0 gpu_idx=0 gpus_used=0 _t _f
     while IFS=', ' read -r _t _f _; do

@@ -5,14 +5,16 @@
 # ==============================================================================
 set -euo pipefail
 
-source "$(dirname "$(realpath "$0")")/libs/fixpath.sh"
+ROOT_DIR="$(dirname "$(realpath "$0")")"
+
+source "$ROOT_DIR/libs/fixpath.sh"
 fixpath
 
 ALIAS_NAME="ai"
-FAMILIES_DIR="$(dirname "$(realpath "$0")")/config/families"
+FAMILIES_DIR="$ROOT_DIR/config/families"
 
 # Load Core Library
-CORE_SCRIPT="$(dirname "$(realpath "$0")")/libs/ai-coder-core.sh"
+CORE_SCRIPT="$ROOT_DIR/libs/ai-coder-core.sh"
 if [ ! -f "$CORE_SCRIPT" ]; then
     echo "Error: Core library not found at $CORE_SCRIPT" >&2
     exit 1
@@ -20,9 +22,9 @@ fi
 source "$CORE_SCRIPT"
 
 # Load additional libraries
-source "$(dirname "$(realpath "$0")")/libs/ai-coder-ui.sh"
-source "$(dirname "$(realpath "$0")")/libs/ai-coder-setup.sh"
-source "$(dirname "$(realpath "$0")")/libs/ai-coder-menus.sh"
+source "$ROOT_DIR/libs/ai-coder-ui.sh"
+source "$ROOT_DIR/libs/ai-coder-setup.sh"
+source "$ROOT_DIR/libs/ai-coder-menus.sh"
 
 # Handle commands that don't require an agent selection
 case "${1:-}" in
@@ -46,7 +48,7 @@ HELP
     cmd_update
     exit $? ;;
 --status)
-    exec bash "$(dirname "$(realpath "$0")")/ai-status.sh" ;;
+    exec bash "$ROOT_DIR/ai-status.sh" ;;
 --clean)
     check_docker || exit 1
     teardown
@@ -67,7 +69,7 @@ if [[ "${1:-}" == "--rebuild" ]]; then
     # tr -d '\r' guards against CRLF on Windows-mounted filesystems.
     # Also sweep for any leftover images from previous version numbers by
     # matching the naming convention patterns used across all agent generations.
-    _agents_dir="$(dirname "$SCRIPT_DIR")/agents"
+    _agents_dir="$ROOT_DIR/agents"
     _removed=0
     declare -A _seen_imgs=()
     for f in "$_agents_dir"/ai-coder-*.sh; do
@@ -188,7 +190,7 @@ if [ -z "$TOOL_PREF" ]; then
 fi
 
 # Resolve child script from agents directory
-AGENTS_DIR="$(dirname "$(realpath "$0")")/agents"
+AGENTS_DIR="$ROOT_DIR/agents"
 CHILD_SCRIPT="$AGENTS_DIR/ai-coder-${TOOL_PREF}.sh"
 if [ ! -f "$CHILD_SCRIPT" ]; then
     echo -e "${RED}Error: Unknown tool '${TOOL_PREF}'. Run with --menu to reselect.${NC}"
@@ -233,7 +235,7 @@ cleanup() {
     # after the check-then-restart section, but an early `exit 1` in that
     # section (Hub startup failure) would otherwise leave it orphaned.
     if $_hub_lock_held; then
-        rmdir "$_hub_lock_dir" 2>/dev/null || true
+        release_lock "$_hub_lock_dir"
     fi
     # Only stop the workbench container if this process started it.
     # Guarding here prevents --build-only (or any early-exit path) from stopping
@@ -326,16 +328,11 @@ fi
 # race to create the same-named container, crashing whichever loses. The same
 # lock also covers ensure_model_in_volume's model-sync container, which is
 # only ever invoked from within start_hub_engine below.
-_hub_waited=0
-while ! mkdir "$_hub_lock_dir" 2>/dev/null; do
-    sleep 0.2
-    _hub_waited=$((_hub_waited + 1))
-    [ "$_hub_waited" -gt 150 ] && break
-done
+acquire_lock "$_hub_lock_dir" 0.2 150
 _hub_lock_held=true
 
 _engine_running=false
-[ -n "$(docker ps -q -f name=^/${GLOBAL_ENGINE_NAME}$ 2>/dev/null)" ] && _engine_running=true
+container_running "$GLOBAL_ENGINE_NAME" && _engine_running=true
 _need_engine_restart=false
 
 if $_engine_running; then
@@ -372,14 +369,14 @@ if ! $_engine_running || $_need_engine_restart; then
     docker rm "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
     start_hub_engine || { echo -e "${RED}✘ Hub startup failed${NC}"; exit 1; }
 elif [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ] && \
-     [ -z "$(docker ps -q -f name=^/${GLOBAL_PROXY_NAME}$ 2>/dev/null)" ]; then
+     ! container_running "$GLOBAL_PROXY_NAME"; then
     # Engine is already up but proxy is missing (e.g. switched from a non-proxy
     # agent). Restart both so the proxy gets a clean start alongside the engine.
     docker rm "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
     start_hub_engine || { echo -e "${RED}✘ Hub startup failed${NC}"; exit 1; }
 fi
 
-rmdir "$_hub_lock_dir" 2>/dev/null || true
+release_lock "$_hub_lock_dir"
 _hub_lock_held=false
 
 apply_git_identity
@@ -397,7 +394,7 @@ proxy_ready=false
 while [ "$retry_count" -lt "$max_retries" ]; do
     # Bail early if the engine container has stopped (e.g. unsupported flag, missing model).
     # The engine runs with --restart no, so any exit means it won't come back.
-    if ! docker ps -q -f "name=^/${GLOBAL_ENGINE_NAME}$" 2>/dev/null | grep -q .; then
+    if ! container_running "$GLOBAL_ENGINE_NAME"; then
         break
     fi
     # Fire both checks in parallel to avoid waiting serially

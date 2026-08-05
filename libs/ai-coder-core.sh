@@ -298,7 +298,7 @@ run_open_webui_container() {
 # Start the global Open WebUI sidecar alongside the selected coding agent.
 # A failure degrades gracefully — the coding session continues without it.
 start_webui_sidecar() {
-    if [ -n "$(docker ps -q -f name=^/${GLOBAL_WEBUI_NAME}$ 2>/dev/null)" ]; then
+    if container_running "$GLOBAL_WEBUI_NAME"; then
         echo -e "${ICON_OK} Open WebUI already running at ${CYAN}http://localhost:${OPEN_WEBUI_HOST_PORT}${NC}"
         return 0
     fi

@@ -289,6 +289,34 @@ check_for_update() {
     echo -e "${YELLOW}◈ Update available — run: ${CYAN}$(realpath "$install_dir/ai-coder") --update${NC}"
 }
 
+# Acquire a simple mkdir-based spinlock — mkdir is atomic on both WSL and Git
+# Bash, making it safe against concurrent ai-coder sessions racing on the same
+# shared resource (a preference file, the Hub singleton container, a
+# per-project workbench container). Best-effort, not a hard mutual-exclusion
+# guarantee: gives up and proceeds anyway once max_wait iterations pass,
+# rather than hang forever on a lock dir orphaned by a killed session.
+# Usage: acquire_lock <lock_dir> [sleep_interval] [max_wait_iterations]
+acquire_lock() {
+    local lock_dir="$1" interval="${2:-0.2}" max_wait="${3:-150}"
+    local waited=0
+    while ! mkdir "$lock_dir" 2>/dev/null; do
+        sleep "$interval"
+        waited=$((waited + 1))
+        [ "$waited" -gt "$max_wait" ] && break
+    done
+}
+
+release_lock() {
+    rmdir "$1" 2>/dev/null || true
+}
+
+# True when a container with this exact name is currently running (not merely
+# present-but-stopped). Wraps the `docker ps -q -f name=^/<name>$` idiom used
+# throughout the launch/status/lifecycle code so call sites read as intent.
+container_running() {
+    [ -n "$(docker ps -q -f "name=^/${1}$" 2>/dev/null)" ]
+}
+
 # Read a key=value entry from a preference file. Returns the value, or $default if missing.
 read_pref() {
     local file="$1" key="$2" default="${3:-}"
@@ -304,21 +332,14 @@ read_pref() {
 # Creates the file and its parent directory if needed. Clears the key when value is empty.
 # STATE_FILE/SETTINGS_FILE are global (not per-project), so concurrent
 # ai-coder sessions for unrelated projects can call this on the same file at
-# once. A mkdir lock (atomic on both WSL and Git Bash) plus a PID-unique temp
-# file prevent one session's read-modify-write from clobbering another's.
+# once. A lock (see acquire_lock) plus a PID-unique temp file prevent one
+# session's read-modify-write from clobbering another's.
 write_pref() {
     local file="$1" key="$2" value="$3"
     mkdir -p "$(dirname "$file")"
 
     local _lock_dir="${file}.lock"
-    local _waited=0
-    while ! mkdir "$_lock_dir" 2>/dev/null; do
-        sleep 0.1
-        _waited=$((_waited + 1))
-        # Failsafe against a lock dir orphaned by a killed session: proceed
-        # anyway after ~10s rather than hang forever.
-        [ "$_waited" -gt 100 ] && break
-    done
+    acquire_lock "$_lock_dir" 0.1 100
 
     local _tmp="${file}.tmp.$$"
     if [ -f "$file" ]; then
@@ -329,7 +350,7 @@ write_pref() {
     [ -n "$value" ] && printf '%s=%s\n' "$key" "$value" >> "$_tmp"
     mv "$_tmp" "$file"
 
-    rmdir "$_lock_dir" 2>/dev/null || true
+    release_lock "$_lock_dir"
 }
 
 # Resolve proxy hostname to IP so Docker build containers can reach it.
