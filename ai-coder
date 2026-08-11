@@ -39,7 +39,7 @@ Commands:
   --fix-project      Fix line endings in the current project for AI editing (run from project folder)
   --clean            Stop and remove all containers
   --rebuild          Remove all workbench images to force a full rebuild on next run
-  --menu             Reset model family, tool and Open WebUI preferences, show selection menus
+  --menu             Reset model family, tool, Open WebUI and context size preferences, show selection menus
   --build-only       Build the workbench image then exit (no Hub or agent launch)
   --help             Show this message
 HELP
@@ -153,7 +153,9 @@ if [ -f "$AI_CODER_ENV_FILE" ]; then
 fi
 
 # Handle --menu flag: clears the family, tool, and Open WebUI preferences so
-# all the selection questions are shown again on the next step of this run.
+# all the selection questions are shown again on the next step of this run,
+# and re-prompts for context size directly (it always has a default, so it
+# has no "empty means show" gate to piggyback on like the other three).
 _prev_family=""; _prev_tool=""; _prev_webui=""
 if [[ "${1:-}" == "--menu" ]]; then
     _prev_family=$(read_pref "$STATE_FILE" family_pref "")
@@ -163,6 +165,8 @@ if [[ "${1:-}" == "--menu" ]]; then
     write_pref "$STATE_FILE" tool_pref   ""
     write_pref "$STATE_FILE" webui_pref  ""
     shift
+    _menu_ui_init
+    setup_step_ctx
 fi
 
 # --- [ FAMILY SELECTION ] ----------------------------------------------------
