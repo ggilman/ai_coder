@@ -21,6 +21,7 @@ The environment uses a **Hub & Spoke** model:
 | `config/families/gemma4.conf` | Gemma 4 family config — model tiers (names, URLs, weights, SHA256) and optional speculative decoding draft |
 | `config/families/qwen3.conf` | Qwen3 family config — model tiers (names, URLs, weights, SHA256) and speculative decoding draft |
 | `config/families/qwen3.6.conf` | Qwen3.6 family config — 27B dense + 35B-A3B MoE (released April 2026) |
+| `config/families/qwen3.8.conf` | Qwen3.8 family config — 27B dense across 7 quant tiers (released August 2026) |
 | `config/families/llama4.conf` | Llama 4 family config — Scout 17B×16E (10M context, consumer-feasible) |
 | `config/families/devstral2.conf` | Devstral 2 family config — 24B coding-specialist (SWE-Bench 68.0%) |
 | `agents/ai-coder-claude.sh` | Claude Code overrides (sourced automatically when Claude is selected) |
@@ -43,7 +44,7 @@ Each family configuration file in `config/families/` defines an ordered candidat
 
 **Core Variables:**
 - `MODEL_COUNT`: Total number of candidates.
-- `MODEL_N_FILE`: GGUF filename under `MODEL_STORAGE_DIR`.
+- `MODEL_N_FILE`: GGUF filename under `MODEL_STORAGE_DIR`, prefixed with the family's own subfolder (e.g. `qwen3.6/Qwen3.6-...gguf`) so families that happen to share a quant filename (like Qwen3.6 vs. Qwen3.6 MTP) never collide in the download cache.
 - `MODEL_N_URL`: Direct download URL.
 - `MODEL_N_DESC`: Human-readable label shown in logs and menus.
 - `MODEL_N_SHA256`: Expected sha256 (blank = skip verification).
@@ -130,7 +131,7 @@ GPU_MODE=single ./ai-coder
 
 ## Model Storage
 
-Models are downloaded once to `~/ai-models` on the host (Windows home on WSL/Git Bash, so both shells share the folder). That folder is the download cache and source of truth — `bundle.sh` and re-downloads use it.
+Models are downloaded once to `~/ai-models` on the host (Windows home on WSL/Git Bash, so both shells share the folder). That folder is the download cache and source of truth — `bundle.sh` and re-downloads use it. Each family stores its GGUFs under its own subfolder (e.g. `~/ai-models/qwen3.6/`, `~/ai-models/qwen3.6MTP/`) so families that happen to share a quant filename never collide.
 
 **Fast model storage** (`--setup`, default **on** for WSL/Git Bash): the engine loads the model from a Docker named volume (`ai-coder-models`) instead of bind-mounting `~/ai-models`. On Windows hosts the bind mount goes through Docker Desktop's slow filesystem bridge, so reading a 5–27 GB GGUF on every engine cold start can take minutes; the named volume lives on the Docker VM's native disk and loads several times faster.
 
@@ -486,8 +487,6 @@ No internet connection is required on the target machine.
   git commit -m "chore: normalize line endings to LF"
   ```
   This adds `.gitattributes` (`eol=lf`), `.editorconfig`, and normalizes all tracked files in one step.
-
-- **Qwen3.6 MTP vs non-MTP filename conflict**: The MTP and standard Qwen3.6 families share identical GGUF filenames. If you previously ran the non-MTP version, switching to the MTP family may load the non-MTP file from the download cache, resulting in a runtime error (the engine expects MTP draft heads but the file isn't). To resolve, rename or remove the conflicting file in `~/ai-models/` so the MTP version downloads fresh, or vice versa when switching back.
 
 ---
 

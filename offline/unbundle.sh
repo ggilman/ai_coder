@@ -134,21 +134,25 @@ if [ -f "$_model_dst" ]; then
     echo "  ($MODEL_FILE)"
 else
     echo "  Copying to $_model_dst..."
+    mkdir -p "$(dirname "$_model_dst")"
     cp "$_model_src" "$_model_dst"
     echo "✔  Model installed."
 fi
 
 # Install any additional bundled models (e.g. the speculative-decoding draft).
-for _extra in "$MODELS_DIR"/*.gguf; do
-    [ -f "$_extra" ] || continue
-    _name=$(basename "$_extra")
-    [ "$_name" = "$MODEL_FILE" ] && continue
-    if [ -f "$MODEL_STORAGE_DIR/$_name" ]; then
-        echo "  $_name already installed — skipping."
+# find (not a flat glob) since models may sit under a family subfolder inside
+# the bundle; the relative path (not just the basename) is preserved on install
+# so files stay unique across families that reuse the same quant filename.
+find "$MODELS_DIR" -type f -name '*.gguf' | while IFS= read -r _extra; do
+    _rel="${_extra#"$MODELS_DIR"/}"
+    [ "$_rel" = "$MODEL_FILE" ] && continue
+    if [ -f "$MODEL_STORAGE_DIR/$_rel" ]; then
+        echo "  $_rel already installed — skipping."
     else
-        echo "  Copying $_name..."
-        cp "$_extra" "$MODEL_STORAGE_DIR/$_name"
-        echo "✔  $_name installed."
+        echo "  Copying $_rel..."
+        mkdir -p "$(dirname "$MODEL_STORAGE_DIR/$_rel")"
+        cp "$_extra" "$MODEL_STORAGE_DIR/$_rel"
+        echo "✔  $_rel installed."
     fi
 done
 

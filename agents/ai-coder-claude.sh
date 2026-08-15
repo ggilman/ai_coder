@@ -86,7 +86,8 @@ EOF
 }
 
 start_workbench() {
-    local _model_id="${MODEL_FILE%.gguf}"
+    local _model_id="${MODEL_FILE##*/}"
+    _model_id="${_model_id%.gguf}"
     run_workbench \
         -v "$(to_host_path "$HOME/.npm-cache"):/root/.npm" \
         -v "$(to_host_path "$HOME/.claude-config"):/root/.claude" \

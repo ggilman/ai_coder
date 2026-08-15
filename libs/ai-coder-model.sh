@@ -228,6 +228,7 @@ download_draft_model() {
     local dest="$MODEL_STORAGE_DIR/$MODEL_DRAFT_FILE"
     [ -f "$dest" ] && return 0
     [ -n "${MODEL_DRAFT_URL:-}" ] || return 1
+    mkdir -p "$(dirname "$dest")"
     local part="${dest}.part"
     rm -f "$part"
     echo -e "${ICON_GEAR} Downloading draft model ${CYAN}${MODEL_DRAFT_FILE}${NC} ${DIM}(speculative decoding)...${NC}"
@@ -346,6 +347,7 @@ download_model() {
 
     local model_path="$MODEL_STORAGE_DIR/$MODEL_FILE"
     local part_path="${model_path}.part"
+    mkdir -p "$(dirname "$model_path")"
 
     # Remove any leftover partial download from a previous interrupted attempt.
     if [ -f "$part_path" ]; then

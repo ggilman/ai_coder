@@ -176,6 +176,7 @@ else
         download_model || { echo -e "${RED}✘ Model download failed.${NC}"; exit 1; }
     fi
     echo -e "${ICON_GEAR} Copying model to bundle..."
+    mkdir -p "$(dirname "$BUNDLE_MODEL_PATH")"
     cp "$MODEL_STORAGE_DIR/$MODEL_FILE" "$BUNDLE_MODEL_PATH"
     echo -e "${ICON_OK} Model bundled."
 fi
@@ -191,6 +192,7 @@ if [ -n "${MODEL_DRAFT_FILE:-}" ]; then
             download_draft_model || echo -e "${YELLOW}⚠ Draft model download failed — bundling without it.${NC}"
         fi
         if [ -f "$MODEL_STORAGE_DIR/$MODEL_DRAFT_FILE" ]; then
+            mkdir -p "$(dirname "$_bundle_draft_path")"
             cp "$MODEL_STORAGE_DIR/$MODEL_DRAFT_FILE" "$_bundle_draft_path"
             echo -e "${ICON_OK} Draft model bundled (speculative decoding)."
         fi

@@ -224,8 +224,10 @@ ensure_model_in_volume() {
 
     # One container call lists current volume contents as "name size" lines.
     local vol_listing
+    # find (not a flat glob) so models nested under a family subfolder are
+    # reported with their subfolder-relative path, matching $f below.
     vol_listing=$(docker run --rm --entrypoint /bin/sh -v "$MODEL_VOLUME_NAME:/vol" "$LLAMA_IMAGE" \
-        -c 'for p in /vol/*.gguf; do [ -f "$p" ] && printf "%s %s\n" "${p##*/}" "$(stat -c%s "$p")"; done; true' \
+        -c 'find /vol -type f -name "*.gguf" 2>/dev/null | while read -r p; do printf "%s %s\n" "${p#/vol/}" "$(stat -c%s "$p")"; done; true' \
         2>/dev/null | tr -d '\r') || vol_listing=""
 
     local sync_files=() total_sz=0 host_sz vol_sz
@@ -257,6 +259,7 @@ ensure_model_in_volume() {
         -v "$(to_host_path "$MODEL_STORAGE_DIR"):/src:ro" \
         "$LLAMA_IMAGE" -c '
             for f; do
+                mkdir -p "/vol/$(dirname "$f")"
                 rm -f "/vol/$f.part" "/vol/$f"
                 cp "/src/$f" "/vol/$f.part" && mv "/vol/$f.part" "/vol/$f" || exit 1
             done
