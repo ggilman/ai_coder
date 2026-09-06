@@ -335,12 +335,26 @@ start_hub_engine() {
     LLAMA_SPEC_FLAGS=""
     case "${MODEL_SPEC_STRATEGY:-none}" in
         mtp)
-            # MODEL_SPEC_DRAFT_N_MAX is per-family (default 3) — e.g. qwen3.6MTP.conf's
-            # own verified value is 2; don't assume one n-max fits every MTP model.
-            LLAMA_SPEC_FLAGS="--spec-type draft-mtp --spec-draft-n-max ${MODEL_SPEC_DRAFT_N_MAX:-3}"
-            MODEL_MAX_SLOTS="1" # CRITICAL: MTP does not support concurrent requests yet
-            echo -e "${ICON_GEAR} Speculative decoding: ${GREEN}MTP (built-in draft heads)${NC}"
-            echo -e "${ICON_GEAR} MTP Override: ${YELLOW}Forcing --parallel 1${NC}"
+            # Most MTP families (Gemma 4, Qwen3.6 MTP) bake the draft heads into
+            # the main GGUF itself — no MODEL_DRAFT_FILE, so the flags always
+            # apply. Qwen3.8 instead pairs this with a real external draft file
+            # (see qwen3.8.conf), which the spec_decode setting — or a failed
+            # download, which clears MODEL_DRAFT_FILE — can make unavailable;
+            # MODEL_DRAFT_DEFINED (captured before any such clearing, in
+            # ai-coder) is what tells the two cases apart. Without this check,
+            # a disabled/failed Qwen3.8 draft would still get --spec-type
+            # draft-mtp with no draft model loaded to back it.
+            if [ "${MODEL_DRAFT_DEFINED:-false}" != "true" ] || spec_decode_enabled; then
+                # MODEL_SPEC_DRAFT_N_MAX is per-family (default 3) — e.g.
+                # qwen3.6MTP.conf's own verified value is 2; don't assume one
+                # n-max fits every MTP model.
+                LLAMA_SPEC_FLAGS="--spec-type draft-mtp --spec-draft-n-max ${MODEL_SPEC_DRAFT_N_MAX:-3}"
+                MODEL_MAX_SLOTS="1" # CRITICAL: MTP does not support concurrent requests yet
+                echo -e "${ICON_GEAR} Speculative decoding: ${GREEN}MTP (built-in draft heads)${NC}"
+                echo -e "${ICON_GEAR} MTP Override: ${YELLOW}Forcing --parallel 1${NC}"
+            else
+                echo -e "${ICON_GEAR} Speculative decoding: ${DIM}disabled (spec_decode setting off)${NC}"
+            fi
             ;;
         ngram)
             LLAMA_SPEC_FLAGS="--spec-type ngram-mod --spec-default"

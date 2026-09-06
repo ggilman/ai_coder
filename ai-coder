@@ -302,6 +302,15 @@ download_model || {
 if [ -z "${MODEL_FILE:-}" ]; then
     echo -e "${RED}✘ Model detection failed — no model available${NC}"; exit 1
 fi
+# Capture whether this family defines a draft at all (independent of whether
+# it ends up available this session) before MODEL_DRAFT_FILE can be cleared
+# below. libs/ai-coder-workbench.sh's mtp case needs this to tell apart "no
+# draft ever wired" (Gemma 4/Qwen3.6 MTP — self-contained MTP heads, flags
+# always apply) from "draft wired but unavailable this session" (Qwen3.8 —
+# flags must be skipped, since there'd be no draft model to back them).
+MODEL_DRAFT_DEFINED=false
+[ -n "${MODEL_DRAFT_FILE:-}" ] && MODEL_DRAFT_DEFINED=true
+
 # Fetch the speculative-decoding draft model when enabled for this family.
 # A failed draft download degrades gracefully to normal decoding.
 if spec_decode_enabled; then
