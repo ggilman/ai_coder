@@ -14,6 +14,9 @@
 # ==============================================================================
 set -euo pipefail
 
+# Standalone copy of libs/ai-coder-graphics.sh's palette — this runs via
+# curl|bash before the repo exists on disk, so it can't source the real file
+# yet. Superseded by the canonical source below once the tarball is extracted.
 NC='\033[0m'; BOLD='\033[1m'; RED='\033[0;31m'; GREEN='\033[0;32m'
 YELLOW='\033[1;33m'; CYAN='\033[0;36m'
 ICON_OK=" ${GREEN}✔${NC} "; ICON_GEAR=" ${CYAN}⚙${NC} "
@@ -82,6 +85,11 @@ fi
 
 cp -r "$tmp_dir/." "$INSTALL_DIR/"
 chmod +x "$INSTALL_DIR/ai-coder" "$INSTALL_DIR/ai-status.sh"
+
+# The real repo is on disk now — switch to its canonical palette for the rest
+# of this script instead of the standalone bootstrap copy above.
+# shellcheck source=/dev/null
+source "$INSTALL_DIR/libs/ai-coder-graphics.sh"
 
 # --- [ record release hash ] --------------------------------------------------
 

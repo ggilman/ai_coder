@@ -14,34 +14,32 @@
 # when the engine is busiest. Slot detail is fetched separately, best-effort.
 # ==============================================================================
 
-# set -o pipefail (active globally in both callers) causes docker exec
-# redirects to drop output. Disable pipefail locally for this call only.
+# set -o pipefail (active globally in both callers, unconditionally, and never
+# toggled elsewhere) causes docker exec redirects to drop output. Disable
+# pipefail locally for this call only, then restore it.
 get_engine_health() {
-    local _old_opts; _old_opts=$(set +o | grep pipefail)
     set +o pipefail
     docker exec "$ENGINE_NAME" curl -s --max-time "$HEALTH_TIMEOUT" "http://localhost:${ENGINE_PORT}/health" \
         > "$_ENGINE_TMP" 2>/dev/null || true
-    eval "$_old_opts"
+    set -o pipefail
 }
 
 # Fetches slot detail (short timeout — may legitimately fail while the engine
 # is processing; callers must degrade gracefully, not report offline).
 get_engine_slots() {
-    local _old_opts; _old_opts=$(set +o | grep pipefail)
     set +o pipefail
     docker exec "$ENGINE_NAME" curl -s --max-time "$SLOTS_TIMEOUT" "http://localhost:${ENGINE_PORT}/slots" \
         > "$_SLOTS_TMP" 2>/dev/null || true
-    eval "$_old_opts"
+    set -o pipefail
 }
 
 # Fetches the loaded model name from the engine's /v1/models endpoint
 get_model_name() {
     local _mtmp="/tmp/ai_status_model_$$"
-    local _old_opts; _old_opts=$(set +o | grep pipefail)
     set +o pipefail
     docker exec "$ENGINE_NAME" curl -s --max-time "$HEALTH_TIMEOUT" "http://localhost:${ENGINE_PORT}/v1/models" \
         > "$_mtmp" 2>/dev/null || true
-    eval "$_old_opts"
+    set -o pipefail
     grep -o '"id":"[^"]*"' "$_mtmp" 2>/dev/null | head -1 | cut -d'"' -f4 || true
     rm -f "$_mtmp"
 }

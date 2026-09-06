@@ -14,7 +14,9 @@
 readonly _AI_CODER_STATUS_COMMON_LOADED=1
 
 # --- [ PLATFORM DETECTION ] ---------------------------------------------------
-readonly IS_GITBASH=$([[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && echo "true" || echo "false")
+# Sets IS_WSL, IS_GITBASH — shared with ai-coder-core.sh and offline/unbundle.sh
+# so every entry point agrees on the platform.
+source "$(dirname "${BASH_SOURCE[0]}")/ai-coder-detect-env.sh"
 readonly SMI="$([[ "$IS_GITBASH" == "true" ]] && echo "nvidia-smi.exe" || echo "nvidia-smi")"
 
 # --- [ ENGINE PROBE CONSTANTS ] -----------------------------------------------
