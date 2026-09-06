@@ -12,8 +12,11 @@ fixpath() {
             # Extract column 4 (the root of the mount on the Windows side)
             ORIGINAL_MOUNT=$(echo "$MOUNT_INFO" | awk '{print $4}')
             
-            # Extract column 10 (the drvfs device, e.g., D:\134) and isolate the lowercase drive letter
-            DRIVE_LETTER=$(echo "$MOUNT_INFO" | awk '{print $10}' | cut -c 1 | tr '[:upper:]' '[:lower:]')
+            # Extract the mount source (the drvfs device, e.g., D:\134) and isolate the lowercase
+            # drive letter. Its field position is NOT fixed: mountinfo has a variable number of
+            # optional fields (shared:N, master:N, ...) before the literal "-" separator, so the
+            # mount source is always exactly two fields after that separator, not a fixed column.
+            DRIVE_LETTER=$(echo "$MOUNT_INFO" | awk '{for (i=1;i<=NF;i++) if ($i=="-") {print $(i+2); exit}}' | cut -c 1 | tr '[:upper:]' '[:lower:]')
             
             # Ensure we successfully parsed a valid a-z drive letter
             if [[ -n "$DRIVE_LETTER" && "$DRIVE_LETTER" =~ [a-z] ]]; then

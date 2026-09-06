@@ -335,7 +335,9 @@ start_hub_engine() {
     LLAMA_SPEC_FLAGS=""
     case "${MODEL_SPEC_STRATEGY:-none}" in
         mtp)
-            LLAMA_SPEC_FLAGS="--spec-type draft-mtp --spec-draft-n-max 3"
+            # MODEL_SPEC_DRAFT_N_MAX is per-family (default 3) — e.g. qwen3.6MTP.conf's
+            # own verified value is 2; don't assume one n-max fits every MTP model.
+            LLAMA_SPEC_FLAGS="--spec-type draft-mtp --spec-draft-n-max ${MODEL_SPEC_DRAFT_N_MAX:-3}"
             MODEL_MAX_SLOTS="1" # CRITICAL: MTP does not support concurrent requests yet
             echo -e "${ICON_GEAR} Speculative decoding: ${GREEN}MTP (built-in draft heads)${NC}"
             echo -e "${ICON_GEAR} MTP Override: ${YELLOW}Forcing --parallel 1${NC}"
@@ -470,11 +472,20 @@ ensure_workbench_running() {
     local _rc=0
     if container_running "$WORKBENCH"; then
         :
-    elif [ -n "$(docker ps -aq -f name=^/${WORKBENCH}$ 2>/dev/null)" ]; then
-        WORKBENCH_STARTED_BY_US=true
-        docker start "$WORKBENCH" >/dev/null 2>&1 || _rc=1
     else
         WORKBENCH_STARTED_BY_US=true
+        # Always recreate rather than `docker start` a stopped container: every
+        # bind mount/env var the workbench needs comes from start_workbench's
+        # docker run flags, and a stopped container only has whatever flags were
+        # current when it was first created. A stale container from before an
+        # agent script added a new mount would silently launch without it.
+        # Nothing of value lives in the container's own writable layer — the
+        # workspace, npm cache, and every tool's config dir are all host-mounted
+        # — so recreating a stopped container is safe and cheap (its entrypoint
+        # is just a sleep loop).
+        if [ -n "$(docker ps -aq -f name=^/${WORKBENCH}$ 2>/dev/null)" ]; then
+            docker rm "$WORKBENCH" >/dev/null 2>&1 || true
+        fi
         start_workbench || _rc=1
     fi
 

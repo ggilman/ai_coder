@@ -417,8 +417,10 @@ setup_step_spec_decode() {
     setup_toggle_pref spec_decode "Speculative decoding" \
         "Speculative decoding — speed up generation with a small draft model?" \
         "A tiny draft model proposes tokens the main model verifies in one pass —
-typically 1.5-2x faster code generation. Costs ~1GB extra VRAM.
-Applies only to model families that define a draft (currently Qwen3)." \
+typically 1.5-2x faster code generation. Costs ~1-2GB extra VRAM.
+Applies only to model families that define an external draft (currently
+Qwen3 and Qwen3.8). Gemma 4 and Qwen3.6 MTP always use their own built-in
+MTP draft heads regardless of this setting — there's no toggle for those." \
         "Use speculative decoding? [Y/n]:" \
         "$_cur_spec" "$_cur_spec" \
         "${ICON_OK} Speculative decoding ${GREEN}enabled${NC} — draft downloads on next launch." \

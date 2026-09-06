@@ -57,7 +57,11 @@ CONFIG_DIR="$(dirname "$SCRIPT_DIR")/config"
 source "$CONFIG_DIR/ai-coder-model.conf"
 
 IS_WSL=$(grep -qi Microsoft /proc/version 2>/dev/null && echo "true" || echo "false")
-IS_GITBASH=$(expr "$(uname -s)" : '.*MINGW.*' >/dev/null 2>&1 && echo "true" || echo "false")
+# $OSTYPE (a bash builtin) is always "msys" under Git-for-Windows' bash, regardless
+# of what `uname -s` reports (MINGW64_NT-..., MSYS_NT-..., etc. depending on how the
+# shell was launched) — matches the detection used in ai-coder-ui.sh, ai-coder-gum.sh,
+# and ai-coder-status-common.sh so every entry point agrees on the platform.
+IS_GITBASH=$([[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && echo "true" || echo "false")
 
 # Fast model storage default: on Windows hosts (WSL/Git Bash) the engine's
 # bind mount of the model folder goes through Docker Desktop's slow 9p bridge,

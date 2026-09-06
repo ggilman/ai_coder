@@ -70,8 +70,10 @@ _download_gum_binary() {
     fi
 
     echo " Downloading asset from: $download_url"
+    local dl_status
     if [ "$platform" = "Windows" ]; then
         curl -sL $_proxy_opt --max-time 15 "$download_url" -o "$_gum_dir/gum.zip"
+        dl_status=$?
         if command -v unzip >/dev/null 2>&1; then
             unzip -o "$_gum_dir/gum.zip" -d "$_gum_dir" &>/dev/null
         elif command -v tar >/dev/null 2>&1; then
@@ -87,12 +89,12 @@ _download_gum_binary() {
         find "$_gum_dir" -maxdepth 1 -type d -name "gum_*" -exec rm -rf {} + 2>/dev/null
     else
         curl -sL $_proxy_opt --max-time 15 "$download_url" -o "$_gum_dir/gum.tar.gz"
+        dl_status=$?
         tar -xzf "$_gum_dir/gum.tar.gz" -C "$_gum_dir" &>/dev/null
         find "$_gum_dir" -type f -name "gum" -exec mv {} "$_gum_dir/" \; &>/dev/null
         rm -f "$_gum_dir/gum.tar.gz"
         find "$_gum_dir" -maxdepth 1 -type d -name "gum_*" -exec rm -rf {} + 2>/dev/null
     fi
-    local dl_status=$?
     set -e
 
     if [ $dl_status -ne 0 ] || [ ! -f "$_gum_dir/$gum_exe_name" ]; then

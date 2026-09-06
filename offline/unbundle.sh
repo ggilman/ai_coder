@@ -28,7 +28,10 @@ MANIFEST_FILE="$SCRIPT_DIR/bundle.manifest"
 IS_WSL="false"
 IS_GITBASH="false"
 grep -qi Microsoft /proc/version 2>/dev/null && IS_WSL="true" || true
-expr "$(uname -s)" : '.*MINGW.*' >/dev/null 2>&1 && IS_GITBASH="true" || true
+# $OSTYPE (a bash builtin) is always "msys" under Git-for-Windows' bash, regardless
+# of what `uname -s` reports — matches the detection in libs/ai-coder-core.sh and
+# libs/ai-coder-ui.sh/ai-coder-gum.sh so every entry point agrees on the platform.
+[[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && IS_GITBASH="true" || true
 
 # Resolve model storage directory — mirrors the logic in ai-coder-core.sh so
 # ai-coder finds the model in the same place it always looks.

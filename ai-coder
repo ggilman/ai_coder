@@ -401,6 +401,11 @@ while [ "$retry_count" -lt "$max_retries" ]; do
     if ! container_running "$GLOBAL_ENGINE_NAME"; then
         break
     fi
+    # Reset every iteration: a probe that succeeded on an earlier loop but then
+    # fails on a later one (transient hiccup, container still settling) must
+    # not leave a stale "ready" from before make the loop declare success.
+    engine_ready=false
+    proxy_ready=false
     # Fire both checks in parallel to avoid waiting serially
     docker exec "$GLOBAL_ENGINE_NAME" curl -s -m 2 "http://localhost:${ENGINE_PORT}/v1/models" 2>/dev/null | grep -q '"id"' &
     _engine_pid=$!

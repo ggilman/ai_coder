@@ -21,7 +21,7 @@ The environment uses a **Hub & Spoke** model:
 | `config/families/gemma4.conf` | Gemma 4 family config — model tiers (names, URLs, weights, SHA256) and optional speculative decoding draft |
 | `config/families/qwen3.conf` | Qwen3 family config — model tiers (names, URLs, weights, SHA256) and speculative decoding draft |
 | `config/families/qwen3.6.conf` | Qwen3.6 family config — 27B dense + 35B-A3B MoE (released April 2026) |
-| `config/families/qwen3.8.conf` | Qwen3.8 family config — 27B dense across 7 quant tiers (released August 2026) |
+| `config/families/qwen3.8.conf` | Qwen3.8 family config — 27B dense across 8 quant tiers (released August 2026) |
 | `config/families/llama4.conf` | Llama 4 family config — Scout 17B×16E (10M context, consumer-feasible) |
 | `config/families/devstral2.conf` | Devstral 2 family config — 24B coding-specialist (SWE-Bench 68.0%) |
 | `agents/ai-coder-claude.sh` | Claude Code overrides (sourced automatically when Claude is selected) |
@@ -54,7 +54,9 @@ Each family configuration file in `config/families/` defines an ordered candidat
 The launcher normally picks the first (best) entry whose `WEIGHTS_GB` fits in effective VRAM with all layers on GPU. With partial CPU offload enabled (default), an entry ranked higher can win instead when at least the configured percentage of it fits (default 90%) — llama.cpp then runs the shortfall's worth of layers on the CPU (`-ngl` below the full count). This only happens between genuinely different models (detected by differing `MODEL_N_LAYERS`), never to reach a higher quant of the same model — each percent of layers on CPU costs roughly 9% generation speed, which is a bad trade for a quant bump.
 
 **Speculative Decoding (Optional):**
-- `MODEL_DRAFT_FILE`: Draft GGUF filename.
+- `MODEL_SPEC_STRATEGY`: `none` (external draft file via `--model-draft`, no `--spec-type` flag), `ngram` (hash-based, no draft file needed), or `mtp` (built-in draft heads baked into the main GGUF — forces `--parallel 1`).
+- `MODEL_SPEC_DRAFT_N_MAX`: `--spec-draft-n-max` value for `MODEL_SPEC_STRATEGY=mtp` families (default 3) — verify against the specific model's docs rather than assuming the default fits.
+- `MODEL_DRAFT_FILE`: Draft GGUF filename (only meaningful with `MODEL_SPEC_STRATEGY=none`).
 - `MODEL_DRAFT_URL`: Direct download URL.
 - `MODEL_DRAFT_SHA256`: Expected sha256 (blank = skip verification).
 - `MODEL_DRAFT_VRAM_GB`: VRAM reserved for the draft in tier selection (default 1).
@@ -153,8 +155,9 @@ docker volume rm ai-coder-models
 When enabled (`--setup`, default **on**), the engine loads a small *draft model* alongside the main model. The draft cheaply proposes several tokens at a time; the main model verifies them in a single pass and keeps the ones it agrees with. Code is highly predictable, so acceptance rates are high — typically **1.5–2× faster generation** with identical output quality (verification guarantees the result matches what the main model would have produced alone).
 
 Details:
-- Only applies to model families that define a draft in their family conf (`MODEL_DRAFT_FILE`/`URL`). Currently: **Qwen3** (Qwen3-0.6B, ~0.6 GB — drafts for every tier since the whole family shares one tokenizer). Other families note in their conf why no draft is wired.
-- The draft is downloaded once (checksum-verified), synced into the fast-storage volume alongside the main model, and reserved (~1 GB, `MODEL_DRAFT_VRAM_GB`) in the VRAM tier calculation.
+- Only applies to model families that define an external draft in their family conf (`MODEL_DRAFT_FILE`/`URL`, `MODEL_SPEC_STRATEGY=none`). Currently: **Qwen3** (Qwen3-0.6B, ~0.6 GB — drafts for every tier since the whole family shares one tokenizer) and **Qwen3.8** (a small companion draft-head file from the same upstream repo). Other families note in their conf why no draft is wired.
+- Separately, **Gemma 4** and **Qwen3.6 MTP** always use their own built-in MTP draft heads (`MODEL_SPEC_STRATEGY=mtp`) regardless of this setting — there's no toggle for those, and they force `--parallel 1` since MTP doesn't support concurrent requests. `MODEL_SPEC_DRAFT_N_MAX` (default 3) tunes the draft depth per family when needed.
+- The draft is downloaded once (checksum-verified), synced into the fast-storage volume alongside the main model, and reserved (~1-2 GB, `MODEL_DRAFT_VRAM_GB`) in the VRAM tier calculation.
 - If the draft can't be downloaded, the session degrades gracefully to normal decoding.
 - Toggling the setting takes effect at the next launch via an automatic engine restart.
 

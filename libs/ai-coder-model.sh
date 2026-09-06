@@ -223,9 +223,24 @@ spec_decode_enabled() {
     [ "$(read_pref "$SETTINGS_FILE" spec_decode yes)" = "yes" ] && [ -n "${MODEL_DRAFT_FILE:-}" ]
 }
 
+# Pre-ed117a6 installs stored every model flat under $MODEL_STORAGE_DIR (no
+# per-family subfolder). If the family's expected per-family path is missing
+# but the old flat-named file is still on disk, move it into place instead of
+# silently re-downloading a multi-GB file.
+_migrate_flat_model_file() {
+    local dest="$1"
+    [ -f "$dest" ] && return 0
+    local flat="$MODEL_STORAGE_DIR/$(basename "$dest")"
+    [ "$flat" != "$dest" ] && [ -f "$flat" ] || return 0
+    mkdir -p "$(dirname "$dest")"
+    mv "$flat" "$dest"
+    echo -e "${ICON_GEAR} Migrated existing download into per-family folder: $(basename "$dest")"
+}
+
 # Download the family's speculative-decoding draft model if missing.
 download_draft_model() {
     local dest="$MODEL_STORAGE_DIR/$MODEL_DRAFT_FILE"
+    _migrate_flat_model_file "$dest"
     [ -f "$dest" ] && return 0
     [ -n "${MODEL_DRAFT_URL:-}" ] || return 1
     mkdir -p "$(dirname "$dest")"
@@ -329,8 +344,10 @@ build_pip_install_cmds() {
 }
 
 download_model() {
-    if [ -n "${MODEL_FILE:-}" ] && [ -f "$MODEL_STORAGE_DIR/$MODEL_FILE" ]; then
-        return 0
+    if [ -n "${MODEL_FILE:-}" ]; then
+        local _new_path="$MODEL_STORAGE_DIR/$MODEL_FILE"
+        _migrate_flat_model_file "$_new_path"
+        [ -f "$_new_path" ] && return 0
     fi
 
     # Resolve model selection and metadata (file, url, sha256, desc) when not
