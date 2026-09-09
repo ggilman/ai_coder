@@ -52,7 +52,7 @@ Copy an existing `config/families/*.conf` (e.g. `qwen3.conf`), keep the guard-ag
 ## Config persistence model
 
 Runtime state lives under `user/` (gitignored) as flat `key=value` files read/written via `read_pref`/`write_pref` in `libs/ai-coder-env.sh`:
-- `user/settings.conf` — all `--setup` choices (proxy, GPU mode, context level, KV type, MCP extras, keep-hub, model volume, speculative decoding, port exposure, git identity, etc.)
+- `user/settings.conf` — all user settings (proxy, GPU mode, context level, KV type, MCP extras, keep-hub, model volume, speculative decoding, port exposure, git identity, etc.); written by the `--setup` wizard and the `--menu` model-affecting prompts
 - `user/state.conf` — session state (tool/family/webui preference, update-check cache, running-engine settings used to detect when the engine needs a restart)
 - `user/.setup-done` — sentinel gating first launch
 

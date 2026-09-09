@@ -478,6 +478,10 @@ setup_step_git_identity() {
 
 # ------------------------------------------------------------------------------
 # cmd_setup — first-time and re-configuration wizard
+#
+# Model-affecting choices (context level, low-VRAM KV cache) are deliberately
+# not steps here: they change which model tier fits, so the --menu flow
+# re-prompts them instead.
 # ------------------------------------------------------------------------------
 cmd_setup() {
     # Ensure gum is available before initializing the UI
@@ -494,8 +498,6 @@ cmd_setup() {
     setup_step_proxy
     setup_step_network
     setup_step_gpu
-    setup_step_ctx
-    setup_step_kv
     setup_step_vram_overhead
     setup_step_cpu_offload
     setup_step_mcp_extras

@@ -58,3 +58,4 @@ poppler-utils
 procps
 lsof
 strace
+shellcheck

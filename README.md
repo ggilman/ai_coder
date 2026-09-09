@@ -84,7 +84,7 @@ Use this script to monitor the health of your environment.
 A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run (or with `--menu`) it prompts you to select your preferred tool, which is saved to `user/state.conf` in the install directory. Subsequent runs launch the saved preference directly.
 
 - **Alias**: `ai` (configure with `--setup`)
-- **Model family selection**: On first run, prompts you to choose a model family (Gemma 4, Qwen3, Qwen3.6, Llama 4, Devstral 2, …). Within the chosen family, the best GGUF tier is selected automatically from detected VRAM **minus an estimated KV-cache reserve** for your chosen context level **and a per-GPU overhead reserve** (CUDA context, compute buffers, display usage — `MODEL_VRAM_OVERHEAD_GB`) — so the model actually fits instead of silently paging to system RAM. If the reserves cost you a tier, the launcher says so; choose a smaller context level in `--setup` to unlock the bigger model.
+- **Model family selection**: On first run, prompts you to choose a model family (Gemma 4, Qwen3, Qwen3.6, Llama 4, Devstral 2, …). Within the chosen family, the best GGUF tier is selected automatically from detected VRAM **minus an estimated KV-cache reserve** for your chosen context level **and a per-GPU overhead reserve** (CUDA context, compute buffers, display usage — `MODEL_VRAM_OVERHEAD_GB`) — so the model actually fits instead of silently paging to system RAM. If the reserves cost you a tier, the launcher says so; choose a smaller context level in `--menu` to unlock the bigger model.
 - **Tool selection**: On first run, also prompts for your preferred coding tool (Claude, OpenCode, Aider, Gemini). Both choices are saved to `user/state.conf`.
 - **Gum-powered menus**: Family, tool, and Open WebUI prompts render as [gum](https://github.com/charmbracelet/gum) pickers, same as `--setup`. Falls back to plain numbered/text prompts if gum can't be installed or run (or with `AI_CODER_NO_GUM=1`).
 - **Open WebUI sidecar**: If host port exposure is enabled in `--setup`, a third question asks whether to also start Open WebUI (`http://localhost:3000`) alongside your coding agent, so you can chat with the same local model while you code. The answer is saved like the other preferences and re-asked via `--menu`. It shuts down together with the Hub.
@@ -97,7 +97,7 @@ A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run
 | Command | Description |
 | --- | --- |
 | (no argument) | Launch the AI tool inside the active workbench container |
-| `--menu` | Reset model family, tool **and** Open WebUI preferences; show the selection menus again |
+| `--menu` | Reset model family, tool, Open WebUI, context level **and** low-VRAM KV cache preferences; show the selection menus again |
 | `--status` | Show the real-time GPU and engine status dashboard |
 | `--setup` | First-time and re-configuration wizard: alias, proxy, network isolation, GPU mode, git identity |
 | `--update` | Download and install the latest release from GitHub |
@@ -182,7 +182,7 @@ A rebuild (`./ai-coder --rebuild` followed by `./ai-coder`) is only needed when 
 | Change GPU mode (`--setup`) | No | Passed as flags when the engine container starts |
 | Toggle fast model storage (`--setup`) | No | Engine restarts with the new mount on next launch |
 | Toggle speculative decoding (`--setup`) | No | Engine restarts with/without the draft model on next launch |
-| Toggle low-VRAM KV cache (`--setup`) | No | Engine restarts with the new KV cache type on next launch |
+| Toggle low-VRAM KV cache (`--menu`) | No | Engine restarts with the new KV cache type on next launch |
 | Change proxy or network isolation (`--setup`) | No | Applied at container start time |
 | Change git identity (`--setup`) | **Yes** | Requires an `--rebuild` to bake into the image |
 | Upgrade `BASE_IMAGE` in `ai-coder-core.sh` | **Yes** | The base layer must be pulled and rebuilt |
@@ -399,7 +399,7 @@ ai-coder also checks for updates automatically once per day on launch and prints
 
 ### Setup (`--setup`)
 
-**`--setup` must be run once before first launch.** It walks through up to fourteen configuration steps. On first run the installer downloads [gum](https://github.com/charmbracelet/gum) — a CLI tool for beautiful interactive prompts — and uses it for the wizard on both WSL and Git Bash. If gum is unavailable it falls back to plain text prompts. Either way the questions and defaults are the same:
+**`--setup` must be run once before first launch.** It walks through up to twelve configuration steps. On first run the installer downloads [gum](https://github.com/charmbracelet/gum) — a CLI tool for beautiful interactive prompts — and uses it for the wizard on both WSL and Git Bash. If gum is unavailable it falls back to plain text prompts. Either way the questions and defaults are the same:
 
 ```bash
 ./ai-coder --setup
@@ -409,16 +409,16 @@ ai-coder also checks for updates automatically once per day on launch and prints
 2. **Proxy** — enter an HTTP proxy URL, or leave blank for none.
 3. **Network isolation** — optionally block all internet access from containers.
 4. **GPU mode** — only shown when 2+ GPUs are detected; choose multi (all GPUs) or single.
-5. **Context window level** — how many tokens of context the model retains (4k–256k, default 64k). Higher values use more VRAM and slow responses; local coding agents rarely benefit past 64k.
-6. **Low-VRAM KV cache** — quantize both K and V cache to `q4_0`, roughly halving the KV VRAM reserve vs the family default. Off by default; real quality cost on long-context recall, but K and V stay matched so llama.cpp keeps using its fast fused Flash Attention kernel.
-7. **VRAM overhead reserve** — how many GB of VRAM to reserve for CUDA/system overhead when sizing the model tier (default 1 GB). Larger values can prevent OOMs on high-load GPUs.
-8. **CPU offload threshold** — run a bigger model with a few layers on CPU when at least this percentage of it fits in VRAM (default 90, range 50–99, `0` disables). At 90% the worst case is roughly half generation speed; only fires for a genuinely bigger model, never for a higher quant of the same one. See [Family Configuration Format](#family-configuration-format).
-9. **MCP extras** — register the optional MCP servers (memory, thinking, conan, context7, brave-search, github, fetch, time) with each agent. Off by default: fewer registered tools means faster prompts and better tool selection on small local models.
-10. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Also asks for an idle timeout (default 60 min, `0` = forever) after which the warm hub stops itself to release VRAM; stop it immediately with `--clean`.
-11. **Fast model storage** — cache models in a Docker volume so engine cold starts load from the VM's native disk instead of the slow Windows filesystem bridge. Default on for WSL/Git Bash; see [Model Storage](#model-storage).
-12. **Speculative decoding** — use a small draft model to speed up generation, typically 1.5–2× on code. Default on; costs ~1 GB VRAM and applies only to families that define a draft (currently Qwen3). See [Speculative Decoding](#speculative-decoding).
-13. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
-14. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
+5. **VRAM overhead reserve** — how many GB of VRAM to reserve for CUDA/system overhead when sizing the model tier (default 1 GB). Larger values can prevent OOMs on high-load GPUs.
+6. **CPU offload threshold** — run a bigger model with a few layers on CPU when at least this percentage of it fits in VRAM (default 90, range 50–99, `0` disables). At 90% the worst case is roughly half generation speed; only fires for a genuinely bigger model, never for a higher quant of the same one. See [Family Configuration Format](#family-configuration-format).
+7. **MCP extras** — register the optional MCP servers (memory, thinking, conan, context7, brave-search, github, fetch, time) with each agent. Off by default: fewer registered tools means faster prompts and better tool selection on small local models.
+8. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Also asks for an idle timeout (default 60 min, `0` = forever) after which the warm hub stops itself to release VRAM; stop it immediately with `--clean`.
+9. **Fast model storage** — cache models in a Docker volume so engine cold starts load from the VM's native disk instead of the slow Windows filesystem bridge. Default on for WSL/Git Bash; see [Model Storage](#model-storage).
+10. **Speculative decoding** — use a small draft model to speed up generation, typically 1.5–2× on code. Default on; costs ~1 GB VRAM and applies only to families that define a draft (currently Qwen3). See [Speculative Decoding](#speculative-decoding).
+11. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
+12. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
+
+Context window level (4k–256k, default 64k) and the low-VRAM KV cache (`q4_0` quant, off by default) are deliberately not wizard steps: both change which model tier fits in VRAM, so `--menu` re-prompts them on every run instead.
 
 In gum mode, pressing **Esc** or **Cancel** on any step keeps that setting unchanged and moves to the next question — nothing is lost mid-wizard. To force the plain-text prompts even where gum is installed, set `AI_CODER_NO_GUM=1`.
 
@@ -432,7 +432,7 @@ source ~/.bashrc         # WSL / Linux (bash)
 source ~/.zshrc          # WSL / Linux (zsh)
 ```
 
-To change any setting, run `--setup` again.
+To change any setting, run `--setup` again — except for context window level and the low-VRAM KV cache, which affect which model gets selected and are re-prompted by `--menu` instead.
 
 ## Offline / Air-Gapped Deployment
 
