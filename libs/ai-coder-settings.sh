@@ -102,9 +102,15 @@ ensure_container_gitconfig() {
         rm -rf "$gitcfg" 2>/dev/null || sudo rm -rf "$gitcfg" 2>/dev/null || true
     fi
     # Normalize CRLF→LF inside containers (Windows host mounts files with CRLF).
+    # The container runs as root while every host-mounted path (workspace, npm
+    # cache, tool config dirs) is owned by the host user, so without this git
+    # refuses all operations with "dubious ownership". Only '*' works here:
+    # matching is exact-path, with no parent/subdirectory inheritance.
     cat > "$gitcfg" <<GITCFG
 [core]
     autocrlf = input
+[safe]
+    directory = *
 GITCFG
     if [ -n "${GIT_USER_EMAIL:-}" ] || [ -n "${GIT_USER_NAME:-}" ]; then
         local email="${GIT_USER_EMAIL:-developer@localhost}"
