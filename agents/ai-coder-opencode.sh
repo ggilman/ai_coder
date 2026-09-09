@@ -35,7 +35,11 @@ configure_workbench() {
       "models": {
         "hub-model": {
           "name": "$MODEL_FAMILY Local",
-          "contextLength": $MODEL_CTX_SIZE
+          "limit": {
+            "context": $MODEL_CTX_SIZE,
+            "input": $MODEL_CTX_SIZE,
+            "output": 8192
+          }
         }
       }
     }
