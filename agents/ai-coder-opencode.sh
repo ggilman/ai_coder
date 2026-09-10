@@ -62,6 +62,9 @@ start_workbench() {
 execute_tool() {
     # Run through a PTY wrapper (packages/opencode-pty.py) instead of `opencode`
     # directly — OpenCode doesn't handle Ctrl-C well from inside a docker exec
-    # TTY, and the wrapper strips it from the input stream instead.
-    exec_in_container "$WORKBENCH" python3 /opt/opencode-pty.py
+    # TTY, and the wrapper strips it from the input stream instead. The wrapper
+    # forwards any extra args it receives straight through to opencode.
+    local _resume=()
+    [ "${CONTINUE_SESSION:-false}" = "true" ] && _resume=(--continue)
+    exec_in_container "$WORKBENCH" python3 /opt/opencode-pty.py "${_resume[@]}"
 }

@@ -43,6 +43,7 @@ Commands:
   --model            Reset model family, tool, Open WebUI, context level and KV cache type preferences, show selection menus
   --models [family]   Dry-run model tier selection: hardware audit, VRAM reserves and which tier a launch would pick (no Docker, no launch)
   --build-only       Build the workbench image then exit (no Hub or agent launch)
+  --continue         Resume the previous agent session (passes the tool's native continue flag)
   --help             Show this message
 HELP
     exit 0 ;;
@@ -120,11 +121,11 @@ fi
 # Reject unknown commands before touching Docker/Hub state. Every recognized
 # command either already exited above (--help, --update, --status, --logs,
 # --models, --clean, --fix-project, --setup, --rebuild) or is handled further down
-# (--model, --build-only) — anything else here is a typo and should fail fast
-# instead of running the full family/tool/Hub flow and tripping the cleanup
-# trap.
+# (--model, --build-only, --continue) — anything else here is a typo and should
+# fail fast instead of running the full family/tool/Hub flow and tripping the
+# cleanup trap.
 case "${1:-}" in
-    ""|--model|--build-only) ;;
+    ""|--model|--build-only|--continue) ;;
     *)
         echo -e "${RED}Unknown command: ${1}${NC}"
         echo "Run: $(basename "$0") --help"

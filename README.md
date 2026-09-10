@@ -97,6 +97,7 @@ A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run
 | Command | Description |
 | --- | --- |
 | (no argument) | Launch the AI tool inside the active workbench container |
+| `--continue` | Resume the previous agent session — passes the tool's native continue flag (`--continue` for Claude/OpenCode/Aider, `--resume` for Gemini) |
 | `--model` | Reset model family, tool, Open WebUI, context level **and** low-VRAM KV cache preferences; show the selection menus again |
 | `--models [family]` | Dry-run model tier selection: hardware audit, VRAM reserves, and which tier a launch would pick — no Docker, no launch |
 | `--status` | Show the real-time GPU and engine status dashboard |

@@ -98,5 +98,7 @@ start_workbench() {
 }
 
 execute_tool() {
-    exec_in_container -e CLAUDE_CODE_SIMPLE=1 "$WORKBENCH" claude --bare
+    local _resume=()
+    [ "${CONTINUE_SESSION:-false}" = "true" ] && _resume=(--continue)
+    exec_in_container -e CLAUDE_CODE_SIMPLE=1 "$WORKBENCH" claude --bare "${_resume[@]}"
 }

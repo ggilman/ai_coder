@@ -50,7 +50,9 @@ start_workbench() {
 }
 
 execute_tool() {
+    local _resume=()
+    [ "${CONTINUE_SESSION:-false}" = "true" ] && _resume=(--continue)
     exec_in_container \
         -e TERM=xterm-256color -e COLORTERM=truecolor \
-        "$WORKBENCH" /opt/aider/bin/aider --no-check-update --config /root/.aider-config/.aider.conf.yml
+        "$WORKBENCH" /opt/aider/bin/aider --no-check-update --config /root/.aider-config/.aider.conf.yml "${_resume[@]}"
 }

@@ -96,5 +96,5 @@ def spawn_with_dimensions(argv):
             if mode:
                 termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, mode)
 
-# Launch
-spawn_with_dimensions(["bash", "-c", "opencode"])
+# Launch — extra CLI args (e.g. --continue) are forwarded to opencode
+spawn_with_dimensions(["bash", "-c", 'opencode "$@"', "--"] + sys.argv[1:])

@@ -47,8 +47,11 @@ start_workbench() {
 }
 
 execute_tool() {
+    # Gemini CLI's native resume flag is --resume (not --continue).
+    local _resume=()
+    [ "${CONTINUE_SESSION:-false}" = "true" ] && _resume=(--resume)
     exec_in_container \
         -e TERM=xterm-256color -e COLORTERM=truecolor \
         -e GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:${PROXY_PORT}" \
-        "$WORKBENCH" gemini --max_iterations 20
+        "$WORKBENCH" gemini --max_iterations 20 "${_resume[@]}"
 }

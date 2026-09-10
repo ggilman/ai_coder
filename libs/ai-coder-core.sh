@@ -30,6 +30,7 @@ HUB_ISOLATED_NET="ai-engineering-isolated"
 NETWORK_INTERNAL=false
 NEEDS_LITELLM_PROXY=false
 BUILD_ONLY=false
+CONTINUE_SESSION=false
 WORKBENCH_PREFIX="coder"
 LITELLM_IMAGE="ghcr.io/berriai/litellm:main-latest"
 LLAMA_IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
@@ -350,6 +351,9 @@ handle_command() {
     case "$cmd" in
         --build-only)
             BUILD_ONLY=true
+            ;;
+        --continue)
+            CONTINUE_SESSION=true
             ;;
         "")
             ;;
