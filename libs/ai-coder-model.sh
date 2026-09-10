@@ -461,6 +461,76 @@ detect_model() {
     return 0
 }
 
+# Print every tier defined by the active family conf as a dry-run table:
+# each candidate's weights vs the just-computed EFFECTIVE_VRAM_GB (Fit),
+# the tier a launch would select (matching MODEL_FILE), and a note when
+# that selection runs with partial CPU offload.
+print_model_candidates() {
+    local _count="${MODEL_COUNT:-0}"
+    local _eff="${EFFECTIVE_VRAM_GB:-0}"
+    local i _fv _dv _wv _lv _file _desc _w _l _fit _mark
+    echo -e "\n${BOLD}Model candidates${NC} ${DIM}(${_eff}GB usable after reserves)${NC}"
+    echo -e "${DIM}  # | DESC | WeightsGB | Layers | Fit${NC}"
+    for (( i=1; i<=_count; i++ )); do
+        _fv="MODEL_${i}_FILE"
+        [ -n "${!_fv:-}" ] || break
+        _dv="MODEL_${i}_DESC"
+        _wv="MODEL_${i}_WEIGHTS_GB"
+        _lv="MODEL_${i}_LAYERS"
+        _file="${!_fv}"
+        _desc="${!_dv:-}"
+        _w="${!_wv:-0}"
+        _l="${!_lv:-}"
+        # WEIGHTS_GB=0 is the unconditional fallback tier — always fits.
+        if [ "$_w" -eq 0 ] || [ "$_eff" -ge "$_w" ]; then _fit="yes"; else _fit="no"; fi
+        _mark=""
+        [ "$_file" = "${MODEL_FILE:-}" ] && _mark="  ${GREEN}◀ selected${NC}"
+        printf '  %2d | %-58s | %9s | %6s | %s%s\n' "$i" "$_desc" "$_w" "$_l" "$_fit" "$_mark"
+    done
+    if [ "${MODEL_NGL:-99}" -lt 99 ]; then
+        echo -e "  ${YELLOW}⚠ Selected tier runs with partial CPU offload: ${MODEL_NGL}/${MODEL_LAYERS} layers on GPU${NC}"
+    fi
+}
+
+# Dry-run tier selection: report what a real launch would pick for a family
+# without starting Docker, the Hub, or the workbench.
+# Usage: cmd_models [family-key]
+# Without a key, uses the saved family_pref (user/state.conf).
+cmd_models() {
+    local family_key="${1:-}"
+    [ -n "$family_key" ] || family_key=$(read_pref "$STATE_FILE" family_pref "")
+    if [ -z "$family_key" ]; then
+        echo -e "${RED}No model family selected yet. Pass a family key or run ${CYAN}--model${NC} first:${NC}"
+        echo -e "${DIM}  $(basename "$0") --models <family-key>${NC}"
+        return 1
+    fi
+    local _conf="$FAMILIES_DIR/${family_key}.conf"
+    if [ ! -f "$_conf" ]; then
+        echo -e "${RED}Error: Unknown model family '${family_key}'. Available families:${NC}"
+        local _f
+        for _f in "$FAMILIES_DIR"/*.conf; do
+            [ -f "$_f" ] && echo -e "  ${DIM}- $(basename "$_f" .conf)${NC}"
+        done
+        return 1
+    fi
+    source "$_conf"
+
+    # Apply the same launch-time settings a real run resolves before
+    # detect_model (see the IGNITION section in ai-coder), so the GPU
+    # budget and VRAM reserves match what a launch would compute.
+    ensure_gpu_config
+    ensure_ctx_config
+    ensure_kv_config
+    ensure_overhead_config
+    ensure_offload_config
+
+    if ! detect_model; then
+        echo -e "${RED}✘ Model detection failed${NC}"
+        return 1
+    fi
+    print_model_candidates
+}
+
 pull_base_image_via_proxy() {
     local image="$1" proxy="$2"
 

@@ -39,7 +39,8 @@ Commands:
   --fix-project      Fix line endings in the current project for AI editing (run from project folder)
   --clean            Stop and remove all containers
   --rebuild          Remove all workbench images to force a full rebuild on next run
-  --menu             Reset model family, tool, Open WebUI, context level and KV cache type preferences, show selection menus
+  --model            Reset model family, tool, Open WebUI, context level and KV cache type preferences, show selection menus
+  --models [family]   Dry-run model tier selection: hardware audit, VRAM reserves and which tier a launch would pick (no Docker, no launch)
   --build-only       Build the workbench image then exit (no Hub or agent launch)
   --help             Show this message
 HELP
@@ -49,6 +50,9 @@ HELP
     exit $? ;;
 --status)
     exec bash "$ROOT_DIR/ai-status.sh" ;;
+--models)
+    cmd_models "${2:-}"
+    exit $? ;;
 --clean)
     check_docker || exit 1
     teardown
@@ -110,12 +114,13 @@ if [[ "${1:-}" == "--rebuild" ]]; then
 fi
 
 # Reject unknown commands before touching Docker/Hub state. Every recognized
-# command either already exited above (--help, --update, --status, --clean,
-# --fix-project, --setup, --rebuild) or is handled further down (--menu,
-# --build-only) — anything else here is a typo and should fail fast instead
-# of running the full family/tool/Hub flow and tripping the cleanup trap.
+# command either already exited above (--help, --update, --status, --models,
+# --clean, --fix-project, --setup, --rebuild) or is handled further down
+# (--model, --build-only) — anything else here is a typo and should fail fast
+# instead of running the full family/tool/Hub flow and tripping the cleanup
+# trap.
 case "${1:-}" in
-    ""|--menu|--build-only) ;;
+    ""|--model|--build-only) ;;
     *)
         echo -e "${RED}Unknown command: ${1}${NC}"
         echo "Run: $(basename "$0") --help"
@@ -152,14 +157,14 @@ if [ -f "$AI_CODER_ENV_FILE" ]; then
     source "$AI_CODER_ENV_FILE"
 fi
 
-# Handle --menu flag: clears the family, tool, and Open WebUI preferences so
+# Handle --model flag: clears the family, tool, and Open WebUI preferences so
 # all the selection questions are shown again on the next step of this run,
 # and re-prompts the two settings that change which model gets selected
 # (context level and low-VRAM KV cache type) directly — both always have
 # defaults, so they have no "empty means show" gate to piggyback on like the
 # other three.
 _prev_family=""; _prev_tool=""; _prev_webui=""
-if [[ "${1:-}" == "--menu" ]]; then
+if [[ "${1:-}" == "--model" ]]; then
     _prev_family=$(read_pref "$STATE_FILE" family_pref "")
     _prev_tool=$(read_pref   "$STATE_FILE" tool_pref   "")
     _prev_webui=$(read_pref  "$STATE_FILE" webui_pref  "")
@@ -173,7 +178,7 @@ if [[ "${1:-}" == "--menu" ]]; then
 fi
 
 # --- [ FAMILY SELECTION ] ----------------------------------------------------
-# Show the family menu on first run or after --menu clears the preference.
+# Show the family menu on first run or after --model clears the preference.
 FAMILY_PREF=$(read_pref "$STATE_FILE" family_pref "")
 if [ -z "$FAMILY_PREF" ]; then
     show_family_menu "$_prev_family"
@@ -182,14 +187,14 @@ fi
 
 FAMILY_CONF="$FAMILIES_DIR/${FAMILY_PREF}.conf"
 if [ ! -f "$FAMILY_CONF" ]; then
-    echo -e "${RED}Error: Unknown model family '${FAMILY_PREF}'. Run with --menu to reselect.${NC}"
+    echo -e "${RED}Error: Unknown model family '${FAMILY_PREF}'. Run with --model to reselect.${NC}"
     write_pref "$STATE_FILE" family_pref ""
     exit 1
 fi
 source "$FAMILY_CONF"
 
 # --- [ TOOL SELECTION ] ------------------------------------------------------
-# Show the tool menu on first run or after --menu clears the preference.
+# Show the tool menu on first run or after --model clears the preference.
 TOOL_PREF=$(read_pref "$STATE_FILE" tool_pref "")
 if [ -z "$TOOL_PREF" ]; then
     show_menu "$_prev_tool"
@@ -200,7 +205,7 @@ fi
 AGENTS_DIR="$ROOT_DIR/agents"
 CHILD_SCRIPT="$AGENTS_DIR/ai-coder-${TOOL_PREF}.sh"
 if [ ! -f "$CHILD_SCRIPT" ]; then
-    echo -e "${RED}Error: Unknown tool '${TOOL_PREF}'. Run with --menu to reselect.${NC}"
+    echo -e "${RED}Error: Unknown tool '${TOOL_PREF}'. Run with --model to reselect.${NC}"
     write_pref "$STATE_FILE" tool_pref ""
     exit 1
 fi

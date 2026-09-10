@@ -15,7 +15,7 @@ configure_workbench() { return 0; }
 start_workbench() {
     echo -e "${ICON_GEAR} Starting Open WebUI..."
 
-    # The global sidecar variant (started via the --menu question) binds the
+    # The global sidecar variant (started via the --model question) binds the
     # same host port — evict it so this dedicated instance can take over.
     stop_webui_sidecar
 

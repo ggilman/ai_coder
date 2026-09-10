@@ -81,23 +81,24 @@ Use this script to monitor the health of your environment.
 ```
 
 ### 2. Unified AI Coding Interface (`ai-coder`)
-A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run (or with `--menu`) it prompts you to select your preferred tool, which is saved to `user/state.conf` in the install directory. Subsequent runs launch the saved preference directly.
+A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run (or with `--model`) it prompts you to select your preferred tool, which is saved to `user/state.conf` in the install directory. Subsequent runs launch the saved preference directly.
 
 - **Alias**: `ai` (configure with `--setup`)
-- **Model family selection**: On first run, prompts you to choose a model family (Gemma 4, Qwen3, Qwen3.6, Llama 4, Devstral 2, …). Within the chosen family, the best GGUF tier is selected automatically from detected VRAM **minus an estimated KV-cache reserve** for your chosen context level **and a per-GPU overhead reserve** (CUDA context, compute buffers, display usage — `MODEL_VRAM_OVERHEAD_GB`) — so the model actually fits instead of silently paging to system RAM. If the reserves cost you a tier, the launcher says so; choose a smaller context level in `--menu` to unlock the bigger model.
+- **Model family selection**: On first run, prompts you to choose a model family (Gemma 4, Qwen3, Qwen3.6, Llama 4, Devstral 2, …). Within the chosen family, the best GGUF tier is selected automatically from detected VRAM **minus an estimated KV-cache reserve** for your chosen context level **and a per-GPU overhead reserve** (CUDA context, compute buffers, display usage — `MODEL_VRAM_OVERHEAD_GB`) — so the model actually fits instead of silently paging to system RAM. If the reserves cost you a tier, the launcher says so; choose a smaller context level in `--model` to unlock the bigger model.
 - **Tool selection**: On first run, also prompts for your preferred coding tool (Claude, OpenCode, Aider, Gemini). Both choices are saved to `user/state.conf`.
 - **Gum-powered menus**: Family, tool, and Open WebUI prompts render as [gum](https://github.com/charmbracelet/gum) pickers, same as `--setup`. Falls back to plain numbered/text prompts if gum can't be installed or run (or with `AI_CODER_NO_GUM=1`).
-- **Open WebUI sidecar**: If host port exposure is enabled in `--setup`, a third question asks whether to also start Open WebUI (`http://localhost:3000`) alongside your coding agent, so you can chat with the same local model while you code. The answer is saved like the other preferences and re-asked via `--menu`. It shuts down together with the Hub.
+- **Open WebUI sidecar**: If host port exposure is enabled in `--setup`, a third question asks whether to also start Open WebUI (`http://localhost:3000`) alongside your coding agent, so you can chat with the same local model while you code. The answer is saved like the other preferences and re-asked via `--model`. It shuts down together with the Hub.
 - **Workspace mount**: Your project folder is mounted into the container as `/<foldername>` (e.g. `/my-project`), so the AI tool starts directly in your project directory.
 - **Auto-cleanup**: When you exit the tool, the workbench container is stopped. If it was the last active spoke, the Hub (engine + proxy) is also shut down automatically — unless the *keep hub warm* setting is enabled (`--setup`), which leaves the engine loaded so the next session starts in seconds. A warm hub auto-stops after a configurable idle timeout (default 60 min, `0` = never) to release GPU VRAM; stop it immediately with `--clean`.
-- **Agent-free commands**: `--help`, `--status`, `--clean`, `--rebuild`, `--menu`, and `--setup` run immediately without requiring a tool to be selected.
+- **Agent-free commands**: `--help`, `--status`, `--clean`, `--rebuild`, `--model`, `--models`, and `--setup` run immediately without requiring a tool to be selected.
 - **Setup required**: `--setup` must be run at least once before launching. This ensures all preferences are configured intentionally.
 
 **Commands:**
 | Command | Description |
 | --- | --- |
 | (no argument) | Launch the AI tool inside the active workbench container |
-| `--menu` | Reset model family, tool, Open WebUI, context level **and** low-VRAM KV cache preferences; show the selection menus again |
+| `--model` | Reset model family, tool, Open WebUI, context level **and** low-VRAM KV cache preferences; show the selection menus again |
+| `--models [family]` | Dry-run model tier selection: hardware audit, VRAM reserves, and which tier a launch would pick — no Docker, no launch |
 | `--status` | Show the real-time GPU and engine status dashboard |
 | `--setup` | First-time and re-configuration wizard: alias, proxy, network isolation, GPU mode, git identity |
 | `--update` | Download and install the latest release from GitHub |
@@ -182,7 +183,7 @@ A rebuild (`./ai-coder --rebuild` followed by `./ai-coder`) is only needed when 
 | Change GPU mode (`--setup`) | No | Passed as flags when the engine container starts |
 | Toggle fast model storage (`--setup`) | No | Engine restarts with the new mount on next launch |
 | Toggle speculative decoding (`--setup`) | No | Engine restarts with/without the draft model on next launch |
-| Toggle low-VRAM KV cache (`--menu`) | No | Engine restarts with the new KV cache type on next launch |
+| Toggle low-VRAM KV cache (`--model`) | No | Engine restarts with the new KV cache type on next launch |
 | Change proxy or network isolation (`--setup`) | No | Applied at container start time |
 | Change git identity (`--setup`) | **Yes** | Requires an `--rebuild` to bake into the image |
 | Upgrade `BASE_IMAGE` in `ai-coder-core.sh` | **Yes** | The base layer must be pulled and rebuilt |
@@ -418,7 +419,7 @@ ai-coder also checks for updates automatically once per day on launch and prints
 11. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
 12. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
 
-Context window level (4k–256k, default 64k) and the low-VRAM KV cache (`q4_0` quant, off by default) are deliberately not wizard steps: both change which model tier fits in VRAM, so `--menu` re-prompts them on every run instead.
+Context window level (4k–256k, default 64k) and the low-VRAM KV cache (`q4_0` quant, off by default) are deliberately not wizard steps: both change which model tier fits in VRAM, so `--model` re-prompts them on every run instead.
 
 In gum mode, pressing **Esc** or **Cancel** on any step keeps that setting unchanged and moves to the next question — nothing is lost mid-wizard. To force the plain-text prompts even where gum is installed, set `AI_CODER_NO_GUM=1`.
 
@@ -432,7 +433,7 @@ source ~/.bashrc         # WSL / Linux (bash)
 source ~/.zshrc          # WSL / Linux (zsh)
 ```
 
-To change any setting, run `--setup` again — except for context window level and the low-VRAM KV cache, which affect which model gets selected and are re-prompted by `--menu` instead.
+To change any setting, run `--setup` again — except for context window level and the low-VRAM KV cache, which affect which model gets selected and are re-prompted by `--model` instead.
 
 ## Offline / Air-Gapped Deployment
 
@@ -453,7 +454,7 @@ It will prompt for:
 
 The script then downloads the selected model (if not already cached), saves all required Docker images as `.tar.gz` archives, copies all project scripts (including `config/families/`), and writes a `bundle.manifest`. Everything lands in `bundle/`.
 
-It also fetches both platform builds of [gum](https://github.com/charmbracelet/gum) and ships them at `scripts/.assets/` — since the target has no internet access to fetch gum itself, this is what gives it the same gum-powered prompts as the source machine (`--setup`, `--menu`, `--status`, and `unbundle.sh`'s own prompts) instead of falling back to plain text.
+It also fetches both platform builds of [gum](https://github.com/charmbracelet/gum) and ships them at `scripts/.assets/` — since the target has no internet access to fetch gum itself, this is what gives it the same gum-powered prompts as the source machine (`--setup`, `--model`, `--status`, and `unbundle.sh`'s own prompts) instead of falling back to plain text.
 
 Transfer the entire `bundle/` folder to the target machine (USB drive, internal file share, etc.).
 

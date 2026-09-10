@@ -480,7 +480,7 @@ setup_step_git_identity() {
 # cmd_setup — first-time and re-configuration wizard
 #
 # Model-affecting choices (context level, low-VRAM KV cache) are deliberately
-# not steps here: they change which model tier fits, so the --menu flow
+# not steps here: they change which model tier fits, so the --model flow
 # re-prompts them instead.
 # ------------------------------------------------------------------------------
 cmd_setup() {

@@ -142,7 +142,7 @@ echo -e "${ICON_OK} Scripts copied."
 # there — fetch both platform builds here (cached in the project's own
 # .assets so repeat bundle runs don't re-download) and ship them inside the
 # bundle at scripts/.assets. ai-coder-ui.sh finds gum at that exact path
-# relative to libs/, so --setup/--menu/--status get gum-powered prompts on
+# relative to libs/, so --setup/--model/--status get gum-powered prompts on
 # the air-gapped target with no extra wiring needed.
 echo -e "\n${ICON_GEAR} Bundling gum interface engine..."
 mkdir -p "$BUNDLE_SCRIPTS_DIR/.assets"

@@ -52,7 +52,7 @@ Copy an existing `config/families/*.conf` (e.g. `qwen3.conf`), keep the guard-ag
 ## Config persistence model
 
 Runtime state lives under `user/` (gitignored) as flat `key=value` files read/written via `read_pref`/`write_pref` in `libs/ai-coder-env.sh`:
-- `user/settings.conf` — all user settings (proxy, GPU mode, context level, KV type, MCP extras, keep-hub, model volume, speculative decoding, port exposure, git identity, etc.); written by the `--setup` wizard and the `--menu` model-affecting prompts
+- `user/settings.conf` — all user settings (proxy, GPU mode, context level, KV type, MCP extras, keep-hub, model volume, speculative decoding, port exposure, git identity, etc.); written by the `--setup` wizard and the `--model` model-affecting prompts
 - `user/state.conf` — session state (tool/family/webui preference, update-check cache, running-engine settings used to detect when the engine needs a restart)
 - `user/.setup-done` — sentinel gating first launch
 
@@ -70,7 +70,7 @@ Whether a change needs `./ai-coder --rebuild` depends on whether it touches the 
 
 There is no automated test suite or CI. `test_*` files are gitignored, implying ad-hoc local test scripts are expected to stay untracked. To verify a change:
 - `bash -n <script>.sh` (or open in an editor with shellcheck) to catch syntax errors — `libs/ai-coder-core.sh` and `offline/unbundle.sh` are explicitly annotated with `# shellcheck source=/dev/null` where dynamic sourcing defeats static analysis.
-- Exercise the actual flag/menu path against a real Docker Desktop instance (`./ai-coder --setup`, `./ai-coder --status`, `./ai-coder --menu`, etc.) — most logic is Docker/GPU state machine behavior that can't be meaningfully unit tested.
+- Exercise the actual flag/menu path against a real Docker Desktop instance (`./ai-coder --setup`, `./ai-coder --status`, `./ai-coder --model`, etc.) — most logic is Docker/GPU state machine behavior that can't be meaningfully unit tested.
 - All scripts run under `set -euo pipefail`; preserve that discipline (explicit `|| true` / `|| return` at call sites that intend to tolerate failure) when adding code.
 
 ## Key runtime conventions
