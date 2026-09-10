@@ -115,12 +115,21 @@ exec_in_container() {
     # that is sufficient.
     # On Git Bash, MSYS converts /foo paths to Windows paths when winpty is the
     # intermediary, even with MSYS_NO_PATHCONV=1. The // prefix suppresses MSYS
-    # conversion (treated as a UNC prefix); Linux normalises //foo → /foo.
+    # conversion (treated as a UNC prefix); Linux normalises //foo → /foo. It
+    # must cover the workdir AND every container-path argument the caller
+    # passes (agent binaries, script paths, config files).
     local _wd="/$WORKSPACE_DIR"
     [ "$IS_GITBASH" = "true" ] && _wd="//$WORKSPACE_DIR"
     local cmd_args=(docker exec -it -w "$_wd" "$@")
     if [ "$IS_GITBASH" = "true" ]; then
-        winpty "${cmd_args[@]}"
+        local _safe_args=() _a
+        for _a in "${cmd_args[@]}"; do
+            if [[ "$_a" == /* && ! "$_a" == //* ]]; then
+                _a="//${_a#/}"
+            fi
+            _safe_args+=("$_a")
+        done
+        winpty "${_safe_args[@]}"
     else
         "${cmd_args[@]}"
     fi
