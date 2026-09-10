@@ -34,6 +34,7 @@ Usage: $(basename "$0") [COMMAND]
 
 Commands:
   --status           Show GPU and engine status dashboard
+  --logs             Show hub container logs (--tail N, -f to follow, --proxy, --webui)
   --setup            First-time and re-configuration wizard (alias, proxy, isolation, GPU, git)
   --update           Download and install the latest release from GitHub
   --fix-project      Fix line endings in the current project for AI editing (run from project folder)
@@ -52,6 +53,9 @@ HELP
     exec bash "$ROOT_DIR/ai-status.sh" ;;
 --models)
     cmd_models "${2:-}"
+    exit $? ;;
+--logs)
+    cmd_logs "${@:2}"
     exit $? ;;
 --clean)
     check_docker || exit 1
@@ -114,8 +118,8 @@ if [[ "${1:-}" == "--rebuild" ]]; then
 fi
 
 # Reject unknown commands before touching Docker/Hub state. Every recognized
-# command either already exited above (--help, --update, --status, --models,
-# --clean, --fix-project, --setup, --rebuild) or is handled further down
+# command either already exited above (--help, --update, --status, --logs,
+# --models, --clean, --fix-project, --setup, --rebuild) or is handled further down
 # (--model, --build-only) — anything else here is a typo and should fail fast
 # instead of running the full family/tool/Hub flow and tripping the cleanup
 # trap.

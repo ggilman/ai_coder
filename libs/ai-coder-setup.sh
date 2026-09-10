@@ -112,6 +112,67 @@ cmd_update() {
     write_pref "$STATE_FILE" last_check "$(date +%s 2>/dev/null || echo 0)"
 }
 
+# ------------------------------------------------------------------------------
+# cmd_logs — show Docker logs for the hub containers
+# Usage: --logs [--follow|-f] [--tail N] [--proxy] [--webui]
+# ------------------------------------------------------------------------------
+cmd_logs() {
+    local follow=false tail=50
+    local show_proxy=false show_webui=false
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --follow|-f)
+                follow=true
+                shift
+                ;;
+            --tail)
+                tail="${2:-50}"
+                shift
+                if [ $# -gt 0 ]; then shift; fi
+                ;;
+            --proxy)
+                show_proxy=true
+                shift
+                ;;
+            --webui)
+                show_webui=true
+                shift
+                ;;
+            *)
+                echo -e "${RED}Unknown --logs option: $1${NC}"
+                return 1
+                ;;
+        esac
+    done
+    case "$tail" in
+        ''|*[!0-9]*)
+            tail=50
+            ;;
+    esac
+
+    check_docker || exit 1
+
+    if [ -z "$(docker ps -aq -f "name=$GLOBAL_ENGINE_NAME" 2>/dev/null)" ]; then
+        echo -e "${RED}✘ Engine not started${NC}"
+        echo -e "${YELLOW}  Launch a session first, then run: ${CYAN}$(basename "$0") --logs${NC}"
+        return 1
+    fi
+
+    local containers=("$GLOBAL_ENGINE_NAME")
+    if [ "$show_proxy" = "true" ] && [ -n "$(docker ps -aq -f "name=$GLOBAL_PROXY_NAME" 2>/dev/null)" ]; then
+        containers+=("$GLOBAL_PROXY_NAME")
+    fi
+    if [ "$show_webui" = "true" ] && [ -n "$(docker ps -aq -f "name=$GLOBAL_WEBUI_NAME" 2>/dev/null)" ]; then
+        containers+=("$GLOBAL_WEBUI_NAME")
+    fi
+
+    if [ "$follow" = "true" ]; then
+        docker logs -f "${containers[@]}"
+    else
+        docker logs --tail "$tail" "${containers[@]}"
+    fi
+}
+
 # Prompts a yes/no setup question, writes the pref, and prints a status message.
 # Shared by every setup_step_* that is a plain on/off toggle.
 # Usage: setup_toggle_pref <pref_key> <title> <question> <detail> <prompt> \
