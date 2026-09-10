@@ -96,6 +96,15 @@ _estimate_kv_reserve_gb() {
     echo $(( (${MODEL_CTX_SIZE:-65536} * _bpt + 1073741823) / 1073741824 ))
 }
 
+# Single source of truth for the tier-fit test: a candidate fits when its
+# WEIGHTS_GB is <= the usable VRAM. WEIGHTS_GB=0 marks the unconditional
+# fallback tier, which always fits. Both select_model_for_vram (pass 1) and
+# print_model_candidates' Fit column call this, so the dry-run table and the
+# real pick can't drift when the fit metric changes.
+_tier_fits() {
+    [ "$1" -eq 0 ] || [ "$2" -ge "$1" ]
+}
+
 # Walks the MODEL_1..MODEL_N candidate list defined by the active family conf,
 # in priority order (best quality first), and selects the first entry whose
 # MODEL_N_WEIGHTS_GB fits within the supplied VRAM headroom (already KV-cache
@@ -127,7 +136,7 @@ select_model_for_vram() {
         _fv="MODEL_${i}_FILE"
         [ -z "${!_fv:-}" ] && break
         _wv="MODEL_${i}_WEIGHTS_GB"
-        if [ "$vram" -ge "${!_wv:-0}" ]; then _full=$i; break; fi
+        if _tier_fits "${!_wv:-0}" "$vram"; then _full=$i; break; fi
     done
     [ "$_full" -eq 0 ] && _full=$(( _count > 0 ? _count : 1 ))
     local _sel=$_full
@@ -481,8 +490,7 @@ print_model_candidates() {
         _desc="${!_dv:-}"
         _w="${!_wv:-0}"
         _l="${!_lv:-}"
-        # WEIGHTS_GB=0 is the unconditional fallback tier — always fits.
-        if [ "$_w" -eq 0 ] || [ "$_eff" -ge "$_w" ]; then _fit="yes"; else _fit="no"; fi
+        if _tier_fits "$_w" "$_eff"; then _fit="yes"; else _fit="no"; fi
         _mark=""
         [ "$_file" = "${MODEL_FILE:-}" ] && _mark="  ${GREEN}◀ selected${NC}"
         printf '  %2d | %-58s | %9s | %6s | %s%s\n' "$i" "$_desc" "$_w" "$_l" "$_fit" "$_mark"
