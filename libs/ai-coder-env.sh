@@ -367,6 +367,14 @@ write_pref() {
     local file="$1" key="$2" value="$3"
     mkdir -p "$(dirname "$file")"
 
+    # Self-heal: sweep this file's own orphaned .tmp.<pid> leftovers from a
+    # session that got killed between mktemp and mv below. That window is
+    # normally sub-millisecond, so anything older than a few minutes here is
+    # orphaned, not an in-flight write from a concurrent session — safe to
+    # delete without a lock. (Broader sweeps — stale lock dirs, other files —
+    # are handled by `--doctor`, not on every write_pref call.)
+    find "$(dirname "$file")" -maxdepth 1 -name "$(basename "$file").tmp.*" -mmin +5 -delete 2>/dev/null || true
+
     local _lock_dir="${file}.lock"
     acquire_lock "$_lock_dir" 0.1 100
 

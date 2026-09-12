@@ -148,6 +148,97 @@ cmd_version() {
 }
 
 # ------------------------------------------------------------------------------
+# cmd_doctor — sweep orphaned state left behind by killed sessions, and flag a
+# couple of easy-to-miss misconfigurations. Safe to run any time; each check
+# is best-effort and independent of the others.
+# ------------------------------------------------------------------------------
+cmd_doctor() {
+    echo -e "${BOLD}ai-coder doctor${NC}"
+    local issues=0
+
+    # --- orphaned write_pref temp files ---------------------------------------
+    # write_pref self-heals these on its own next call (see libs/ai-coder-env.sh),
+    # but a file that's rarely written (e.g. settings.conf) could sit on one for
+    # a long time otherwise — sweep the whole user/ dir explicitly here too.
+    echo -e "${ICON_GEAR} Orphaned temp files in ${CYAN}${USER_DIR}${NC}..."
+    local _tmp_found=() _f
+    while IFS= read -r _f; do
+        [ -n "$_f" ] && _tmp_found+=("$_f")
+    done < <(find "$USER_DIR" -maxdepth 1 -name "*.tmp.*" -mmin +5 2>/dev/null)
+    if [ "${#_tmp_found[@]}" -gt 0 ]; then
+        for _f in "${_tmp_found[@]}"; do
+            rm -f "$_f" && echo -e "  ${GREEN}✔${NC} removed ${DIM}$(basename "$_f")${NC}"
+        done
+        issues=$((issues + ${#_tmp_found[@]}))
+    else
+        echo -e "  ${DIM}none found${NC}"
+    fi
+
+    # --- orphaned lock directories --------------------------------------------
+    # acquire_lock's mkdir-based locks are only ever held for the duration of a
+    # single preference write or the Hub check-then-restart section — a couple
+    # of seconds at most. One older than 2 minutes belonged to a session that
+    # died while holding it (crash, kill -9) rather than one still in progress.
+    echo -e "${ICON_GEAR} Orphaned lock directories..."
+    local _lock_found=() _d
+    while IFS= read -r _d; do
+        [ -n "$_d" ] && _lock_found+=("$_d")
+    done < <(find "$USER_DIR" -maxdepth 1 -name "*.lock" -type d -mmin +2 2>/dev/null)
+    if [ "${#_lock_found[@]}" -gt 0 ]; then
+        for _d in "${_lock_found[@]}"; do
+            rmdir "$_d" 2>/dev/null && echo -e "  ${GREEN}✔${NC} removed ${DIM}$(basename "$_d")${NC}"
+        done
+        issues=$((issues + ${#_lock_found[@]}))
+    else
+        echo -e "  ${DIM}none found${NC}"
+    fi
+
+    # --- secrets file permissions ---------------------------------------------
+    # AI_CODER_ENV_FILE (sourced by ai-coder for API keys like BRAVE_API_KEY)
+    # is plain text — worth flagging if group/other can read it. Meaningful on
+    # WSL/Linux; Git Bash reports NTFS ACLs approximately, so this is best-effort.
+    local _env_file="${AI_CODER_ENV_FILE:-$WIN_HOME/.ai-coder-env}"
+    echo -e "${ICON_GEAR} Secrets file permissions..."
+    if [ -f "$_env_file" ]; then
+        local _mode; _mode=$(stat -c%a "$_env_file" 2>/dev/null || echo "")
+        if [ -n "$_mode" ] && [ $(( 0${_mode} & 0044 )) -ne 0 ]; then
+            echo -e "  ${YELLOW}⚠${NC} ${_env_file} is readable by group/other (mode ${_mode})"
+            echo -e "    ${DIM}Fix with: chmod 600 \"${_env_file}\"${NC}"
+            issues=$((issues + 1))
+        else
+            echo -e "  ${DIM}${_env_file}: OK${NC}"
+        fi
+    else
+        echo -e "  ${DIM}not present — nothing to check${NC}"
+    fi
+
+    # --- leftover workbench containers ----------------------------------------
+    # Doesn't call check_docker (which would launch Docker Desktop just to run
+    # a health check) — skips this section instead when Docker isn't already up.
+    echo -e "${ICON_GEAR} Docker state..."
+    if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+        local _stopped; _stopped=$(docker ps -aq --filter "status=exited" --filter "name=^/${WORKBENCH_PREFIX}-" 2>/dev/null)
+        if [ -n "$_stopped" ]; then
+            local _count; _count=$(echo "$_stopped" | grep -c .)
+            echo -e "  ${YELLOW}⚠${NC} ${_count} stopped workbench container(s) left over"
+            echo -e "    ${DIM}Remove with: $(basename "$0") --clean${NC}"
+            issues=$((issues + 1))
+        else
+            echo -e "  ${DIM}no leftover workbench containers${NC}"
+        fi
+    else
+        echo -e "  ${DIM}Docker not running — skipped${NC}"
+    fi
+
+    echo ""
+    if [ "$issues" -eq 0 ]; then
+        echo -e "${ICON_OK} Nothing to clean up."
+    else
+        echo -e "${ICON_OK} Cleaned up / flagged ${issues} issue(s)."
+    fi
+}
+
+# ------------------------------------------------------------------------------
 # cmd_logs — show Docker logs for the hub containers
 # Usage: --logs [--follow|-f] [--tail N] [--proxy] [--webui]
 # ------------------------------------------------------------------------------
