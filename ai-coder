@@ -44,9 +44,13 @@ Commands:
   --models [family]   Dry-run model tier selection: hardware audit, VRAM reserves and which tier a launch would pick (no Docker, no launch)
   --build-only       Build the workbench image then exit (no Hub or agent launch)
   --continue         Resume the previous agent session (passes the tool's native continue flag)
+  --version          Show the installed release and last update-check time
   --help             Show this message
 HELP
     exit 0 ;;
+--version)
+    cmd_version
+    exit $? ;;
 --update)
     cmd_update
     exit $? ;;
@@ -119,8 +123,8 @@ if [[ "${1:-}" == "--rebuild" ]]; then
 fi
 
 # Reject unknown commands before touching Docker/Hub state. Every recognized
-# command either already exited above (--help, --update, --status, --logs,
-# --models, --clean, --fix-project, --setup, --rebuild) or is handled further down
+# command either already exited above (--help, --version, --update, --status,
+# --logs, --models, --clean, --fix-project, --setup, --rebuild) or is handled further down
 # (--model, --build-only, --continue) — anything else here is a typo and should
 # fail fast instead of running the full family/tool/Hub flow and tripping the
 # cleanup trap.

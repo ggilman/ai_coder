@@ -102,14 +102,49 @@ cmd_update() {
     cp -r "$tmp_dir/." "$install_dir/"
     chmod +x "$install_dir/ai-coder" "$install_dir/ai-status.sh"
 
-    # Record the installed release hash so future update checks have a baseline to compare
+    # Record the installed release hash (and its checkin date) so future update
+    # checks have a baseline to compare and --version has something to show.
     local new_hash; new_hash=$(_fetch_release_hash) || true
-    [ -n "$new_hash" ] && write_pref "$STATE_FILE" release_hash "$new_hash"
+    if [ -n "$new_hash" ]; then
+        write_pref "$STATE_FILE" release_hash "$new_hash"
+        local new_date; new_date=$(_fetch_commit_date "$new_hash") || true
+        [ -n "$new_date" ] && write_pref "$STATE_FILE" release_date "$new_date"
+    fi
 
     echo -e "${ICON_OK} Updated successfully${NC}"
 
     # Reset timestamp so the next run doesn't immediately re-check
     write_pref "$STATE_FILE" last_check "$(date +%s 2>/dev/null || echo 0)"
+}
+
+# ------------------------------------------------------------------------------
+# cmd_version — print the installed release and last update-check info.
+# Reads state only (no network call) — run --update to actually check GitHub.
+# ------------------------------------------------------------------------------
+cmd_version() {
+    local install_dir; install_dir="$(dirname "$SCRIPT_DIR")"
+    local hash; hash=$(read_pref "$STATE_FILE" release_hash "")
+    local release_date; release_date=$(read_pref "$STATE_FILE" release_date "")
+    local last_check; last_check=$(read_pref "$STATE_FILE" last_check "")
+
+    echo -e "${BOLD}ai-coder${NC}"
+    echo -e "  Installed at:  ${CYAN}${install_dir}${NC}"
+    if [ -n "$hash" ]; then
+        echo -e "  Release:       ${CYAN}${hash:0:10}${NC} (${DIM}${hash}${NC})"
+        if [ -n "$release_date" ]; then
+            local checkin; checkin=$(date -u -d "$release_date" '+%Y-%m-%d %H:%M UTC' 2>/dev/null || echo "$release_date")
+            echo -e "  Checked in:    ${DIM}${checkin}${NC}"
+        fi
+    else
+        echo -e "  Release:       ${DIM}unknown — run --update once to record it${NC}"
+    fi
+    if [ -n "$last_check" ]; then
+        local when; when=$(date -d "@${last_check}" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "$last_check")
+        echo -e "  Last checked:  ${DIM}${when}${NC}"
+    else
+        echo -e "  Last checked:  ${DIM}never${NC}"
+    fi
+    echo -e "  ${DIM}Run \"$(basename "$0") --update\" to check for and install the latest release.${NC}"
 }
 
 # ------------------------------------------------------------------------------
