@@ -70,15 +70,18 @@ def spawn_with_dimensions(argv):
 
         try:
             # Custom copy loop to prevent the EOF lockup when discarding bytes
+            stdin_eof = False
             while True:
+                read_fds = [master_fd] if stdin_eof else [sys.stdin.fileno(), master_fd]
                 # Wait for input
-                rfds, _, _ = select.select([sys.stdin.fileno(), master_fd], [], [])
+                rfds, _, _ = select.select(read_fds, [], [])
 
-                if sys.stdin.fileno() in rfds:
+                if not stdin_eof and sys.stdin.fileno() in rfds:
                     data = filter_stdin(sys.stdin.fileno())
-                    if not data and not select.select([sys.stdin.fileno()], [], [], 0)[0]:
-                        # If truly closed from system, exit loop
-                        pass
+                    if not data:
+                        # stdin closed (EOF) - stop selecting on it, keep
+                        # relaying child output until the child exits
+                        stdin_eof = True
                     else:
                         os.write(master_fd, data)
 
