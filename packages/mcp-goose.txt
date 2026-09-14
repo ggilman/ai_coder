@@ -1,0 +1,19 @@
+# ============================================================
+# mcp-goose.txt — extra MCP servers (goose calls them "extensions") for the
+# Goose workbench only
+#
+# Format (pipe-delimited, one server per line):
+#   npm-package | server-key | command | arg1 arg2 ... | ENV_VAR1,ENV_VAR2 | net
+#
+# Set 6th field to "online" to skip the server when network isolation is active.
+#
+# Use {workspace} as a placeholder for the container workspace path.
+# Lines starting with # are ignored. Blank lines are ignored.
+#
+# NOTE: unlike the other agents, this file is rendered into goose's YAML
+# `extensions:` block by _goose_mcp_extensions_yaml() in
+# agents/ai-coder-goose.sh, not the shared JSON helper in ai-coder-env.sh —
+# the field format above is unchanged either way.
+# ============================================================
+
+# Add Goose-specific MCP servers (extensions) here

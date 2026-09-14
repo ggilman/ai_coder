@@ -21,13 +21,18 @@ The environment uses a **Hub & Spoke** model:
 | `config/families/gemma4.conf` | Gemma 4 family config — model tiers (names, URLs, weights, SHA256) and optional speculative decoding draft |
 | `config/families/qwen3.conf` | Qwen3 family config — model tiers (names, URLs, weights, SHA256) and speculative decoding draft |
 | `config/families/qwen3.6.conf` | Qwen3.6 family config — 27B dense + 35B-A3B MoE (released April 2026) |
+| `config/families/qwen3.6-reap.conf` | Qwen3.6 REAP family config — 28B-A3B MoE, 20% expert-pruned from Qwen3.6-35B-A3B for lower VRAM at higher quant precision |
 | `config/families/qwen3.8.conf` | Qwen3.8 family config — 27B dense across 8 quant tiers (released August 2026) |
 | `config/families/llama4.conf` | Llama 4 family config — Scout 17B×16E (10M context, consumer-feasible) |
 | `config/families/devstral2.conf` | Devstral 2 family config — 24B coding-specialist (SWE-Bench 68.0%) |
+| `config/families/gptoss20b.conf` | gpt-oss-20b family config — OpenAI 21B-A3.6B MoE, native MXFP4, Apache 2.0 |
+| `config/families/glm4.7flash.conf` | GLM-4.7-Flash family config — Zhipu 31B-A3B MoE, local coding-agent focused |
 | `agents/ai-coder-claude.sh` | Claude Code overrides (sourced automatically when Claude is selected) |
 | `agents/ai-coder-opencode.sh` | OpenCode overrides (sourced automatically when OpenCode is selected) |
 | `agents/ai-coder-aider.sh` | Aider overrides (sourced automatically when Aider is selected) |
 | `agents/ai-coder-gemini.sh` | Gemini CLI overrides (sourced automatically when Gemini is selected) |
+| `agents/ai-coder-qwencode.sh` | Qwen Code overrides (sourced automatically when Qwen Code is selected) |
+| `agents/ai-coder-goose.sh` | Goose overrides (sourced automatically when Goose is selected) |
 | `agents/ai-coder-hub.sh` | Hub-only mode — starts the engine without a coding tool; press any key to stop |
 | `agents/ai-coder-webui.sh` | Open WebUI mode — starts the engine + Open WebUI chat interface at `localhost:3000` |
 | `libs/ai-coder-menus.sh` | Interactive family and tool selection menus (sourced by `ai-coder`) |
@@ -81,11 +86,11 @@ Use this script to monitor the health of your environment.
 ```
 
 ### 2. Unified AI Coding Interface (`ai-coder`)
-A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run (or with `--model`) it prompts you to select your preferred tool, which is saved to `user/state.conf` in the install directory. Subsequent runs launch the saved preference directly.
+A single launcher for Claude Code, OpenCode, Aider, Gemini CLI, Qwen Code, and Goose. On first run (or with `--model`) it prompts you to select your preferred tool, which is saved to `user/state.conf` in the install directory. Subsequent runs launch the saved preference directly.
 
 - **Alias**: `ai` (configure with `--setup`)
 - **Model family selection**: On first run, prompts you to choose a model family (Gemma 4, Qwen3, Qwen3.6, Llama 4, Devstral 2, …). Within the chosen family, the best GGUF tier is selected automatically from detected VRAM **minus an estimated KV-cache reserve** for your chosen context level **and a per-GPU overhead reserve** (CUDA context, compute buffers, display usage — `MODEL_VRAM_OVERHEAD_GB`) — so the model actually fits instead of silently paging to system RAM. If the reserves cost you a tier, the launcher says so; choose a smaller context level in `--model` to unlock the bigger model.
-- **Tool selection**: On first run, also prompts for your preferred coding tool (Claude, OpenCode, Aider, Gemini). Both choices are saved to `user/state.conf`.
+- **Tool selection**: On first run, also prompts for your preferred coding tool (Claude, OpenCode, Aider, Gemini, Qwen Code, Goose). Both choices are saved to `user/state.conf`.
 - **Gum-powered menus**: Family, tool, and Open WebUI prompts render as [gum](https://github.com/charmbracelet/gum) pickers, same as `--setup`. Falls back to plain numbered/text prompts if gum can't be installed or run (or with `AI_CODER_NO_GUM=1`).
 - **Open WebUI sidecar**: If host port exposure is enabled in `--setup`, a third question asks whether to also start Open WebUI (`http://localhost:3000`) alongside your coding agent, so you can chat with the same local model while you code. The answer is saved like the other preferences and re-asked via `--model`. It shuts down together with the Hub.
 - **Workspace mount**: Your project folder is mounted into the container as `/<foldername>` (e.g. `/my-project`), so the AI tool starts directly in your project directory.
@@ -97,7 +102,7 @@ A single launcher for Claude Code, OpenCode, Aider, and Gemini CLI. On first run
 | Command | Description |
 | --- | --- |
 | (no argument) | Launch the AI tool inside the active workbench container |
-| `--continue` | Resume the previous agent session — passes the tool's native continue flag (`--continue` for Claude/OpenCode/Aider, `--resume` for Gemini) |
+| `--continue` | Resume the previous agent session — passes the tool's native continue flag (`--continue` for Claude/OpenCode/Aider, `--resume` for Gemini/Qwen Code/Goose) |
 | `--model` | Reset model family, tool, Open WebUI, context level **and** low-VRAM KV cache preferences; show the selection menus again |
 | `--models [family]` | Dry-run model tier selection: hardware audit, VRAM reserves, and which tier a launch would pick — no Docker, no launch |
 | `--status` | Show the real-time GPU and engine status dashboard |
@@ -203,6 +208,8 @@ The apt packages installed into each workbench container are defined in plain te
 | `packages/apt-opencode.txt` | OpenCode image only |
 | `packages/apt-aider.txt` | Aider image only |
 | `packages/apt-gemini.txt` | Gemini CLI image only |
+| `packages/apt-qwencode.txt` | Qwen Code image only |
+| `packages/apt-goose.txt` | Goose image only |
 
 To add a package, edit the relevant file and then force a rebuild:
 
@@ -218,11 +225,13 @@ MCP (Model Context Protocol) servers extend what the AI agent can do — web sea
 
 | File | Used by |
 | --- | --- |
-| `packages/mcp-common.txt` | Core servers — always registered for all MCP-capable agents (Claude, OpenCode, Gemini) |
+| `packages/mcp-common.txt` | Core servers — always registered for all MCP-capable agents (Claude, OpenCode, Gemini, Qwen Code, Goose) |
 | `packages/mcp-extra.txt` | Optional servers — installed in all images, but only registered when *MCP extras* is enabled in `--setup` |
 | `packages/mcp-claude.txt` | Claude image only |
 | `packages/mcp-opencode.txt` | OpenCode image only |
 | `packages/mcp-gemini.txt` | Gemini CLI image only |
+| `packages/mcp-qwencode.txt` | Qwen Code image only |
+| `packages/mcp-goose.txt` | Goose image only — rendered into goose's YAML `extensions:` format instead of the JSON `mcpServers` the other agents use (see note below) |
 
 > **Why the core/extra split?** Every registered server's tool schemas are injected into the model's context on **every request**. A long tool list slows prompt processing and makes small local models measurably worse at choosing the right tool. Core covers day-to-day coding (filesystem, git, shell); enable the extras only if you use them. Toggling extras takes effect on the next launch — no rebuild needed, because extra servers are always pre-installed in the images.
 
@@ -242,6 +251,8 @@ npm-package | server-key | command | arg1 arg2 ... | ENV_VAR1,ENV_VAR2 | net
 | `net` | No | Set to `online` to skip this server when network isolation is active. Leave blank for servers that work fully offline. |
 
 Lines starting with `#` and blank lines are ignored.
+
+> **Goose is the one exception.** It doesn't accept the Claude/Gemini-style JSON `mcpServers` config, so `_goose_mcp_extensions_yaml()` in `agents/ai-coder-goose.sh` renders the same pipe-delimited files into goose's YAML `extensions:` block instead. The file format above is identical — only the agent-side renderer differs.
 
 #### Core servers (`mcp-common.txt`) — always registered
 
@@ -329,6 +340,8 @@ echo "@some-org/server | key | cmd | args" >> packages/mcp-opencode.txt
 | OpenCode | Config, provider settings | `~/.opencode-config/` (directory) |
 | Aider | Aider config, input history | `~/.aider-config/` (directory) |
 | Gemini CLI | Auth tokens, session state, settings | `~/.gemini-config/` (directory) |
+| Qwen Code | Auth tokens, session state, settings | `~/.qwen-config/` (directory) |
+| Goose | Config, provider settings, MCP extensions | `~/.goose-config/` (directory) |
 | ai-coder | **All settings** — proxy, isolation, GPU mode, context level, low-VRAM KV cache, VRAM overhead, CPU offload threshold, MCP extras, keep-hub, model volume, speculative decoding, port exposure, git identity | `<install-dir>/user/settings.conf` |
 | ai-coder | **Runtime state** — tool + family + Open WebUI preferences, update-check hash/timestamp, running-engine settings | `<install-dir>/user/state.conf` |
 | ai-coder | Setup completion sentinel | `<install-dir>/user/.setup-done` |
