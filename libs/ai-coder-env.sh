@@ -257,6 +257,33 @@ _fetch_release_hash() {
 
     fi
 }
+
+# Fetch the commit (checkin) date for a given commit sha, as reported by
+# GitHub's commits API, e.g. "2026-09-06T12:34:56Z". Empty on any failure
+# (offline, proxy down, unknown sha) — callers treat a blank result as
+# "unavailable" rather than an error.
+_fetch_commit_date() {
+    local sha="$1"
+    [ -z "$sha" ] && return
+    local api_url="https://api.github.com/repos/ggilman/ai_coder/commits/${sha}"
+    local date_re='"date"[[:space:]]*:[[:space:]]*"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"'
+    local http_proxy=""
+    [ -n "${DOWNLOAD_PROXY:-}" ] && http_proxy=$(resolve_proxy_to_ip "$(echo "$DOWNLOAD_PROXY" | sed "s|^https://|http://|")")
+    if command -v curl >/dev/null 2>&1; then
+        local curl_args=(-fsSL --connect-timeout 4)
+        [ -n "$http_proxy" ] && curl_args+=(--proxy "$http_proxy")
+        curl "${curl_args[@]}" "$api_url" 2>/dev/null \
+            | grep -oE "$date_re" \
+            | head -1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' || true
+
+    elif command -v wget >/dev/null 2>&1; then
+        local wget_proxy_args=()
+        [ -n "$http_proxy" ] && wget_proxy_args=(-e "use_proxy=yes" -e "http_proxy=$http_proxy" -e "https_proxy=$http_proxy")
+        wget -qO- --timeout=4 "${wget_proxy_args[@]}" "$api_url" 2>/dev/null \
+            | grep -oE "$date_re" \
+            | head -1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' || true
+    fi
+}
 check_for_update() {
     local install_dir; install_dir="$(dirname "$SCRIPT_DIR")"
     local interval=86400 # 24 hours
@@ -281,6 +308,8 @@ check_for_update() {
     # No recorded hash: first run after install. Save remote hash and assume up to date.
     if [ -z "$local_hash" ]; then
         write_pref "$STATE_FILE" release_hash "$remote_hash"
+        local remote_date; remote_date=$(_fetch_commit_date "$remote_hash")
+        [ -n "$remote_date" ] && write_pref "$STATE_FILE" release_date "$remote_date"
         return
     fi
 
@@ -337,6 +366,14 @@ read_pref() {
 write_pref() {
     local file="$1" key="$2" value="$3"
     mkdir -p "$(dirname "$file")"
+
+    # Self-heal: sweep this file's own orphaned .tmp.<pid> leftovers from a
+    # session that got killed between mktemp and mv below. That window is
+    # normally sub-millisecond, so anything older than a few minutes here is
+    # orphaned, not an in-flight write from a concurrent session — safe to
+    # delete without a lock. (Broader sweeps — stale lock dirs, other files —
+    # are handled by `--doctor`, not on every write_pref call.)
+    find "$(dirname "$file")" -maxdepth 1 -name "$(basename "$file").tmp.*" -mmin +5 -delete 2>/dev/null || true
 
     local _lock_dir="${file}.lock"
     acquire_lock "$_lock_dir" 0.1 100

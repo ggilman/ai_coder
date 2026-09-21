@@ -1,0 +1,6 @@
+# ============================================================
+# apt-goose.txt — extra packages for the Goose workbench only
+# One package per line. Lines starting with # are ignored.
+# ============================================================
+
+# Add Goose-specific packages here

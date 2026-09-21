@@ -1,0 +1,6 @@
+# ============================================================
+# apt-qwencode.txt — extra packages for the Qwen Code workbench only
+# One package per line. Lines starting with # are ignored.
+# ============================================================
+
+# Add Qwen Code-specific packages here

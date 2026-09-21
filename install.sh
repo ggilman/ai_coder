@@ -23,6 +23,7 @@ ICON_OK=" ${GREEN}✔${NC} "; ICON_GEAR=" ${CYAN}⚙${NC} "
 
 TARBALL_URL="https://github.com/ggilman/ai_coder/archive/refs/heads/release.tar.gz"
 API_URL="https://api.github.com/repos/ggilman/ai_coder/git/refs/heads/release"
+COMMIT_API_URL="https://api.github.com/repos/ggilman/ai_coder/commits"
 INSTALL_DIR="${1:-$HOME/ai-coder}"
 
 echo -e "\n${BOLD}ai-coder installer${NC}\n"
@@ -103,9 +104,23 @@ else
         | grep -oE '"sha"[[:space:]]*:[[:space:]]*"[a-f0-9]{40}"' \
         | head -1 | grep -oE '[a-f0-9]{40}') || true
 fi
+release_date=""
 if [ -n "$release_hash" ]; then
+    if command -v curl >/dev/null 2>&1; then
+        release_date=$(curl -fsSL --connect-timeout 4 "$COMMIT_API_URL/$release_hash" 2>/dev/null \
+            | grep -oE '"date"[[:space:]]*:[[:space:]]*"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"' \
+            | head -1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z') || true
+    else
+        release_date=$(wget -qO- --timeout=4 "$COMMIT_API_URL/$release_hash" 2>/dev/null \
+            | grep -oE '"date"[[:space:]]*:[[:space:]]*"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"' \
+            | head -1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z') || true
+    fi
+
     mkdir -p "$INSTALL_DIR/user"
-    printf 'release_hash=%s\n' "$release_hash" > "$INSTALL_DIR/user/state.conf"
+    {
+        printf 'release_hash=%s\n' "$release_hash"
+        [ -n "$release_date" ] && printf 'release_date=%s\n' "$release_date"
+    } > "$INSTALL_DIR/user/state.conf"
 fi
 
 # --- [ done ] -----------------------------------------------------------------
