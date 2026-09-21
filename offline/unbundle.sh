@@ -75,8 +75,8 @@ fi
 [ -d "$MODELS_DIR" ]  || { echo "✘  models/ directory not found.";  exit 1; }
 [ -d "$SCRIPTS_DIR" ] || { echo "✘  scripts/ directory not found."; exit 1; }
 
-MODEL_FILE=$(grep '^model_file='    "$MANIFEST_FILE" | cut -d= -f2-)
-MODEL_DESC=$(grep '^model_desc='    "$MANIFEST_FILE" | cut -d= -f2-)
+MODEL_FILE=$(grep '^model_file='    "$MANIFEST_FILE" | cut -d= -f2- || echo "")
+MODEL_DESC=$(grep '^model_desc='    "$MANIFEST_FILE" | cut -d= -f2- || echo "unknown")
 MODEL_FAMILY=$(grep '^model_family=' "$MANIFEST_FILE" | cut -d= -f2- || echo "unknown")
 BUNDLE_DATE=$(grep '^bundle_date='  "$MANIFEST_FILE" | cut -d= -f2- || echo "unknown")
 

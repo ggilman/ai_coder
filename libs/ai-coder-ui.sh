@@ -234,7 +234,18 @@ ui_menu() {
         fi
         echo "$_input"
     else
-        _ui_plain_header "$_header" "$_help" "$_current" "$_prompt"
+        echo -e "\n${COLOR_ACCENT}${COLOR_BOLD}${_header}${COLOR_RESET}" >&2
+        [ -n "$_help" ] && echo -e "${COLOR_DIM}${_help}${COLOR_RESET}" >&2
+        [ -n "$_current" ] && echo -e "${COLOR_DIM}Current:${COLOR_RESET} ${COLOR_HIGHLIGHT}${_current}${COLOR_RESET}" >&2
+        while [ $# -gt 0 ]; do
+            if [ -n "${2:-}" ]; then
+                echo -e "  ${1} ${COLOR_DIM}- ${2}${COLOR_RESET}" >&2
+            else
+                echo "  ${1}" >&2
+            fi
+            shift 2
+        done
+        echo -n "${_prompt} " >&2
         read -r _input || _input=""
         echo "$_input"
     fi

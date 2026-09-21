@@ -21,7 +21,10 @@ def filter_stdin(fd):
     try:
         data = os.read(fd, 4096)
     except OSError:
-        return b""
+        # Transient read error (e.g. EINTR, or a hiccup in the winpty/docker
+        # exec transport on Windows) - distinct from a genuine EOF, so the
+        # caller must not treat this the same as os.read() returning b"".
+        return None
     # If the user pressed Ctrl-C, remove it entirely from the byte stream
     clean_data = data.replace(b"\x03", b"")
     return clean_data
@@ -76,10 +79,14 @@ def spawn_with_dimensions(argv):
                 # Wait for input
                 rfds, _, _ = select.select(read_fds, [], [])
 
-                if not stdin_eof and sys.stdin.fileno() in rfds:
+                if sys.stdin.fileno() in rfds:
                     data = filter_stdin(sys.stdin.fileno())
-                    if not data:
-                        # stdin closed (EOF) - stop selecting on it, keep
+                    if data is None:
+                        # Transient read error - keep selecting on stdin,
+                        # nothing to forward this iteration.
+                        pass
+                    elif not data:
+                        # stdin closed (real EOF) - stop selecting on it, keep
                         # relaying child output until the child exits
                         stdin_eof = True
                     else:
