@@ -284,6 +284,28 @@ _fetch_commit_date() {
             | head -1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' || true
     fi
 }
+
+# Run git inside a directory via a subshell `cd` rather than `git -C <dir>`: with
+# MSYS_NO_PATHCONV=1 a Windows-native git.exe gets the raw /d/... path from -C
+# and fails with "cannot change to", while bash's own cd resolves it fine.
+# Usage: _git_at <dir> <git args...>
+_git_at() {
+    local dir="$1"; shift
+    ( cd "$dir" 2>/dev/null && git "$@" )
+}
+
+# True when <dir> is itself a git checkout of this repo (has its own .git), as
+# opposed to a tarball install from install.sh/--update — which has no .git and
+# may sit inside some unrelated repo, which we ignore. Checkouts take their
+# release state from git (origin/release), not from the release_hash recorded in
+# state.conf, which only tarball installs maintain.
+# Usage: _is_git_checkout <dir>
+_is_git_checkout() {
+    local dir="$1"
+    [ -e "$dir/.git" ] && command -v git >/dev/null 2>&1 \
+        && _git_at "$dir" rev-parse --git-dir >/dev/null 2>&1
+}
+
 check_for_update() {
     local install_dir; install_dir="$(dirname "$SCRIPT_DIR")"
     local interval=86400 # 24 hours
@@ -302,6 +324,19 @@ check_for_update() {
     fi
 
     write_pref "$STATE_FILE" last_check "$now"
+
+    # Git checkout: git is the source of truth. Pushing release from here moves
+    # origin/release, so a stored release_hash would go stale and nag forever.
+    # Up to date == the release head is already contained in HEAD. Never write
+    # release_hash here, and never point at --update (it would clobber the tree).
+    if _is_git_checkout "$install_dir"; then
+        if ! _git_at "$install_dir" cat-file -e "${remote_hash}^{commit}" 2>/dev/null; then
+            echo -e "${YELLOW}◈ New commits on the release branch — run: ${CYAN}git fetch origin${NC}"
+        elif ! _git_at "$install_dir" merge-base --is-ancestor "$remote_hash" HEAD 2>/dev/null; then
+            echo -e "${YELLOW}◈ Release (${remote_hash:0:10}) has commits not in your checkout — run: ${CYAN}git switch release && git pull --ff-only${NC}"
+        fi
+        return
+    fi
 
     local local_hash; local_hash=$(read_pref "$STATE_FILE" release_hash "")
 

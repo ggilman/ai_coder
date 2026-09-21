@@ -107,7 +107,7 @@ A single launcher for Claude Code, OpenCode, Aider, Gemini CLI, Qwen Code, and G
 | `--models [family]` | Dry-run model tier selection: hardware audit, VRAM reserves, and which tier a launch would pick — no Docker, no launch |
 | `--status` | Show the real-time GPU and engine status dashboard |
 | `--setup` | First-time and re-configuration wizard: alias, proxy, network isolation, GPU mode, git identity |
-| `--update` | Download and install the latest release from GitHub |
+| `--update` | Download and install the latest release from GitHub (refused in a git checkout — use `git pull` there — unless `--update --force`) |
 | `--fix-project` | Normalize line endings in the current project folder for AI editing (run once per project) |
 | `--clean` | Stop and remove all Hub and Spoke containers |
 | `--rebuild` | Remove all workbench images to force a full rebuild on next run |
@@ -407,6 +407,8 @@ ai --update
 ```
 
 ai-coder also checks for updates automatically once per day on launch and prints a notice if a new version is available on the `release` branch.
+
+Git checkouts are tracked through git itself: `--version` reports the local `origin/release` ref (which `git push origin release` keeps current) and the daily check compares the release head against your `HEAD`, so publishing `release` from your own checkout never leaves a stale "update available" notice. The `release_hash` recorded in `user/state.conf` is only used for tarball installs.
 
 ---
 

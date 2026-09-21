@@ -36,7 +36,7 @@ Commands:
   --status           Show GPU and engine status dashboard
   --logs             Show hub container logs (--tail N, -f to follow, --proxy, --webui)
   --setup            First-time and re-configuration wizard (alias, proxy, isolation, GPU, git)
-  --update           Download and install the latest release from GitHub
+  --update           Download and install the latest release from GitHub (refused in a git checkout unless --force)
   --fix-project      Fix line endings in the current project for AI editing (run from project folder)
   --clean            Stop and remove all containers
   --rebuild          Remove all workbench images to force a full rebuild on next run
@@ -56,7 +56,7 @@ HELP
     cmd_doctor
     exit $? ;;
 --update)
-    cmd_update
+    cmd_update "${2:-}"
     exit $? ;;
 --status)
     exec bash "$ROOT_DIR/ai-status.sh" ;;

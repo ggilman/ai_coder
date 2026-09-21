@@ -63,6 +63,16 @@ cmd_fix_project() {
 # ------------------------------------------------------------------------------
 cmd_update() {
     local install_dir; install_dir="$(dirname "$SCRIPT_DIR")"
+
+    # Installing over a git checkout wipes release-owned dirs and overwrites the
+    # working tree (including uncommitted work) with the release tarball.
+    if _is_git_checkout "$install_dir" && [ "${1:-}" != "--force" ]; then
+        echo -e "${RED}✘ ${install_dir} is a git checkout — --update would overwrite your working tree.${NC}"
+        echo -e "  Use git instead:  ${CYAN}git fetch origin && git switch release && git pull --ff-only${NC}"
+        echo -e "  ${DIM}(or run --update --force to overwrite the checkout from the release tarball)${NC}"
+        return 1
+    fi
+
     local tarball_url="https://github.com/ggilman/ai_coder/archive/refs/heads/release.tar.gz"
     local tmp_dir; tmp_dir=$(mktemp -d)
     trap 'rm -rf "$tmp_dir"' RETURN
@@ -117,52 +127,46 @@ cmd_update() {
     write_pref "$STATE_FILE" last_check "$(date +%s 2>/dev/null || echo 0)"
 }
 
-# Run git inside a directory via a subshell `cd` rather than `git -C <dir>`: with
-# MSYS_NO_PATHCONV=1 a Windows-native git.exe gets the raw /d/... path from -C
-# and fails with "cannot change to", while bash's own cd resolves it fine.
-# Usage: _git_at <dir> <git args...>
-_git_at() {
-    local dir="$1"; shift
-    ( cd "$dir" 2>/dev/null && git "$@" )
-}
-
 # ------------------------------------------------------------------------------
 # cmd_version — print the installed release, its checkin date and, when the
 # install dir is a git checkout, the current branch and how far it is ahead of /
 # behind the release commit.
 #
-# The release hash/date come from state recorded by install.sh / --update. Only
-# if those are missing does this reach out to GitHub (short timeout), and if the
-# remote is unreachable it falls back to whatever the local git repo knows. It
-# never writes state and never runs `git fetch`.
+# Tarball installs take the release hash/date from state recorded by install.sh /
+# --update, reaching out to GitHub (short timeout) only if those are missing. Git
+# checkouts ignore that recorded state and use the local origin/release ref (kept
+# current by fetch/push), asking GitHub only if the ref doesn't exist. It never
+# writes state and never runs `git fetch`.
 # ------------------------------------------------------------------------------
 cmd_version() {
     local install_dir; install_dir="$(dirname "$SCRIPT_DIR")"
-    local hash; hash=$(read_pref "$STATE_FILE" release_hash "")
-    local release_date; release_date=$(read_pref "$STATE_FILE" release_date "")
-    local hash_note=""
+    local hash="" release_date="" hash_note=""
 
-    # A checkout of this repo has its own .git; an install from the release
-    # tarball does not (and may sit inside some unrelated repo, which we ignore).
     local is_git=false
-    if [ -e "$install_dir/.git" ] && command -v git >/dev/null 2>&1 \
-       && _git_at "$install_dir" rev-parse --git-dir >/dev/null 2>&1; then
-        is_git=true
-    fi
-
-    # Fill gaps from the remote first, then from the local repo.
-    [ -z "$hash" ] && { hash=$(_fetch_release_hash) || true; }
-    [ -n "$hash" ] && [ -z "$release_date" ] && { release_date=$(_fetch_commit_date "$hash") || true; }
+    _is_git_checkout "$install_dir" && is_git=true
 
     if [ "$is_git" = true ]; then
-        if [ -z "$hash" ]; then
-            hash=$(_git_at "$install_dir" rev-parse --verify --quiet refs/remotes/origin/release 2>/dev/null) || hash=""
-            [ -n "$hash" ] && hash_note="local origin/release ref, may be stale"
+        # Checkout: the local origin/release ref is the source of truth. A
+        # `git push origin release` from here updates it, so it can't drift the
+        # way state.conf's release_hash (tarball installs only) does. Fall back
+        # to GitHub only if the ref doesn't exist (e.g. never fetched).
+        hash=$(_git_at "$install_dir" rev-parse --verify --quiet refs/remotes/origin/release 2>/dev/null) || hash=""
+        if [ -n "$hash" ]; then
+            hash_note="origin/release, as of last fetch/push"
+        else
+            hash=$(_fetch_release_hash) || true
         fi
-        if [ -n "$hash" ] && [ -z "$release_date" ] \
-           && _git_at "$install_dir" cat-file -e "${hash}^{commit}" 2>/dev/null; then
+        if [ -n "$hash" ] && _git_at "$install_dir" cat-file -e "${hash}^{commit}" 2>/dev/null; then
             release_date=$(_git_at "$install_dir" log -1 --format=%aI "$hash" 2>/dev/null) || release_date=""
         fi
+        [ -n "$hash" ] && [ -z "$release_date" ] && { release_date=$(_fetch_commit_date "$hash") || true; }
+    else
+        # Tarball install: hash/date recorded by install.sh / --update; ask
+        # GitHub only for whatever is missing.
+        hash=$(read_pref "$STATE_FILE" release_hash "")
+        release_date=$(read_pref "$STATE_FILE" release_date "")
+        [ -z "$hash" ] && { hash=$(_fetch_release_hash) || true; }
+        [ -n "$hash" ] && [ -z "$release_date" ] && { release_date=$(_fetch_commit_date "$hash") || true; }
     fi
 
     echo -e "${BOLD}ai-coder${NC}"
@@ -215,7 +219,7 @@ cmd_version() {
     fi
     if [ "$is_git" = true ]; then
         # --update overwrites release-owned files from a tarball, which would
-        # clobber a checkout's working tree � use git to move to the release.
+        # clobber a checkout's working tree � use git to move to the release.
         echo -e "  ${DIM}This is a git checkout, so don't use --update. To get on the latest release:${NC}"
         if [ "${branch:-}" = "release" ]; then
             echo -e "    ${CYAN}git pull --ff-only origin release${NC}"
