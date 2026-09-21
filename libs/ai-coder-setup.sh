@@ -117,34 +117,116 @@ cmd_update() {
     write_pref "$STATE_FILE" last_check "$(date +%s 2>/dev/null || echo 0)"
 }
 
+# Run git inside a directory via a subshell `cd` rather than `git -C <dir>`: with
+# MSYS_NO_PATHCONV=1 a Windows-native git.exe gets the raw /d/... path from -C
+# and fails with "cannot change to", while bash's own cd resolves it fine.
+# Usage: _git_at <dir> <git args...>
+_git_at() {
+    local dir="$1"; shift
+    ( cd "$dir" 2>/dev/null && git "$@" )
+}
+
 # ------------------------------------------------------------------------------
-# cmd_version — print the installed release and last update-check info.
-# Reads state only (no network call) — run --update to actually check GitHub.
+# cmd_version — print the installed release, its checkin date and, when the
+# install dir is a git checkout, the current branch and how far it is ahead of /
+# behind the release commit.
+#
+# The release hash/date come from state recorded by install.sh / --update. Only
+# if those are missing does this reach out to GitHub (short timeout), and if the
+# remote is unreachable it falls back to whatever the local git repo knows. It
+# never writes state and never runs `git fetch`.
 # ------------------------------------------------------------------------------
 cmd_version() {
     local install_dir; install_dir="$(dirname "$SCRIPT_DIR")"
     local hash; hash=$(read_pref "$STATE_FILE" release_hash "")
     local release_date; release_date=$(read_pref "$STATE_FILE" release_date "")
-    local last_check; last_check=$(read_pref "$STATE_FILE" last_check "")
+    local hash_note=""
+
+    # A checkout of this repo has its own .git; an install from the release
+    # tarball does not (and may sit inside some unrelated repo, which we ignore).
+    local is_git=false
+    if [ -e "$install_dir/.git" ] && command -v git >/dev/null 2>&1 \
+       && _git_at "$install_dir" rev-parse --git-dir >/dev/null 2>&1; then
+        is_git=true
+    fi
+
+    # Fill gaps from the remote first, then from the local repo.
+    [ -z "$hash" ] && { hash=$(_fetch_release_hash) || true; }
+    [ -n "$hash" ] && [ -z "$release_date" ] && { release_date=$(_fetch_commit_date "$hash") || true; }
+
+    if [ "$is_git" = true ]; then
+        if [ -z "$hash" ]; then
+            hash=$(_git_at "$install_dir" rev-parse --verify --quiet refs/remotes/origin/release 2>/dev/null) || hash=""
+            [ -n "$hash" ] && hash_note="local origin/release ref, may be stale"
+        fi
+        if [ -n "$hash" ] && [ -z "$release_date" ] \
+           && _git_at "$install_dir" cat-file -e "${hash}^{commit}" 2>/dev/null; then
+            release_date=$(_git_at "$install_dir" log -1 --format=%aI "$hash" 2>/dev/null) || release_date=""
+        fi
+    fi
 
     echo -e "${BOLD}ai-coder${NC}"
     echo -e "  Installed at:  ${CYAN}${install_dir}${NC}"
+    if [ "$is_git" = true ]; then
+        echo -e "  Installation:  ${DIM}local git repo${NC}"
+    else
+        echo -e "  Installation:  ${DIM}installed version${NC}"
+    fi
     if [ -n "$hash" ]; then
-        echo -e "  Release:       ${CYAN}${hash:0:10}${NC} (${DIM}${hash}${NC})"
+        echo -e "  Release:       ${CYAN}${hash:0:10}${NC} (${DIM}${hash}${NC})${hash_note:+ ${DIM}[${hash_note}]${NC}}"
         if [ -n "$release_date" ]; then
             local checkin; checkin=$(date -u -d "$release_date" '+%Y-%m-%d %H:%M UTC' 2>/dev/null || echo "$release_date")
             echo -e "  Checked in:    ${DIM}${checkin}${NC}"
         fi
     else
-        echo -e "  Release:       ${DIM}unknown — run --update once to record it${NC}"
+        echo -e "  Release:       ${DIM}unknown — GitHub unreachable; run --update once online to record it${NC}"
     fi
-    if [ -n "$last_check" ]; then
-        local when; when=$(date -d "@${last_check}" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "$last_check")
-        echo -e "  Last checked:  ${DIM}${when}${NC}"
+
+    if [ "$is_git" = true ]; then
+        local branch head_short
+        branch=$(_git_at "$install_dir" symbolic-ref --short --quiet HEAD 2>/dev/null) || branch=""
+        head_short=$(_git_at "$install_dir" rev-parse --short HEAD 2>/dev/null) || head_short="?"
+        if [ -n "$branch" ]; then
+            echo -e "  Branch:        ${CYAN}${branch}${NC} (${DIM}${head_short}${NC})"
+        else
+            echo -e "  Branch:        ${DIM}detached HEAD at ${head_short}${NC}"
+        fi
+
+        if [ -n "$hash" ]; then
+            local counts=""
+            if _git_at "$install_dir" cat-file -e "${hash}^{commit}" 2>/dev/null; then
+                counts=$(_git_at "$install_dir" rev-list --left-right --count "HEAD...${hash}" 2>/dev/null) || counts=""
+            fi
+            if [ -n "$counts" ]; then
+                local ahead behind
+                read -r ahead behind <<< "$counts"
+                if [ "$ahead" -eq 0 ] && [ "$behind" -eq 0 ]; then
+                    echo -e "  vs. release:   ${DIM}at the release commit${NC}"
+                else
+                    echo -e "  vs. release:   ${DIM}${ahead} ahead, ${behind} behind${NC}"
+                fi
+            else
+                echo -e "  vs. release:   ${DIM}release commit not in local repo (git fetch origin release, then retry)${NC}"
+            fi
+        fi
+        if [ -n "$(_git_at "$install_dir" status --porcelain 2>/dev/null)" ]; then
+            echo -e "  Working tree:  ${DIM}uncommitted changes${NC}"
+        fi
+    fi
+    if [ "$is_git" = true ]; then
+        # --update overwrites release-owned files from a tarball, which would
+        # clobber a checkout's working tree � use git to move to the release.
+        echo -e "  ${DIM}This is a git checkout, so don't use --update. To get on the latest release:${NC}"
+        if [ "${branch:-}" = "release" ]; then
+            echo -e "    ${CYAN}git pull --ff-only origin release${NC}"
+        else
+            echo -e "    ${CYAN}git fetch origin${NC}"
+            echo -e "    ${CYAN}git switch release && git pull --ff-only${NC}"
+        fi
+        echo -e "  ${DIM}(commit or stash local changes first)${NC}"
     else
-        echo -e "  Last checked:  ${DIM}never${NC}"
+        echo -e "  ${DIM}Run \"$(basename "$0") --update\" to check for and install the latest release.${NC}"
     fi
-    echo -e "  ${DIM}Run \"$(basename "$0") --update\" to check for and install the latest release.${NC}"
 }
 
 # ------------------------------------------------------------------------------
