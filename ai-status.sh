@@ -10,8 +10,9 @@ set -euo pipefail
 # BULLETPROOF PATH RESOLUTION
 SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 
-# Source shared library for ensure_gum and other utilities
-source "$SCRIPT_DIR/libs/ai-coder-setup.sh"
+# Source gum bootstrap/resolution (ensure_gum, resolve_gum_cmd) — self-contained,
+# no dependency on the full ai-coder launch chain.
+source "$SCRIPT_DIR/libs/ai-coder-gum.sh"
 # Platform/SMI detection, engine-probe constants, get_gpu_stats,
 # render_progress_bar, get_network_isolation_status — shared with
 # ai-status-legacy.sh.

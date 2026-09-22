@@ -24,6 +24,7 @@ source "$CORE_SCRIPT"
 # Load additional libraries
 source "$ROOT_DIR/libs/ai-coder-ui.sh"
 source "$ROOT_DIR/libs/ai-coder-setup.sh"
+source "$ROOT_DIR/libs/ai-coder-commands.sh"
 source "$ROOT_DIR/libs/ai-coder-menus.sh"
 
 # Handle commands that don't require an agent selection
@@ -83,50 +84,7 @@ HELP
 esac
 
 if [[ "${1:-}" == "--rebuild" ]]; then
-    # Docker must be up — with the daemon down every docker call below fails
-    # silently and the .rebuild-needed flag would be cleared without rebuilding.
-    check_docker || exit 1
-    # Collect every image name defined in any agent script (current version).
-    # tr -d '\r' guards against CRLF on Windows-mounted filesystems.
-    # Also sweep for any leftover images from previous version numbers by
-    # matching the naming convention patterns used across all agent generations.
-    _agents_dir="$ROOT_DIR/agents"
-    _removed=0
-    declare -A _seen_imgs=()
-    for f in "$_agents_dir"/ai-coder-*.sh; do
-        [ -f "$f" ] || continue
-        _img=$(grep -m1 '^IMAGE_NAME=' "$f" | cut -d'"' -f2 | tr -d '\r')
-        [ -z "$_img" ] && continue
-        _seen_imgs["$_img"]=1
-    done
-    # Also include any Docker images whose name matches the historical naming
-    # conventions: *-engineer-* and local-* (old naming from early versions).
-    while IFS= read -r _img; do
-        [ -n "$_img" ] && _seen_imgs["$_img"]=1
-    done < <(docker images --format '{{.Repository}}' 2>/dev/null | grep -E '(-engineer-|^local-(claude|opencode|gemini|aider))' || true)
-    for _img in "${!_seen_imgs[@]}"; do
-        if docker image inspect "$_img" >/dev/null 2>&1; then
-            echo -e "${CYAN}◈ Removing [$_img]...${NC}"
-            # Stop and remove any containers using this image before trying rmi.
-            while IFS= read -r _cid; do
-                [ -z "$_cid" ] && continue
-                _cname=$(docker inspect --format '{{.Name}}' "$_cid" 2>/dev/null | tr -d '/')
-                echo -e "${YELLOW}  Stopping container [${_cname:-$_cid}]...${NC}"
-                docker stop "$_cid" 2>/dev/null || true
-                docker rm   "$_cid" 2>/dev/null || true
-            done < <(docker ps -aq --filter "ancestor=$_img" 2>/dev/null)
-            if docker rmi "$_img" 2>/dev/null; then
-                echo -e "${GREEN}✔ Removed${NC}"
-                _removed=$((_removed + 1))
-            else
-                echo -e "${YELLOW}  Could not remove [$_img]${NC}"
-            fi
-        fi
-    done
-    [ "$_removed" -eq 0 ] && \
-        echo -e "${DIM}  No workbench images found — nothing to remove.${NC}" || \
-        echo -e "${ICON_OK} Workbench images cleared. They will be rebuilt on next run."
-    rm -f "$USER_DIR/.rebuild-needed"
+    rebuild_workbench_images
     exit 0
 fi
 
@@ -369,50 +327,7 @@ fi
 acquire_lock "$_hub_lock_dir" 0.2 150
 _hub_lock_held=true
 
-_engine_running=false
-container_running "$GLOBAL_ENGINE_NAME" && _engine_running=true
-_need_engine_restart=false
-
-if $_engine_running; then
-    # Restart if any engine-affecting setting changed since it was last
-    # started. Each entry is "label|saved-state-value|current-value"; a
-    # mismatch with a non-empty saved value (i.e. the engine actually
-    # recorded one last start — absent on a first run) triggers a restart.
-    # All entries are checked (not just the first mismatch), so one restart
-    # reports every setting that actually changed. Add a new engine-affecting
-    # setting by appending a line here rather than a whole branch.
-    _cur_spec=no
-    spec_decode_enabled && [ -f "$MODEL_STORAGE_DIR/${MODEL_DRAFT_FILE:-}" ] && _cur_spec=yes
-    _restart_checks=(
-        "GPU mode|$(read_pref "$STATE_FILE" engine_gpu_mode "")|${GPU_MODE:-multi}"
-        "Model|$(read_pref "$STATE_FILE" engine_model "")|${MODEL_FILE:-}"
-        "Context size|$(read_pref "$STATE_FILE" engine_ctx "")|${MODEL_CTX_SIZE:-}"
-        "KV cache type|$(read_pref "$STATE_FILE" engine_kv "")|${MODEL_KV_TYPE:-q8_0}"
-        "Batch size|$(read_pref "$STATE_FILE" engine_batch "")|${MODEL_BATCH_SIZE:-1024}/${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}"
-        "Host port exposure|$(read_pref "$STATE_FILE" engine_expose "")|$(read_pref "$SETTINGS_FILE" expose_host_port no)"
-        "Network isolation|$(read_pref "$STATE_FILE" engine_net "")|${NETWORK_INTERNAL:-false}"
-        "Model storage mode|$(read_pref "$STATE_FILE" engine_mvol "")|$(read_pref "$SETTINGS_FILE" model_volume "$MODEL_VOLUME_DEFAULT")"
-        "Speculative decoding|$(read_pref "$STATE_FILE" engine_spec "")|$_cur_spec"
-    )
-    for _check in "${_restart_checks[@]}"; do
-        IFS='|' read -r _label _old _new <<< "$_check"
-        if [ -n "$_old" ] && [ "$_old" != "$_new" ]; then
-            echo -e "${YELLOW}◈ ${_label} changed (${_old} → ${_new}) — restarting engine...${NC}"
-            _need_engine_restart=true
-        fi
-    done
-fi
-
-if ! $_engine_running || $_need_engine_restart; then
-    docker rm "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
-    start_hub_engine || { echo -e "${RED}✘ Hub startup failed${NC}"; exit 1; }
-elif [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ] && \
-     ! container_running "$GLOBAL_PROXY_NAME"; then
-    # Engine is already up but proxy is missing (e.g. switched from a non-proxy
-    # agent). Restart both so the proxy gets a clean start alongside the engine.
-    docker rm "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
-    start_hub_engine || { echo -e "${RED}✘ Hub startup failed${NC}"; exit 1; }
-fi
+ensure_engine_currently_running
 
 release_lock "$_hub_lock_dir"
 _hub_lock_held=false
@@ -423,62 +338,7 @@ configure_workbench
 ensure_workbench_running || { echo -e "${RED}✘ Workbench startup failed${NC}"; exit 1; }
 _workbench_started=$WORKBENCH_STARTED_BY_US
 
-echo -ne "${CYAN}◈ Syncing VRAM Slots:${NC} "
-retry_count=0
-max_retries=300
-engine_ready=false
-proxy_ready=false
-
-while [ "$retry_count" -lt "$max_retries" ]; do
-    # Bail early if the engine container has stopped (e.g. unsupported flag, missing model).
-    # The engine runs with --restart no, so any exit means it won't come back.
-    if ! container_running "$GLOBAL_ENGINE_NAME"; then
-        break
-    fi
-    # Reset every iteration: a probe that succeeded on an earlier loop but then
-    # fails on a later one (transient hiccup, container still settling) must
-    # not leave a stale "ready" from before make the loop declare success.
-    engine_ready=false
-    proxy_ready=false
-    # Fire both checks in parallel to avoid waiting serially
-    docker exec "$GLOBAL_ENGINE_NAME" curl -s -m 2 "http://localhost:${ENGINE_PORT}/v1/models" 2>/dev/null | grep -q '"id"' &
-    _engine_pid=$!
-
-    if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
-        # Probe the proxy from inside the Docker network (via the engine
-        # container) — on the isolated internal network the proxy's published
-        # port is not reachable from the host, so a host-side curl would
-        # never succeed.
-        docker exec "$GLOBAL_ENGINE_NAME" curl -s -m 2 "http://$GLOBAL_PROXY_NAME:${PROXY_PORT}/v1/models" 2>/dev/null | grep -q '"object"' &
-        _proxy_pid=$!
-        wait "$_engine_pid" && engine_ready=true
-        wait "$_proxy_pid"  && proxy_ready=true
-    else
-        wait "$_engine_pid" && engine_ready=true
-        proxy_ready=true
-    fi
-
-    if [ "$engine_ready" = "true" ] && [ "$proxy_ready" = "true" ]; then break; fi
-    retry_count=$((retry_count + 1))
-    echo -ne "◈"
-    sleep 1
-done
-
-if [ "$engine_ready" = "true" ] && [ "$proxy_ready" = "true" ]; then
-    echo -e " ${GREEN}READY${NC}"
-    # llama.cpp can report ready while a GPU is silently oversubscribed
-    # (WDDM pages the overflow to system RAM) — check and warn before use.
-    warn_if_vram_oversubscribed
-else
-    echo -e " ${RED}TIMEOUT${NC}"
-    echo -e "${RED}✘ Engine/Proxy failed to initialize after ~${retry_count} seconds${NC}"
-    # Basic diagnostics
-    _cid=$(docker ps -aq -f "name=$GLOBAL_ENGINE_NAME" 2>/dev/null) || true
-    if [ -n "${_cid:-}" ]; then
-        docker logs "$GLOBAL_ENGINE_NAME" 2>&1 | tail -20 | sed 's/^/    /'
-    fi
-    exit 1
-fi
+wait_for_engine_ready
 
 # Honour the Open WebUI sidecar choice now that the engine is ready. When the
 # preference is anything but yes, make sure a leftover sidecar isn't running.

@@ -26,9 +26,10 @@ FAMILIES_DIR="$PROJECT_ROOT/config/families"
 
 # Load core library: colors, icons, SMI path, download helpers, image variables
 source "$PROJECT_ROOT/libs/ai-coder-core.sh"
-# Load UI helpers: gum dialogs with plain-read fallback (ensure_gum, ui_init, _gum_choose)
+# Load UI helpers: gum dialogs with plain-read fallback (ui_init, _gum_choose)
 source "$PROJECT_ROOT/libs/ai-coder-ui.sh"
-source "$PROJECT_ROOT/libs/ai-coder-setup.sh"
+# Load gum bootstrap/download (ensure_gum, _download_gum_binary)
+source "$PROJECT_ROOT/libs/ai-coder-gum.sh"
 
 echo -e "\n${BOLD}${CYAN}╔══════════════════════════════════════════════╗"
 echo -e "║        AI-CODER OFFLINE BUNDLE v1.0          ║"

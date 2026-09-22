@@ -10,7 +10,7 @@ Bash CLI that launches AI coding tools (Claude, OpenCode, Aider, Gemini) inside 
 - The `cleanup()` trap in `ai-coder` is the single exit path — don't add bypass exits
 
 ## Script loading order
-`ai-coder` sources: `libs/fixpath.sh` → `libs/ai-coder-core.sh` → `libs/ai-coder-ui.sh` → `libs/ai-coder-setup.sh` → `libs/ai-coder-menus.sh` → selected `config/families/<family>.conf` → selected `agents/ai-coder-<tool>.sh`. All libs/agents files assume this sourcing chain — none run standalone.
+`ai-coder` sources: `libs/fixpath.sh` → `libs/ai-coder-core.sh` → `libs/ai-coder-ui.sh` → `libs/ai-coder-setup.sh` → `libs/ai-coder-commands.sh` → `libs/ai-coder-menus.sh` → selected `config/families/<family>.conf` → selected `agents/ai-coder-<tool>.sh`. All libs/agents files assume this sourcing chain — none run standalone.
 
 ## Adding a tool
 1. Create `agents/ai-coder-<name>.sh` with `build_image`, `configure_workbench`, `start_workbench`, `execute_tool` (see `ai-coder-opencode.sh` template), set `IMAGE_NAME` and `TOOL_NAME`

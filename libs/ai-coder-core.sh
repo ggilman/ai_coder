@@ -69,22 +69,9 @@ source "$SCRIPT_DIR/ai-coder-detect-env.sh"
 MODEL_VOLUME_DEFAULT="no"
 { [ "$IS_WSL" = "true" ] || [ "$IS_GITBASH" = "true" ]; } && MODEL_VOLUME_DEFAULT="yes"
 
-# Model storage: resolve to Windows home so Git Bash and WSL share the same folder.
-# Git Bash $HOME is already the Windows home (/c/Users/...).
-# In WSL, query the Windows USERPROFILE via cmd.exe and convert with wslpath.
-# WIN_HOME is also used as the base for other cross-shell shared paths (e.g. .ai-coder-env).
-WIN_HOME="$HOME"
-if [ "$IS_WSL" = "true" ]; then
-    _win_home=$(cmd.exe /c "echo %USERPROFILE%" 2>/dev/null | tr -d '\r\n')
-    if [ -n "$_win_home" ]; then
-        WIN_HOME="$(wslpath "$_win_home")"
-        MODEL_STORAGE_DIR="$WIN_HOME/ai-models"
-    else
-        MODEL_STORAGE_DIR="${MODEL_STORAGE_DIR:-$HOME/ai-models}"
-    fi
-else
-    MODEL_STORAGE_DIR="${MODEL_STORAGE_DIR:-$HOME/ai-models}"
-fi
+# Model storage: resolve WIN_HOME + MODEL_STORAGE_DIR so Git Bash and WSL
+# share the same folder (resolve_model_storage_dir, ai-coder-detect-env.sh).
+resolve_model_storage_dir
 if [ "$IS_GITBASH" = "true" ]; then
     SMI="nvidia-smi.exe"
 else

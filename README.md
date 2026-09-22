@@ -35,8 +35,9 @@ The environment uses a **Hub & Spoke** model:
 | `agents/ai-coder-goose.sh` | Goose overrides (sourced automatically when Goose is selected) |
 | `agents/ai-coder-hub.sh` | Hub-only mode — starts the engine without a coding tool; press any key to stop |
 | `agents/ai-coder-webui.sh` | Open WebUI mode — starts the engine + Open WebUI chat interface at `localhost:3000` |
+| `libs/ai-coder-commands.sh` | One-shot CLI commands: `--fix-project`, `--update`, `--version`, `--doctor`, `--logs` (sourced by `ai-coder`) |
 | `libs/ai-coder-menus.sh` | Interactive family and tool selection menus (sourced by `ai-coder`) |
-| `libs/ai-coder-setup.sh` | Setup wizard and `--fix-project` command (sourced by `ai-coder`) |
+| `libs/ai-coder-setup.sh` | Setup wizard for `--setup` (sourced by `ai-coder`) |
 | `libs/ai-coder-ui.sh` | Setup wizard UI helpers — gum dialogs with a plain-read fallback (sourced by `ai-coder`) |
 | `libs/fixpath.sh` | WSL path resolver — converts Docker Desktop bind mounts to native WSL paths |
 | `ai-status.sh` | System health dashboard |

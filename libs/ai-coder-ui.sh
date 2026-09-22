@@ -9,7 +9,13 @@
 # Every helper returns 0 so callers are safe under `set -euo pipefail`.
 # ==============================================================================
 
+# Gum binary resolution (resolve_gum_cmd) lives in ai-coder-gum.sh — sourced
+# here (not via ai-coder-setup.sh) so this file stays self-contained for
+# standalone sourcing (offline/unbundle.sh).
+source "$(dirname "${BASH_SOURCE[0]}")/ai-coder-gum.sh"
+
 UI_GUM=false
+# GUM_CMD — resolved gum binary path, set by resolve_gum_cmd in ui_init
 GUM_CMD=""
 UI_BACKTITLE="ai-coder setup"
 
@@ -20,35 +26,10 @@ COLOR_HIGHLIGHT='\033[38;5;118m' # Green
 COLOR_BOLD='\033[1m'
 COLOR_RESET='\033[0m'
 
-# Ensure gum is available; resolve GUM_CMD to the active binary.
-_ensure_gum() {
-    if command -v gum >/dev/null 2>&1; then
-        GUM_CMD="gum"
-        return 0
-    fi
-
-    local gum_exe_name="gum"
-    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-        gum_exe_name="gum.exe"
-    fi
-
-    local script_dir
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local gum_path="$script_dir/../.assets/$gum_exe_name"
-
-    if [[ -f "$gum_path" ]]; then
-        GUM_CMD="$gum_path"
-        export GUM_CMD
-        return 0
-    fi
-
-    return 1
-}
-
 ui_init() {
     UI_GUM=false
     [ "${AI_CODER_NO_GUM:-0}" = "1" ] && return 0
-    if ! _ensure_gum; then return 0; fi
+    if ! resolve_gum_cmd; then return 0; fi
     if ! "$GUM_CMD" version-check 0.17.0 >/dev/null 2>&1; then return 0; fi
     UI_GUM=true
     return 0

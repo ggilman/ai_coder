@@ -3,9 +3,11 @@
 # AI-CODER-GUM.SH | Gum Binary Bootstrap & Resolution
 # Downloads charmbracelet/gum on first use (no system package manager
 # dependency) and resolves the active binary for callers. Deliberately
-# self-contained — sourced standalone by ai-status.sh in addition to the full
-# ai-coder launch chain, so it must not assume core.sh/env.sh globals beyond
-# what's already resolved via BASH_SOURCE-relative paths.
+# self-contained — sourced by the full ai-coder launch chain as well as
+# directly by ai-status.sh, offline/bundle.sh, and ai-coder-ui.sh (itself
+# sourced standalone by offline/unbundle.sh), so it must not assume
+# core.sh/env.sh globals beyond what's already resolved via
+# BASH_SOURCE-relative paths.
 # ==============================================================================
 
 # ------------------------------------------------------------------------------

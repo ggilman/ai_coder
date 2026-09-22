@@ -31,18 +31,10 @@ MANIFEST_FILE="$SCRIPT_DIR/bundle.manifest"
 # offline/bundle.sh), so this is available even in an air-gapped install.
 source "$SCRIPTS_DIR/libs/ai-coder-detect-env.sh"
 
-# Resolve model storage directory — mirrors the logic in ai-coder-core.sh so
+# Resolve model storage directory — shared with ai-coder-core.sh via
+# resolve_model_storage_dir (ai-coder-detect-env.sh, sourced above) so
 # ai-coder finds the model in the same place it always looks.
-if [ "$IS_WSL" = "true" ]; then
-    _win_home=$(cmd.exe /c "echo %USERPROFILE%" 2>/dev/null | tr -d '\r\n' || true)
-    if [ -n "${_win_home:-}" ]; then
-        MODEL_STORAGE_DIR="$(wslpath "$_win_home")/ai-models"
-    else
-        MODEL_STORAGE_DIR="$HOME/ai-models"
-    fi
-else
-    MODEL_STORAGE_DIR="$HOME/ai-models"
-fi
+resolve_model_storage_dir
 
 # --- [ Optional gum UI ] -------------------------------------------------------
 # bundle.sh ships both gum platform builds at scripts/.assets so the prompts
