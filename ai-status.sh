@@ -7,7 +7,6 @@
 # ==============================================================================
 set -euo pipefail
 
-# BULLETPROOF PATH RESOLUTION
 SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 
 # Source gum bootstrap/resolution (ensure_gum, resolve_gum_cmd) — self-contained,
@@ -18,7 +17,6 @@ source "$SCRIPT_DIR/libs/ai-coder-gum.sh"
 # ai-status-legacy.sh.
 source "$SCRIPT_DIR/libs/ai-coder-status-common.sh"
 
-# Fallback function to launch the legacy script
 launch_legacy_fallback() {
     local legacy_script="$SCRIPT_DIR/ai-status-legacy.sh"
     echo "⚠️  Unable to initialize modern GUM interface (offline or download failed)."

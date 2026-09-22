@@ -115,6 +115,9 @@ source "$SCRIPT_DIR/ai-coder-workbench.sh"  # workbench + hub engine container l
 # --- [ ABSTRACT HOOKS ] -------------------------------------------------------
 # To be overridden by child scripts
 
+# Default LiteLLM config — routes every model name to the local engine
+# (openai/local at http://<engine>:<port>/v1). Overridable by a child agent
+# that needs a different proxy config.
 get_litellm_config() {
     echo "model_list:
   - model_name: \"*\"
@@ -334,6 +337,10 @@ teardown() {
     docker network rm "$HUB_NETWORK" "$HUB_ISOLATED_NET" 2>/dev/null || true
 }
 
+# Map the surviving launch flags to the globals the ignition path reads
+# (--build-only → BUILD_ONLY, --continue → CONTINUE_SESSION). Unknown
+# commands are already rejected by the ai-coder case block before this runs
+# — the reject branch here is defence in depth.
 handle_command() {
     cmd="${1:-}"
     case "$cmd" in

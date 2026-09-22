@@ -43,6 +43,8 @@ setup_toggle_pref() {
 }
 
 setup_step_alias() {
+    # Pick the rc file by shell: .bash_profile under Git Bash, .zshrc when the
+    # active shell is zsh ($SHELL ends in "zsh"), .bashrc otherwise.
     local rc_file="$HOME/.bashrc"
     if [ "$IS_GITBASH" = "true" ]; then
         rc_file="$HOME/.bash_profile"

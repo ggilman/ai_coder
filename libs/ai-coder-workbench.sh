@@ -8,6 +8,9 @@
 # (re)start decision, and the post-start readiness poll.
 # ==============================================================================
 
+# Emit the shared Dockerfile template every agent image is built from
+# (base image, apt packages, git identity, proxy ENV block).
+# Args: <build-dir> <dockerfile-name> <apt-pkgs> <pm-proxy-cmds> <install-cmds>
 _write_standard_dockerfile() {
     local build_dir="$1" df_name="$2" apt_pkgs="$3" pm_proxy_cmds="$4" install_cmds="$5"
     local _proxy_env_block=""
@@ -303,6 +306,9 @@ ensure_model_in_volume() {
     echo -e "${ICON_OK} Model(s) cached in fast storage volume."
 }
 
+# Start the LiteLLM proxy container ($GLOBAL_PROXY_NAME) on the hub network,
+# config written to ~/.ai-coder/litellm_config.yaml. Used by agents that need
+# the proxy in front of the engine (set NEEDS_LITELLM_PROXY=true, e.g. Gemini).
 _start_litellm_proxy() {
     local hub_net="$1"
     mkdir -p "$HOME/.ai-coder"

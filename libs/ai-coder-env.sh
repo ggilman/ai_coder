@@ -7,6 +7,9 @@
 # ai-coder-graphics.sh.
 # ==============================================================================
 
+# Convert a host path to the form Docker bind mounts expect on this platform:
+# WSL uses the /mnt/... path as-is; Git Bash converts to a Windows path
+# (cygpath -m); everything else (plain POSIX) gets the // prefix.
 to_host_path() {
     local abs_path; abs_path=$(realpath "$1")
     if [ "$IS_WSL" = "true" ]; then
@@ -18,6 +21,8 @@ to_host_path() {
     fi
 }
 
+# Make <dir> usable for config writes: create it if missing, and reclaim
+# ownership (sudo chown) if a Docker root process left it root-owned.
 ensure_host_dir_writable() {
     local dir="$1"
     if [ ! -d "$dir" ]; then
@@ -124,6 +129,7 @@ read_mcp_pip_packages() {
     done
 }
 
+# Trim surrounding whitespace and CR from one pipe-delimited manifest field.
 _mcp_trim() {
     printf '%s' "$1" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
 }
@@ -237,6 +243,9 @@ make_agent_mcp_json() {
     make_mcp_servers_json "$workspace" "$mode" "${files[@]}"
 }
 
+# Fetch the commit sha the release branch points at from the GitHub API.
+# Echoes empty on any failure (offline, proxy down) — callers treat a blank
+# result as "unavailable", matching _fetch_commit_date.
 _fetch_release_hash() {
     local api_url="https://api.github.com/repos/ggilman/ai_coder/git/refs/heads/release"
     local http_proxy=""
@@ -306,6 +315,10 @@ _is_git_checkout() {
         && _git_at "$dir" rev-parse --git-dir >/dev/null 2>&1
 }
 
+# Nudge (at most once a day) when the installed release is behind the
+# release branch. Git checkouts compare against their local origin/release
+# ref (git is the source of truth there); tarball installs compare the
+# release_hash recorded in state.conf.
 check_for_update() {
     local install_dir; install_dir="$(dirname "$SCRIPT_DIR")"
     local interval=86400 # 24 hours

@@ -104,7 +104,6 @@ _gum_confirm() {
 }
 
 _gum_input() {
-    # Added $_prompt as the 5th argument
     local _header="$1" _help="$2" _current="$3" _prefill="$4" _prompt="$5"
     _render_gum_prompt "$_header" "$_help" "$_current"
     
@@ -121,7 +120,7 @@ _gum_choose() {
     shift 4
     _render_gum_prompt "$_header" "$_help" "$_current"
     
-    # Added --height to keep the menu compact
+    # Cap the rendered list height so long menus stay compact
     "$GUM_CMD" choose --selected="${_selected}" \
         --cursor=" ❯ " --cursor.foreground="81" \
         --item.foreground="250" --selected.foreground="81" \
@@ -169,7 +168,6 @@ ui_input() {
     local _input
     
     if [ "$UI_GUM" = "true" ]; then
-        # Passed $_prompt into _gum_input
         _input=$(_gum_input "$_header" "$_help" "$_current" "$_prefill" "$_prompt")
         echo "$_input"
     else

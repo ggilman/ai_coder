@@ -352,6 +352,10 @@ build_pip_install_cmds() {
     printf '%s' "$pip_cmd"
 }
 
+# Ensure the selected model is on disk: migrate a legacy flat-named copy
+# into its per-family path if present, resolve the tier selection when
+# MODEL_FILE isn't set yet, then download to a .part file (verify sha256,
+# rename into place).
 download_model() {
     if [ -n "${MODEL_FILE:-}" ]; then
         local _new_path="$MODEL_STORAGE_DIR/$MODEL_FILE"
@@ -399,6 +403,9 @@ download_model() {
     fi
 }
 
+# Audit the GPUs, reserve VRAM for the KV cache / draft model / per-GPU
+# overhead, and select the model tier that fits (sets the MODEL_* vars via
+# select_model_for_vram). Prints the budget breakdown.
 detect_model() {
     local vram_list; vram_list=$($SMI --query-gpu=memory.total,memory.free --format=csv,noheader,nounits 2>/dev/null | tr -d '\r') || {
         echo -e "${RED}✘ nvidia-smi failed${NC}"; return 1
@@ -539,6 +546,9 @@ cmd_models() {
     print_model_candidates
 }
 
+# Run the llama-bench generation-speed benchmark against the selected model
+# in a one-shot container. Requires speed_tracking=yes.
+# Usage: cmd_speed [family-key]
 cmd_speed() {
     local family_key="${1:-}"
     [ -n "$family_key" ] || family_key=$(read_pref "$STATE_FILE" family_pref "")
@@ -602,6 +612,10 @@ cmd_speed() {
         sh "/models/$MODEL_FILE" "${MODEL_NGL:-99}" "${MODEL_BATCH_SIZE:-1024}" "${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}"
 }
 
+# Pull <image> through $proxy when a plain docker pull can't reach the
+# registry: Git Bash sets the proxy env vars for Docker Desktop (Windows
+# cert store); WSL2 retries plain pull first (daemon-side proxy settings)
+# then falls back to crane for an explicit proxy-aware registry pull.
 pull_base_image_via_proxy() {
     local image="$1" proxy="$2"
 
@@ -666,6 +680,8 @@ pull_base_image_via_proxy() {
     fi
 }
 
+# Pull <image> if not present locally, routing through the proxy-aware
+# pull_base_image_via_proxy when DOWNLOAD_PROXY is set.
 pull_image_if_missing() {
     local img="$1"
     docker image inspect "$img" >/dev/null 2>&1 && return 0
