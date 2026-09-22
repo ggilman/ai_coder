@@ -539,6 +539,69 @@ cmd_models() {
     print_model_candidates
 }
 
+cmd_speed() {
+    local family_key="${1:-}"
+    [ -n "$family_key" ] || family_key=$(read_pref "$STATE_FILE" family_pref "")
+    if [ -z "$family_key" ]; then
+        echo -e "${RED}No model family selected yet. Pass a family key or run ${CYAN}--model${NC} first:${NC}"
+        echo -e "${DIM}  $(basename "$0") --speed <family-key>${NC}"
+        return 1
+    fi
+    if [ "$(read_pref "$SETTINGS_FILE" speed_tracking no)" != "yes" ]; then
+        echo -e "${YELLOW}Generation speed tracking is disabled.${NC}"
+        echo -e "${DIM}  Enable it with: $(basename "$0") --setup${NC}"
+        return 1
+    fi
+    local _conf="$FAMILIES_DIR/${family_key}.conf"
+    if [ ! -f "$_conf" ]; then
+        echo -e "${RED}Error: Unknown model family '${family_key}'. Available families:${NC}"
+        local _f
+        for _f in "$FAMILIES_DIR"/*.conf; do
+            [ -f "$_f" ] && echo -e "  ${DIM}- $(basename "$_f" .conf)${NC}"
+        done
+        return 1
+    fi
+    source "$_conf"
+
+    ensure_gpu_config
+    ensure_ctx_config
+    ensure_kv_config
+    ensure_overhead_config
+    ensure_offload_config
+
+    if ! detect_model; then
+        echo -e "${RED}✘ Model detection failed${NC}"
+        return 1
+    fi
+    download_model || { echo -e "${RED}✘ Model download failed${NC}"; return 1; }
+
+    pull_image_if_missing "$LLAMA_IMAGE_FULL" || return 1
+
+    echo -e "${ICON_GEAR} Running generation-speed benchmark (llama-bench)..."
+    local _models_src; _models_src="$(to_host_path "$MODEL_STORAGE_DIR")"
+    local _gpus_flag="all" _cuda_env=()
+    if [ "${GPU_MODE:-multi}" = "single" ]; then
+        _gpus_flag="device=0"
+        _cuda_env=(-e CUDA_VISIBLE_DEVICES=0)
+    fi
+    # The official full image ships its apps outside PATH (the entrypoint is an
+    # absolute path), so resolve llama-bench from the known install locations
+    # before falling back to a plain PATH lookup.
+    docker run --rm --gpus "$_gpus_flag" "${_cuda_env[@]}" \
+        -v "${_models_src}:/models" \
+        -e BENCH_IMAGE="$LLAMA_IMAGE_FULL" \
+        --entrypoint /bin/sh \
+        "$LLAMA_IMAGE_FULL" \
+        -c 'b=$(command -v llama-bench || true)
+        [ -n "$b" ] || for c in /build/llama-bench /build/bin/llama-bench /usr/local/bin/llama-bench; do
+            [ -x "$c" ] && { b="$c"; break; }
+        done
+        [ -n "$b" ] || b=$(find /build /usr/local /opt /app -maxdepth 3 -name llama-bench -type f 2>/dev/null | head -n 1)
+        [ -n "$b" ] || { echo "llama-bench: not found in ${BENCH_IMAGE}" >&2; exit 127; }
+        exec "$b" -m "$1" -ngl "$2" -b "$3" -ub "$4"' \
+        sh "/models/$MODEL_FILE" "${MODEL_NGL:-99}" "${MODEL_BATCH_SIZE:-1024}" "${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}"
+}
+
 pull_base_image_via_proxy() {
     local image="$1" proxy="$2"
 

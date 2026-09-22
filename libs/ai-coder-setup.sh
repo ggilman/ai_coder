@@ -701,6 +701,19 @@ there's no toggle for those." \
         "${DIM}  Speculative decoding disabled.${NC}"
 }
 
+setup_step_speed_tracking() {
+    local _cur_speed; _cur_speed=$(read_pref "$SETTINGS_FILE" speed_tracking no)
+    setup_toggle_pref speed_tracking "Generation speed tracking" \
+        "Generation speed tracking — measure generation speed with llama-bench?" \
+        "Runs a one-shot llama-bench pass against your model on a clean GPU and
+reports tokens-per-second (tg = generation, pp = prompt processing).
+Enable it, then measure any time with: ai --speed" \
+        "Enable generation speed tracking? [y/N]:" \
+        "$_cur_speed" "$_cur_speed" \
+        "${ICON_OK} Generation speed tracking ${GREEN}enabled${NC} — measure with ${CYAN}ai --speed${NC}." \
+        "${DIM}  Generation speed tracking disabled.${NC}"
+}
+
 setup_step_expose_port() {
     local _cur_expose; _cur_expose=$(read_pref "$SETTINGS_FILE" expose_host_port no)
     setup_toggle_pref expose_host_port "Host port exposure" \
@@ -777,6 +790,7 @@ cmd_setup() {
     setup_step_keep_hub
     setup_step_model_volume
     setup_step_spec_decode
+    setup_step_speed_tracking
     setup_step_expose_port
     setup_step_git_identity
 

@@ -95,7 +95,7 @@ A single launcher for Claude Code, OpenCode, Aider, Gemini CLI, Qwen Code, and G
 - **Open WebUI sidecar**: If host port exposure is enabled in `--setup`, a third question asks whether to also start Open WebUI (`http://localhost:3000`) alongside your coding agent, so you can chat with the same local model while you code. The answer is saved like the other preferences and re-asked via `--model`. It shuts down together with the Hub.
 - **Workspace mount**: Your project folder is mounted into the container as `/<foldername>` (e.g. `/my-project`), so the AI tool starts directly in your project directory.
 - **Auto-cleanup**: When you exit the tool, the workbench container is stopped. If it was the last active spoke, the Hub (engine + proxy) is also shut down automatically — unless the *keep hub warm* setting is enabled (`--setup`), which leaves the engine loaded so the next session starts in seconds. A warm hub auto-stops after a configurable idle timeout (default 60 min, `0` = never) to release GPU VRAM; stop it immediately with `--clean`.
-- **Agent-free commands**: `--help`, `--status`, `--clean`, `--rebuild`, `--model`, `--models`, and `--setup` run immediately without requiring a tool to be selected.
+- **Agent-free commands**: `--help`, `--status`, `--clean`, `--rebuild`, `--model`, `--models`, `--speed`, and `--setup` run immediately without requiring a tool to be selected.
 - **Setup required**: `--setup` must be run at least once before launching. This ensures all preferences are configured intentionally.
 
 **Commands:**
@@ -105,6 +105,7 @@ A single launcher for Claude Code, OpenCode, Aider, Gemini CLI, Qwen Code, and G
 | `--continue` | Resume the previous agent session — passes the tool's native continue flag (`--continue` for Claude/OpenCode/Aider, `--resume` for Gemini/Qwen Code/Goose) |
 | `--model` | Reset model family, tool, Open WebUI, context level **and** low-VRAM KV cache preferences; show the selection menus again |
 | `--models [family]` | Dry-run model tier selection: hardware audit, VRAM reserves, and which tier a launch would pick — no Docker, no launch |
+| `--speed [family]` | Generation-speed benchmark: run `llama-bench` on your model on a clean GPU and print tokens/s (requires the *generation speed tracking* setup option) |
 | `--status` | Show the real-time GPU and engine status dashboard |
 | `--setup` | First-time and re-configuration wizard: alias, proxy, network isolation, GPU mode, git identity |
 | `--update` | Download and install the latest release from GitHub (refused in a git checkout — use `git pull` there — unless `--update --force`) |
@@ -342,7 +343,7 @@ echo "@some-org/server | key | cmd | args" >> packages/mcp-opencode.txt
 | Gemini CLI | Auth tokens, session state, settings | `~/.gemini-config/` (directory) |
 | Qwen Code | Auth tokens, session state, settings | `~/.qwen-config/` (directory) |
 | Goose | Config, provider settings, MCP extensions | `~/.goose-config/` (directory) |
-| ai-coder | **All settings** — proxy, isolation, GPU mode, context level, low-VRAM KV cache, VRAM overhead, CPU offload threshold, MCP extras, keep-hub, model volume, speculative decoding, port exposure, git identity | `<install-dir>/user/settings.conf` |
+| ai-coder | **All settings** — proxy, isolation, GPU mode, context level, low-VRAM KV cache, VRAM overhead, CPU offload threshold, MCP extras, keep-hub, model volume, speculative decoding, speed tracking, port exposure, git identity | `<install-dir>/user/settings.conf` |
 | ai-coder | **Runtime state** — tool + family + Open WebUI preferences, update-check hash/timestamp, running-engine settings | `<install-dir>/user/state.conf` |
 | ai-coder | Setup completion sentinel | `<install-dir>/user/.setup-done` |
 | ai-coder | Git identity mounted into containers as `/root/.gitconfig` | `~/.gitconfig-container` |
@@ -416,7 +417,7 @@ Git checkouts are tracked through git itself: `--version` reports the local `ori
 
 ### Setup (`--setup`)
 
-**`--setup` must be run once before first launch.** It walks through up to twelve configuration steps. On first run the installer downloads [gum](https://github.com/charmbracelet/gum) — a CLI tool for beautiful interactive prompts — and uses it for the wizard on both WSL and Git Bash. If gum is unavailable it falls back to plain text prompts. Either way the questions and defaults are the same:
+**`--setup` must be run once before first launch.** It walks through up to thirteen configuration steps. On first run the installer downloads [gum](https://github.com/charmbracelet/gum) — a CLI tool for beautiful interactive prompts — and uses it for the wizard on both WSL and Git Bash. If gum is unavailable it falls back to plain text prompts. Either way the questions and defaults are the same:
 
 ```bash
 ./ai-coder --setup
@@ -432,8 +433,9 @@ Git checkouts are tracked through git itself: `--version` reports the local `ori
 8. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Also asks for an idle timeout (default 60 min, `0` = forever) after which the warm hub stops itself to release VRAM; stop it immediately with `--clean`.
 9. **Fast model storage** — cache models in a Docker volume so engine cold starts load from the VM's native disk instead of the slow Windows filesystem bridge. Default on for WSL/Git Bash; see [Model Storage](#model-storage).
 10. **Speculative decoding** — use a small draft model to speed up generation, typically 1.5–2× on code. Default on; costs ~1 GB VRAM and applies only to families that define a draft (currently Qwen3). See [Speculative Decoding](#speculative-decoding).
-11. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
-12. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
+11. **Generation speed tracking** — off by default. Enables the `--speed` command: a one-shot `llama-bench` pass on your model on a clean GPU that prints tokens-per-second (tg = generation, pp = prompt processing).
+12. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
+13. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
 
 Context window level (4k–256k, default 64k) and the low-VRAM KV cache (`q4_0` quant, off by default) are deliberately not wizard steps: both change which model tier fits in VRAM, so `--model` re-prompts them on every run instead.
 
