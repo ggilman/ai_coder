@@ -218,8 +218,9 @@ ensure_image_saved() {
 
 # --- [ Infrastructure images ] ------------------------------------------------
 echo -e "\n${ICON_GEAR} Bundling infrastructure images..."
-ensure_image_saved "$LLAMA_IMAGE"   "llama-cpp-server"
-ensure_image_saved "$LITELLM_IMAGE" "litellm-proxy"
+ensure_image_saved "$LLAMA_IMAGE"      "llama-cpp-server"
+ensure_image_saved "$LLAMA_IMAGE_FULL" "llama-cpp-full"
+ensure_image_saved "$LITELLM_IMAGE"    "litellm-proxy"
 ensure_image_saved "$BASE_IMAGE"    "node-base"
 
 # --- [ Agent images ] ---------------------------------------------------------

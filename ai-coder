@@ -41,7 +41,8 @@ Commands:
   --clean            Stop and remove all containers
   --rebuild          Remove all workbench images to force a full rebuild on next run
   --model            Reset model family, tool, Open WebUI, context level and KV cache type preferences, show selection menus
-  --models [family]   Dry-run model tier selection: hardware audit, VRAM reserves and which tier a launch would pick (no Docker, no launch)
+   --models [family]   Dry-run model tier selection: hardware audit, VRAM reserves and which tier a launch would pick (no Docker, no launch)
+   --speed [family]   Generation-speed benchmark: run llama-bench on your model on a clean GPU and print t/s
   --build-only       Build the workbench image then exit (no Hub or agent launch)
   --continue         Resume the previous agent session (passes the tool's native continue flag)
   --version          Show the installed release, its checkin date, and git branch status
@@ -60,9 +61,12 @@ HELP
     exit $? ;;
 --status)
     exec bash "$ROOT_DIR/ai-status.sh" ;;
---models)
-    cmd_models "${2:-}"
-    exit $? ;;
+        --models)
+            cmd_models "${2:-}"
+            exit $? ;;
+        --speed)
+            cmd_speed "${2:-}"
+            exit $? ;;
 --logs)
     cmd_logs "${@:2}"
     exit $? ;;

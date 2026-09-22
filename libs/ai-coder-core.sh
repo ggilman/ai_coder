@@ -34,6 +34,7 @@ CONTINUE_SESSION=false
 WORKBENCH_PREFIX="coder"
 LITELLM_IMAGE="ghcr.io/berriai/litellm:main-latest"
 LLAMA_IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
+LLAMA_IMAGE_FULL="ghcr.io/ggml-org/llama.cpp:full-cuda"
 DOWNLOAD_PROXY="${DOWNLOAD_PROXY:-}"
 if [ -z "$DOWNLOAD_PROXY" ] && [ -f "$SETTINGS_FILE" ]; then
     DOWNLOAD_PROXY=$(grep '^proxy=' "$SETTINGS_FILE" 2>/dev/null | cut -d= -f2- || true)
