@@ -8,8 +8,8 @@ set -euo pipefail
 SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 INSTALL_DIR="$(dirname "$SCRIPT_DIR")"
 USER_DIR="$INSTALL_DIR/user"
-SETTINGS_FILE="$USER_DIR/settings.conf"
-STATE_FILE="$USER_DIR/state.conf"
+SETTINGS_FILE="$USER_DIR/settings.json"
+STATE_FILE="$USER_DIR/state.json"
 PACKAGES_DIR="$INSTALL_DIR/packages"
 DOCKER_BIN="${DOCKER_BIN:-}"   # default resolved below, after WIN_HOME is known
 GLOBAL_ENGINE_NAME="ai-hub-engine"
@@ -35,10 +35,9 @@ WORKBENCH_PREFIX="coder"
 LITELLM_IMAGE="ghcr.io/berriai/litellm:main-latest"
 LLAMA_IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
 LLAMA_IMAGE_FULL="ghcr.io/ggml-org/llama.cpp:full-cuda"
+# (Stored-proxy read moved below, after env.sh/jq.sh are sourced and jq is
+# resolved - the user settings are now JSON, not a flat grep-able file.)
 DOWNLOAD_PROXY="${DOWNLOAD_PROXY:-}"
-if [ -z "$DOWNLOAD_PROXY" ] && [ -f "$SETTINGS_FILE" ]; then
-    DOWNLOAD_PROXY=$(grep '^proxy=' "$SETTINGS_FILE" 2>/dev/null | cut -d= -f2- || true)
-fi
 BASE_IMAGE="node:24-bookworm-slim"
 # Placeholder credential sent to every agent/sidecar — the engine and proxy
 # don't check auth, so this exists only to satisfy clients that require a
@@ -108,9 +107,23 @@ fi
 # depends on globals/colors set above and functions from files sourced before
 # it — none of them are meant to be sourced standalone.
 source "$SCRIPT_DIR/ai-coder-env.sh"        # path/shell utils, pref I/O, MCP JSON, update check
+source "$SCRIPT_DIR/ai-coder-jq.sh"        # jq binary bootstrap & resolution
+source "$SCRIPT_DIR/ai-coder-migrate.sh"   # settings JSON schema versioning + one-time migration
 source "$SCRIPT_DIR/ai-coder-settings.sh"   # git identity + launch-time preference resolution
 source "$SCRIPT_DIR/ai-coder-model.sh"      # docker preflight, VRAM budgeting, model select/download
 source "$SCRIPT_DIR/ai-coder-workbench.sh"  # workbench + hub engine container lifecycle
+
+# User settings/state are JSON, so jq must be resolvable before the first
+# read_pref/write_pref. Ensure it's available (downloads on first use),
+# resolve the active binary into JQ_CMD, run the one-time schema migration
+# + old-format cutover, then read the stored proxy. (This read used to be a
+# raw grep of the legacy flat file, done up top before env.sh was sourced.)
+ensure_jq
+resolve_jq_cmd || true
+migrate_user_prefs
+if [ -z "$DOWNLOAD_PROXY" ] && [ -f "$SETTINGS_FILE" ]; then
+    DOWNLOAD_PROXY=$(read_setting proxy)
+fi
 
 # --- [ ABSTRACT HOOKS ] -------------------------------------------------------
 # To be overridden by child scripts
@@ -155,7 +168,7 @@ execute_tool() {
 
 # Arm a detached watcher that stops the warm hub after <idle-minutes> unless
 # something used it in the meantime. Disarming works through the
-# hub_idle_since stamp in state.conf: every launch clears it, and every
+# hub_idle_since stamp in state.json: every launch clears it, and every
 # session exit re-arms with a fresh stamp — so at its deadline the watcher
 # only fires if its own stamp is still current AND no spokes are running.
 # Best-effort by design: if the watcher dies (e.g. terminal closed), the hub
@@ -163,22 +176,23 @@ execute_tool() {
 schedule_hub_idle_stop() {
     local idle_min="$1"
     local stamp; stamp=$(date +%s)
+    local jq_cmd="${JQ_CMD:-jq}"
     write_pref "$STATE_FILE" hub_idle_since "$stamp"
     nohup bash -c "
         sleep $(( idle_min * 60 ))
-        cur=\$(grep '^hub_idle_since=' '$STATE_FILE' 2>/dev/null | cut -d= -f2-)
+        cur=\$('$jq_cmd' -r '(.hub_idle_since // empty)' '$STATE_FILE' 2>/dev/null)
         [ \"\$cur\" = '$stamp' ] || exit 0
         [ -n \"\$(docker ps -q --filter 'name=^/${WORKBENCH_PREFIX}-' 2>/dev/null)\" ] && exit 0
         docker stop '$GLOBAL_ENGINE_NAME' '$GLOBAL_PROXY_NAME' '$GLOBAL_WEBUI_NAME' >/dev/null 2>&1
         docker rm   '$GLOBAL_ENGINE_NAME' '$GLOBAL_PROXY_NAME' '$GLOBAL_WEBUI_NAME' >/dev/null 2>&1
-        sed -i '/^hub_idle_since=/d' '$STATE_FILE' 2>/dev/null
+        '$jq_cmd' 'del(.hub_idle_since)' '$STATE_FILE' > '$STATE_FILE.tmp.\$\$' 2>/dev/null && mv '$STATE_FILE.tmp.\$\$' '$STATE_FILE' || true
     " >/dev/null 2>&1 &
     disown 2>/dev/null || true
 }
 
 # Watchdog: while the engine runs, poll GPU temperatures and stop the engine
 # if any GPU stays at/above MODEL_GPU_MAX_TEMP_C for three consecutive polls
-# (~30s). A trip is recorded in state.conf (engine_guard_trip) and reported
+# (~30s). A trip is recorded in state.json (engine_guard_trip) and reported
 # on the next launch. Set MODEL_GPU_MAX_TEMP_C=0 to disable. Best-effort by
 # design: if the watcher dies with its terminal the engine simply runs
 # unguarded, which was the behaviour before the guard existed.
@@ -186,6 +200,7 @@ start_gpu_guard() {
     local max_c="${MODEL_GPU_MAX_TEMP_C:-90}"
     case "$max_c" in ''|*[!0-9]*|0) return 0 ;; esac
     command -v "$SMI" >/dev/null 2>&1 || return 0
+    local jq_cmd="${JQ_CMD:-jq}"
     nohup bash -c "
         strikes=0
         while docker ps -q -f name=^/${GLOBAL_ENGINE_NAME}\$ 2>/dev/null | grep -q .; do
@@ -196,8 +211,8 @@ start_gpu_guard() {
             if [ -n \"\$hot\" ]; then strikes=\$((strikes+1)); else strikes=0; fi
             if [ \"\$strikes\" -ge 3 ]; then
                 docker stop '$GLOBAL_ENGINE_NAME' >/dev/null 2>&1
-                sed -i '/^engine_guard_trip=/d' '$STATE_FILE' 2>/dev/null
-                echo \"engine_guard_trip=\$(date '+%Y-%m-%d %H:%M') GPU held \${hot}C (limit ${max_c}C)\" >> '$STATE_FILE'
+                trip_val=\"\$(date '+%Y-%m-%d %H:%M') GPU held \${hot}C (limit ${max_c}C)\"
+                '$jq_cmd' --arg v \"\$trip_val\" '.engine_guard_trip = \$v' '$STATE_FILE' > '$STATE_FILE.tmp.\$\$' 2>/dev/null && mv '$STATE_FILE.tmp.\$\$' '$STATE_FILE' || true
                 exit 0
             fi
             sleep 10

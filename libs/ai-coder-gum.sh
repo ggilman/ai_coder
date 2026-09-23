@@ -32,9 +32,26 @@ _download_gum_binary() {
 
     set +e
     local _proxy_opt=""
-    # Use grep to fetch the proxy manually to avoid dependency on functions defined later
-    local _cur_proxy
-    _cur_proxy=$(grep "^proxy=" "$(dirname "${BASH_SOURCE[0]}")/../user/settings.conf" 2>/dev/null | cut -d= -f2- || true)
+    # Fetch the proxy without depending on functions defined later: read
+    # user/settings.json with jq when a jq is already resolvable, else fall
+    # back to the ONE-GENERATION legacy flat grep of user/settings.conf
+    # (removable next release), else env. (Same strategy as _download_jq_binary.)
+    local _cur_proxy=""
+    local _rel_assets="$(dirname "${BASH_SOURCE[0]}")/../.assets"
+    local _settings_json="$(dirname "${BASH_SOURCE[0]}")/../user/settings.json"
+    local _settings_conf="$(dirname "${BASH_SOURCE[0]}")/../user/settings.conf"
+    local _jq_probe=""
+    if command -v jq &>/dev/null; then
+        _jq_probe="jq"
+    elif [ -f "$_rel_assets/jq" ]; then
+        _jq_probe="$_rel_assets/jq"
+    elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && [ -f "$_rel_assets/jq.exe" ]; then
+        _jq_probe="$_rel_assets/jq.exe"
+    fi
+    if [ -n "$_jq_probe" ]; then
+        _cur_proxy=$("$_jq_probe" -r '(.proxy // empty)' "$_settings_json" 2>/dev/null || true)
+    fi
+    [ -z "$_cur_proxy" ] && _cur_proxy=$(grep "^proxy=" "$_settings_conf" 2>/dev/null | cut -d= -f2- || true)
     # Also check if HTTP_PROXY/HTTPS_PROXY environment variables are set
     [ -z "$_cur_proxy" ] && _cur_proxy=${HTTPS_PROXY:-${HTTP_PROXY:-${https_proxy:-${http_proxy:-}}}}
     # Ensure we use -x for curl proxy. resolve_proxy_to_ip (ai-coder-env.sh) is

@@ -31,11 +31,17 @@ Run `./ai-coder --rebuild` then `./ai-coder` for image changes.
 `packages/apt-*.txt` and `packages/mcp-*.txt` are pipe-delimited text. `mcp-common.txt` = always registered, `mcp-extra.txt` = opt-in via `--setup`. Format: `npm-package | server-key | command | args | ENV_VARS | net`
 
 ## Config persistence
-- `user/` directory: flat `key=value` files read via `read_pref`/`write_pref` in `libs/ai-coder-env.sh`
-- `user/settings.conf`: all `--setup`/`--model` choices
-- `user/state.conf`: session state, running-engine settings
+- `user/` directory: **JSON** files, jq-backed `read_pref`/`write_pref` in `libs/ai-coder-env.sh` — **all values stored as JSON strings** (numbers included, e.g. `"vram_overhead": "1"`)
+  - `user/settings.json`: all `--setup`/`--model` choices + `settings_version`
+  - `user/state.json`: session state, running-engine settings + `state_version`
+- **Defaults resolved at read time**, never materialized: `pref_default`/`read_setting` registry in `libs/ai-coder-migrate.sh` is the single source; a missing key returns its default (`state.json` has no defaults → absent keys re-prompt)
+- **Forward-only migration** in `migrate_user_prefs` (same file, no re-prompt), keyed by `settings_version`/`state_version` (strings, start `"1"`); old `user/*.conf` are legacy (no longer read — `--doctor` flags them)
+- **jq bootstrap** (`libs/ai-coder-jq.sh`): `ensure_jq`/`resolve_jq_cmd` resolve PATH > bundled `.assets/jq[.exe]`; first-run download fallback only, never at read time; offline bundles ship `.assets/jq`+`jq.exe`
 - `user/.setup-done`: sentinel gating first launch
 - Per-tool config volume-mounted into containers, survives restarts
+
+## Changing stored data
+Stored prefs live in `user/settings.json` / `user/state.json`. Never hand-edit — add a forward-only migration: bump `SETTINGS_SCHEMA_VERSION`/`STATE_SCHEMA_VERSION` in `libs/ai-coder-migrate.sh`, add `migrate_<domain>_v<old>_to_v<new>()` (using `pref_rename`/`pref_drop`/`write_pref`); `migrate_user_prefs` runs steps from the file's current version up to the new constant on first launch.
 
 ## Testing
 No CI. Manual verification:

@@ -146,7 +146,7 @@ cmd_version() {
     if [ "$is_git" = true ]; then
         # Checkout: the local origin/release ref is the source of truth. A
         # `git push origin release` from here updates it, so it can't drift the
-        # way state.conf's release_hash (tarball installs only) does. Fall back
+        # way state.json's release_hash (tarball installs only) does. Fall back
         # to GitHub only if the ref doesn't exist (e.g. never fetched).
         hash=$(_git_at "$install_dir" rev-parse --verify --quiet refs/remotes/origin/release 2>/dev/null) || hash=""
         if [ -n "$hash" ]; then
@@ -242,7 +242,7 @@ cmd_doctor() {
 
     # --- orphaned write_pref temp files ---------------------------------------
     # write_pref self-heals these on its own next call (see libs/ai-coder-env.sh),
-    # but a file that's rarely written (e.g. settings.conf) could sit on one for
+    # but a file that's rarely written (e.g. settings.json) could sit on one for
     # a long time otherwise — sweep the whole user/ dir explicitly here too.
     echo -e "${ICON_GEAR} Orphaned temp files in ${CYAN}${USER_DIR}${NC}..."
     local _tmp_found=() _f
@@ -312,6 +312,37 @@ cmd_doctor() {
         fi
     else
         echo -e "  ${DIM}Docker not running — skipped${NC}"
+    fi
+
+    # --- legacy flat config files (pre-JSON) ------------------------------------
+    # user/settings.conf and user/state.conf are the pre-JSON formats. They're
+    # no longer read at runtime (user/settings.json / user/state.json are the
+    # source of truth now), so they're safe to delete. Flag them so an old-format
+    # user knows the .conf is dead weight.
+    echo -e "${ICON_GEAR} Legacy flat config files..."
+    local _legacy_any=0
+    for _legacy in "$USER_DIR/settings.conf" "$USER_DIR/state.conf"; do
+        if [ -f "$_legacy" ]; then
+            echo -e "  ${YELLOW}⚠${NC} ${DIM}$(basename "$_legacy")${NC} is legacy (pre-JSON) — no longer read, safe to delete"
+            issues=$((issues + 1))
+            _legacy_any=1
+        fi
+    done
+    [ "$_legacy_any" -eq 0 ] && echo -e "  ${DIM}none found${NC}"
+
+    # --- corrupt user JSON config ---------------------------------------------
+    # A user/*.json that isn't valid JSON degrades to defaults at read time,
+    # but is worth surfacing so it can be fixed (hand-truncated / mid-write).
+    # Only checked when a jq is resolvable.
+    local _jq=""
+    resolve_jq_cmd &>/dev/null && _jq="$JQ_CMD"
+    if [ -n "$_jq" ]; then
+        for _j in "$SETTINGS_FILE" "$STATE_FILE"; do
+            if [ -f "$_j" ] && ! "$_jq" empty "$_j" >/dev/null 2>&1; then
+                echo -e "  ${YELLOW}⚠${NC} ${DIM}$(basename "$_j")${NC} is not valid JSON — its values read as defaults until fixed"
+                issues=$((issues + 1))
+            fi
+        done
     fi
 
     echo ""

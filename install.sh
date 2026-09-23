@@ -117,10 +117,19 @@ if [ -n "$release_hash" ]; then
     fi
 
     mkdir -p "$INSTALL_DIR/user"
-    {
-        printf 'release_hash=%s\n' "$release_hash"
-        [ -n "$release_date" ] && printf 'release_date=%s\n' "$release_date"
-    } > "$INSTALL_DIR/user/state.conf"
+    # Seed the installed release into user/state.json (JSON, not the legacy
+    # flat state.conf). Only when missing, so a re-install never clobbers the
+    # user's live session state. release_hash is the update-check baseline.
+    if [ ! -f "$INSTALL_DIR/user/state.json" ]; then
+        {
+            printf '{\n'
+            printf '  "release_hash": "%s"' "$release_hash"
+            if [ -n "$release_date" ]; then
+                printf ',\n  "release_date": "%s"' "$release_date"
+            fi
+            printf '\n}\n'
+        } > "$INSTALL_DIR/user/state.json"
+    fi
 fi
 
 # --- [ done ] -----------------------------------------------------------------

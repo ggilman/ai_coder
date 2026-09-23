@@ -142,7 +142,7 @@ ui_yesno() {
         _gum_rc=$?
         # 126/127 mean the gum binary itself failed to run (not executable /
         # not found) — surface it rather than silently recording "no", which
-        # would get written to settings.conf as if the user had declined.
+        # would get written to settings.json as if the user had declined.
         if [ "$_gum_rc" -eq 126 ] || [ "$_gum_rc" -eq 127 ]; then
             echo "gum failed to run (exit ${_gum_rc})" >&2
             echo "no"

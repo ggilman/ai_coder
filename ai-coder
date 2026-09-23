@@ -105,7 +105,10 @@ esac
 # --- [ MAIN ENTRY ] -----------------------------------------------------------
 
 # Guard: require --setup to have been run at least once before launching.
-if [ ! -f "$USER_DIR/.setup-done" ]; then
+# settings.json is the source of truth now; a missing file means the user
+# predates the JSON migration (or a fresh install) — force --setup so the
+# prefs get (re)created in the new format.
+if [ ! -f "$USER_DIR/.setup-done" ] || [ ! -f "$SETTINGS_FILE" ]; then
     echo -e "${YELLOW}◈ First-time setup required. Run:${NC}"
     echo -e "  ${CYAN}\"$(realpath "$0")\" --setup${NC}"
     exit 1
@@ -192,7 +195,7 @@ fi
 # the port is closed, so it appears automatically once exposure is enabled.
 WEBUI_PREF=$(read_pref "$STATE_FILE" webui_pref "")
 if [ -z "$WEBUI_PREF" ] && [ "$TOOL_PREF" != "webui" ] && \
-   [ "$(read_pref "$SETTINGS_FILE" expose_host_port no)" = "yes" ]; then
+   [ "$(read_setting expose_host_port)" = "yes" ]; then
     show_webui_prompt "$_prev_webui"
     WEBUI_PREF=$(read_pref "$STATE_FILE" webui_pref "")
 fi
@@ -234,9 +237,9 @@ cleanup() {
     fi
     remaining_spokes=$(docker ps -q --filter "name=^/${WORKBENCH_PREFIX}-" 2>/dev/null | wc -l)
     if [ "$remaining_spokes" -eq 0 ]; then
-        if [ "$(read_pref "$SETTINGS_FILE" keep_hub no)" = "yes" ]; then
+        if [ "$(read_setting keep_hub)" = "yes" ]; then
             echo -e "${CYAN}◈ Hub stays warm (keep-hub enabled) — next session skips the model load.${NC}"
-            _idle_min=$(read_pref "$SETTINGS_FILE" keep_hub_timeout 60)
+            _idle_min=$(read_setting keep_hub_timeout)
             case "$_idle_min" in ''|*[!0-9]*) _idle_min=60 ;; esac
             if [ "$_idle_min" -gt 0 ]; then
                 schedule_hub_idle_stop "$_idle_min"

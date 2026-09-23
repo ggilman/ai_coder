@@ -30,6 +30,8 @@ source "$PROJECT_ROOT/libs/ai-coder-core.sh"
 source "$PROJECT_ROOT/libs/ai-coder-ui.sh"
 # Load gum bootstrap/download (ensure_gum, _download_gum_binary)
 source "$PROJECT_ROOT/libs/ai-coder-gum.sh"
+# Load jq bootstrap/download (ensure_jq, _download_jq_binary, resolve_jq_cmd)
+source "$PROJECT_ROOT/libs/ai-coder-jq.sh"
 
 echo -e "\n${BOLD}${CYAN}╔══════════════════════════════════════════════╗"
 echo -e "║        AI-CODER OFFLINE BUNDLE v1.0          ║"
@@ -162,6 +164,31 @@ if [ "$_gum_bundle_ok" = "true" ]; then
     echo -e "${ICON_OK} Gum interface engine bundled (Windows + Linux)."
 else
     echo -e "${YELLOW}⚠ Gum download incomplete — target will fall back to plain-text prompts.${NC}"
+fi
+
+# --- [ jq JSON engine ] ---------------------------------------------------------
+# The target machine has no internet access, so jq can't bootstrap itself
+# there — fetch both platform builds here (cached in the project's own .assets
+# so repeat bundle runs don't re-download) and ship them inside the bundle at
+# scripts/.assets. The launch chain (ai-coder-core.sh) resolves jq at that
+# exact path relative to libs/, so user settings read/write work on the
+# air-gapped target with no extra wiring needed.
+echo -e "\n${ICON_GEAR} Bundling jq JSON engine..."
+_jq_bundle_ok=true
+if _download_jq_binary "Windows" "x86_64" "$PROJECT_ROOT/.assets"; then
+    cp "$PROJECT_ROOT/.assets/jq.exe" "$BUNDLE_SCRIPTS_DIR/.assets/jq.exe"
+else
+    _jq_bundle_ok=false
+fi
+if _download_jq_binary "Linux" "x86_64" "$PROJECT_ROOT/.assets"; then
+    cp "$PROJECT_ROOT/.assets/jq" "$BUNDLE_SCRIPTS_DIR/.assets/jq"
+else
+    _jq_bundle_ok=false
+fi
+if [ "$_jq_bundle_ok" = "true" ]; then
+    echo -e "${ICON_OK} jq JSON engine bundled (Windows + Linux)."
+else
+    echo -e "${YELLOW}⚠ jq download incomplete — target will fall back to system jq or defaults.${NC}"
 fi
 
 # --- [ Model ] ----------------------------------------------------------------

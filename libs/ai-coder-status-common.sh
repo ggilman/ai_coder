@@ -17,6 +17,11 @@ readonly _AI_CODER_STATUS_COMMON_LOADED=1
 # Sets IS_WSL, IS_GITBASH — shared with ai-coder-core.sh and offline/unbundle.sh
 # so every entry point agrees on the platform.
 source "$(dirname "${BASH_SOURCE[0]}")/ai-coder-detect-env.sh"
+# jq resolution for the network-isolation lookup below. Sourced (not executed)
+# so only functions are defined; get_network_isolation_status resolves a jq
+# (PATH > .assets) WITHOUT downloading - the dashboards run standalone and are
+# read-only, so a missing jq degrades to "no".
+source "$(dirname "${BASH_SOURCE[0]}")/ai-coder-jq.sh"
 readonly SMI="$([[ "$IS_GITBASH" == "true" ]] && echo "nvidia-smi.exe" || echo "nvidia-smi")"
 
 # --- [ ENGINE PROBE CONSTANTS ] -----------------------------------------------
@@ -68,13 +73,19 @@ render_progress_bar() {
     printf "%s" "$bar"
 }
 
-# Reads the network-isolation preference directly from settings.conf (both
-# dashboards run standalone, without read_pref from ai-coder-env.sh).
+# Reads the network-isolation preference directly from user/settings.json (both
+# dashboards run standalone, without read_pref from ai-coder-env.sh). Resolves
+# a jq (PATH > .assets) via ai-coder-jq.sh WITHOUT downloading - read-only
+# context, so a missing jq or file degrades to "no".
 # Usage: get_network_isolation_status <script_dir> — echoes "yes" or "no".
 get_network_isolation_status() {
-    local _settings_file="$1/user/settings.conf"
+    local _settings_file="$1/user/settings.json"
+    local _jq=""
+    resolve_jq_cmd &>/dev/null && _jq="$JQ_CMD"
     local _val="no"
-    [ -f "$_settings_file" ] && _val=$(grep '^isolated=' "$_settings_file" 2>/dev/null | cut -d= -f2- || echo "no")
+    if [ -n "$_jq" ] && [ -f "$_settings_file" ]; then
+        _val=$("$_jq" -r '(.isolated // empty)' "$_settings_file" 2>/dev/null || echo "no")
+    fi
     _val=$(printf '%s' "$_val" | tr -d '\r' | xargs)
     [ "$_val" = "yes" ] && echo "yes" || echo "no"
 }

@@ -87,11 +87,11 @@ Use this script to monitor the health of your environment.
 ```
 
 ### 2. Unified AI Coding Interface (`ai-coder`)
-A single launcher for Claude Code, OpenCode, Aider, Gemini CLI, Qwen Code, and Goose. On first run (or with `--model`) it prompts you to select your preferred tool, which is saved to `user/state.conf` in the install directory. Subsequent runs launch the saved preference directly.
+A single launcher for Claude Code, OpenCode, Aider, Gemini CLI, Qwen Code, and Goose. On first run (or with `--model`) it prompts you to select your preferred tool, which is saved to `user/state.json` in the install directory. Subsequent runs launch the saved preference directly.
 
 - **Alias**: `ai` (configure with `--setup`)
 - **Model family selection**: On first run, prompts you to choose a model family (Gemma 4, Qwen3, Qwen3.6, Llama 4, Devstral 2, …). Within the chosen family, the best GGUF tier is selected automatically from detected VRAM **minus an estimated KV-cache reserve** for your chosen context level **and a per-GPU overhead reserve** (CUDA context, compute buffers, display usage — `MODEL_VRAM_OVERHEAD_GB`) — so the model actually fits instead of silently paging to system RAM. If the reserves cost you a tier, the launcher says so; choose a smaller context level in `--model` to unlock the bigger model.
-- **Tool selection**: On first run, also prompts for your preferred coding tool (Claude, OpenCode, Aider, Gemini, Qwen Code, Goose). Both choices are saved to `user/state.conf`.
+- **Tool selection**: On first run, also prompts for your preferred coding tool (Claude, OpenCode, Aider, Gemini, Qwen Code, Goose). Both choices are saved to `user/state.json`.
 - **Gum-powered menus**: Family, tool, and Open WebUI prompts render as [gum](https://github.com/charmbracelet/gum) pickers, same as `--setup`. Falls back to plain numbered/text prompts if gum can't be installed or run (or with `AI_CODER_NO_GUM=1`).
 - **Open WebUI sidecar**: If host port exposure is enabled in `--setup`, a third question asks whether to also start Open WebUI (`http://localhost:3000`) alongside your coding agent, so you can chat with the same local model while you code. The answer is saved like the other preferences and re-asked via `--model`. It shuts down together with the Hub.
 - **Workspace mount**: Your project folder is mounted into the container as `/<foldername>` (e.g. `/my-project`), so the AI tool starts directly in your project directory.
@@ -132,7 +132,7 @@ When two or more NVIDIA GPUs are present, `--setup` will ask whether to use all 
 | **multi** (default) | All GPUs exposed to the engine container. `--tensor-split` is set automatically using each card's VRAM as proportional weights, so both compute *and* VRAM are distributed across GPUs. |
 | **single** | Only GPU 0 is exposed (`--gpus device=0`). VRAM tier selection is also scoped to GPU 0 so the right model size is chosen. Useful when secondary GPUs are used for display output or other workloads. |
 
-The choice is saved to `user/settings.conf`. To change it, run `./ai-coder --setup` again.
+The choice is saved to `user/settings.json`. To change it, run `./ai-coder --setup` again.
 
 You can also override the preference for a single session without changing the saved value:
 
@@ -344,8 +344,8 @@ echo "@some-org/server | key | cmd | args" >> packages/mcp-opencode.txt
 | Gemini CLI | Auth tokens, session state, settings | `~/.gemini-config/` (directory) |
 | Qwen Code | Auth tokens, session state, settings | `~/.qwen-config/` (directory) |
 | Goose | Config, provider settings, MCP extensions | `~/.goose-config/` (directory) |
-| ai-coder | **All settings** — proxy, isolation, GPU mode, context level, low-VRAM KV cache, VRAM overhead, CPU offload threshold, MCP extras, keep-hub, model volume, speculative decoding, speed tracking, port exposure, git identity | `<install-dir>/user/settings.conf` |
-| ai-coder | **Runtime state** — tool + family + Open WebUI preferences, update-check hash/timestamp, running-engine settings | `<install-dir>/user/state.conf` |
+| ai-coder | **All settings** — proxy, isolation, GPU mode, context level, low-VRAM KV cache, VRAM overhead, CPU offload threshold, MCP extras, keep-hub, model volume, speculative decoding, speed tracking, port exposure, git identity | `<install-dir>/user/settings.json` |
+| ai-coder | **Runtime state** — tool + family + Open WebUI preferences, update-check hash/timestamp, running-engine settings | `<install-dir>/user/state.json` |
 | ai-coder | Setup completion sentinel | `<install-dir>/user/.setup-done` |
 | ai-coder | Git identity mounted into containers as `/root/.gitconfig` | `~/.gitconfig-container` |
 | ai-coder | Downloaded GGUF models (download cache) | `~/ai-models/` (Windows home on WSL/Git Bash) |
@@ -410,7 +410,7 @@ ai --update
 
 ai-coder also checks for updates automatically once per day on launch and prints a notice if a new version is available on the `release` branch.
 
-Git checkouts are tracked through git itself: `--version` reports the local `origin/release` ref (which `git push origin release` keeps current) and the daily check compares the release head against your `HEAD`, so publishing `release` from your own checkout never leaves a stale "update available" notice. The `release_hash` recorded in `user/state.conf` is only used for tarball installs.
+Git checkouts are tracked through git itself: `--version` reports the local `origin/release` ref (which `git push origin release` keeps current) and the daily check compares the release head against your `HEAD`, so publishing `release` from your own checkout never leaves a stale "update available" notice. The `release_hash` recorded in `user/state.json` is only used for tarball installs.
 
 ---
 

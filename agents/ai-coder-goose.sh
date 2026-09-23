@@ -78,7 +78,7 @@ configure_workbench() {
     local _model_id="${MODEL_FILE##*/}"; _model_id="${_model_id%.gguf}"
 
     local mcp_files=("$PACKAGES_DIR/mcp-common.txt")
-    [ "$(read_pref "$SETTINGS_FILE" mcp_extras no)" = "yes" ] && mcp_files+=("$PACKAGES_DIR/mcp-extra.txt")
+    [ "$(read_setting mcp_extras)" = "yes" ] && mcp_files+=("$PACKAGES_DIR/mcp-extra.txt")
     mcp_files+=("$PACKAGES_DIR/mcp-goose.txt")
 
     # Always rewrite config.yaml so the endpoint/extensions reflect the current

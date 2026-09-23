@@ -229,7 +229,7 @@ _verify_sha256() {
 # True when speculative decoding should be used: the setting is on (default)
 # and the active model family defines a draft model.
 spec_decode_enabled() {
-    [ "$(read_pref "$SETTINGS_FILE" spec_decode yes)" = "yes" ] && [ -n "${MODEL_DRAFT_FILE:-}" ]
+    [ "$(read_setting spec_decode)" = "yes" ] && [ -n "${MODEL_DRAFT_FILE:-}" ]
 }
 
 # Pre-ed117a6 installs stored every model flat under $MODEL_STORAGE_DIR (no
@@ -510,7 +510,7 @@ print_model_candidates() {
 # Dry-run tier selection: report what a real launch would pick for a family
 # without starting Docker, the Hub, or the workbench.
 # Usage: cmd_models [family-key]
-# Without a key, uses the saved family_pref (user/state.conf).
+# Without a key, uses the saved family_pref (user/state.json).
 cmd_models() {
     local family_key="${1:-}"
     [ -n "$family_key" ] || family_key=$(read_pref "$STATE_FILE" family_pref "")
@@ -557,7 +557,7 @@ cmd_speed() {
         echo -e "${DIM}  $(basename "$0") --speed <family-key>${NC}"
         return 1
     fi
-    if [ "$(read_pref "$SETTINGS_FILE" speed_tracking no)" != "yes" ]; then
+    if [ "$(read_setting speed_tracking)" != "yes" ]; then
         echo -e "${YELLOW}Generation speed tracking is disabled.${NC}"
         echo -e "${DIM}  Enable it with: $(basename "$0") --setup${NC}"
         return 1

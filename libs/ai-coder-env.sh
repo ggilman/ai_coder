@@ -236,7 +236,7 @@ make_mcp_servers_json() {
 make_agent_mcp_json() {
     local workspace="$1" mode="$2" agent_file="$3"
     local files=("$PACKAGES_DIR/mcp-common.txt")
-    if [ "$(read_pref "$SETTINGS_FILE" mcp_extras no)" = "yes" ]; then
+    if [ "$(read_setting mcp_extras)" = "yes" ]; then
         files+=("$PACKAGES_DIR/mcp-extra.txt")
     fi
     files+=("$PACKAGES_DIR/$agent_file")
@@ -307,7 +307,7 @@ _git_at() {
 # opposed to a tarball install from install.sh/--update — which has no .git and
 # may sit inside some unrelated repo, which we ignore. Checkouts take their
 # release state from git (origin/release), not from the release_hash recorded in
-# state.conf, which only tarball installs maintain.
+# state.json, which only tarball installs maintain.
 # Usage: _is_git_checkout <dir>
 _is_git_checkout() {
     local dir="$1"
@@ -318,7 +318,7 @@ _is_git_checkout() {
 # Nudge (at most once a day) when the installed release is behind the
 # release branch. Git checkouts compare against their local origin/release
 # ref (git is the source of truth there); tarball installs compare the
-# release_hash recorded in state.conf.
+# release_hash recorded in state.json.
 check_for_update() {
     local install_dir; install_dir="$(dirname "$SCRIPT_DIR")"
     local interval=86400 # 24 hours
@@ -394,23 +394,32 @@ container_running() {
     [ -n "$(docker ps -q -f "name=^/${1}$" 2>/dev/null)" ]
 }
 
-# Read a key=value entry from a preference file. Returns the value, or $default if missing.
+# Read a key from a JSON preference file. Returns the value, or $default when
+# the file or key is missing or the file is not valid JSON (e.g. hand-truncated
+# or mid-write) - a corrupt file degrades to the default rather than aborting
+# the launch. Values are stored as JSON strings; an empty result (absent key
+# or parse error) resolves to $default, matching the old empty-means-default.
 read_pref() {
     local file="$1" key="$2" default="${3:-}"
-    if [ -f "$file" ]; then
-        local val; val=$(grep "^${key}=" "$file" 2>/dev/null | cut -d= -f2-) || true
-        [ -n "$val" ] && echo "$val" || echo "$default"
+    local _jq="${JQ_CMD:-jq}"
+    [ -f "$file" ] || { echo "$default"; return 0; }
+    local val
+    val=$("$_jq" -r --arg k "$key" 'if has($k) then .[$k] else empty end' "$file" 2>/dev/null) || val=""
+    if [ -n "$val" ]; then
+        echo "$val"
     else
         echo "$default"
     fi
 }
 
-# Write or update a single key=value entry in a preference file.
-# Creates the file and its parent directory if needed. Clears the key when value is empty.
-# STATE_FILE/SETTINGS_FILE are global (not per-project), so concurrent
-# ai-coder sessions for unrelated projects can call this on the same file at
-# once. A lock (see acquire_lock) plus a PID-unique temp file prevent one
-# session's read-modify-write from clobbering another's.
+# Write or update a single key in a JSON preference file (values are JSON
+# strings). Creates the file and its parent directory if needed. Clears the
+# key when value is empty. An existing file that is not valid JSON is replaced
+# by a fresh object (degrade, don't abort). STATE_FILE/SETTINGS_FILE are global
+# (not per-project), so concurrent ai-coder sessions for unrelated projects can
+# call this on the same file at once. A lock (see acquire_lock) plus a
+# PID-unique temp file prevent one session's read-modify-write from clobbering
+# another's.
 write_pref() {
     local file="$1" key="$2" value="$3"
     mkdir -p "$(dirname "$file")"
@@ -427,12 +436,23 @@ write_pref() {
     acquire_lock "$_lock_dir" 0.1 100
 
     local _tmp="${file}.tmp.$$"
-    if [ -f "$file" ]; then
-        grep -v "^${key}=" "$file" > "$_tmp" 2>/dev/null || true
+    local _jq="${JQ_CMD:-jq}"
+    local _filter
+    if [ -z "$value" ]; then
+        _filter='del(.[$k])'
     else
-        : > "$_tmp"
+        _filter='.[$k] = $v'
     fi
-    [ -n "$value" ] && printf '%s=%s\n' "$key" "$value" >> "$_tmp"
+    # Base object: the existing file when it is valid JSON, else an empty
+    # object - so a corrupt/missing file is rebuilt (repairing corruption)
+    # rather than aborting the write.
+    local _base
+    if [ -f "$file" ] && "$_jq" empty "$file" >/dev/null 2>&1; then
+        _base=$(cat "$file")
+    else
+        _base='{}'
+    fi
+    printf '%s' "$_base" | "$_jq" --arg k "$key" --arg v "$value" "$_filter" > "$_tmp" 2>/dev/null || echo '{}' > "$_tmp"
     mv "$_tmp" "$file"
 
     release_lock "$_lock_dir"

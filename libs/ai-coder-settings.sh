@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # AI-CODER-SETTINGS.SH | Git Identity & Launch-Time Preference Resolution
-# Loads settings.conf preferences (git identity, network isolation, GPU mode,
+# Loads settings.json preferences (git identity, network isolation, GPU mode,
 # context/KV/offload tuning) into the globals the rest of the launcher expects,
 # falling back to the family/model conf defaults when nothing is saved yet.
 # ==============================================================================
@@ -9,8 +9,8 @@
 # Load or prompt for git user identity, then store it for future runs.
 # Sets GIT_USER_EMAIL and GIT_USER_NAME in the calling environment.
 ensure_git_identity() {
-    local git_email; git_email=$(read_pref "$SETTINGS_FILE" git_email "")
-    local git_name;  git_name=$(read_pref  "$SETTINGS_FILE" git_name  "")
+    local git_email; git_email=$(read_setting git_email)
+    local git_name;  git_name=$(read_setting git_name)
     [ -z "$git_email" ] && git_email=$(git config --global user.email 2>/dev/null || true)
     [ -z "$git_name"  ] && git_name=$(git config  --global user.name  2>/dev/null || true)
     export GIT_USER_EMAIL="${git_email:-}"
@@ -20,7 +20,7 @@ ensure_git_identity() {
 # Load or prompt for network isolation preference, then store it for future runs.
 # Sets NETWORK_INTERNAL in the calling environment.
 ensure_network_config() {
-    local isolated_net; isolated_net=$(read_pref "$SETTINGS_FILE" isolated no)
+    local isolated_net; isolated_net=$(read_setting isolated)
     [ "$isolated_net" = "yes" ] && NETWORK_INTERNAL=true || true
 }
 
@@ -28,7 +28,7 @@ ensure_network_config() {
 # Sets GPU_MODE in the calling environment ("multi" or "single").
 # Silently skips the prompt when only one GPU is present.
 ensure_gpu_config() {
-    GPU_MODE=$(read_pref "$SETTINGS_FILE" gpu_mode multi)
+    GPU_MODE=$(read_setting gpu_mode)
 }
 
 # Sets MODEL_CTX_LEVEL (and derives MODEL_CTX_SIZE) from the saved preference.
@@ -56,13 +56,13 @@ ensure_ctx_config() {
 # types (the asymmetric approach this replaced) silently fall back to a
 # CPU-bound path — see ggml-org/llama.cpp#20866 and #22411.
 ensure_kv_config() {
-    [ "$(read_pref "$SETTINGS_FILE" kv_q4 no)" = "yes" ] && MODEL_KV_TYPE="q4_0" || true
+    [ "$(read_setting kv_q4)" = "yes" ] && MODEL_KV_TYPE="q4_0" || true
 }
 
 ensure_overhead_config() {
-    # Read the user-defined VRAM overhead reserve from settings.conf.
+    # Read the user-defined VRAM overhead reserve from settings.json.
     # Defaults to 1 if not set.
-    local _vram_oh; _vram_oh=$(read_pref "$SETTINGS_FILE" vram_overhead 1)
+    local _vram_oh; _vram_oh=$(read_setting vram_overhead)
     # Ensure it's a number
     case "$_vram_oh" in
         *[!0-9]*) MODEL_VRAM_OVERHEAD_GB=1 ;;
@@ -70,13 +70,13 @@ ensure_overhead_config() {
     esac
 }
 
-# Reads the CPU offload threshold from settings.conf: the minimum percentage
+# Reads the CPU offload threshold from settings.json: the minimum percentage
 # of a bigger model's weights that must fit in VRAM before it is selected
 # with the remaining layers on CPU (see select_model_for_vram). 0 disables
 # partial offload. Anything else outside 50-99 falls back to the default of
 # 90 — below 50% the CPU carries most layers and generation crawls.
 ensure_offload_config() {
-    local _pct; _pct=$(read_pref "$SETTINGS_FILE" cpu_offload_pct 90)
+    local _pct; _pct=$(read_setting cpu_offload_pct)
     case "$_pct" in
         0)           MODEL_CPU_OFFLOAD_PCT=0 ;;
         ''|*[!0-9]*) MODEL_CPU_OFFLOAD_PCT=90 ;;

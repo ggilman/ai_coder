@@ -392,7 +392,7 @@ start_hub_engine() {
     # Model mount: fast Docker volume when enabled (with fallback to the
     # direct host folder mount if the sync fails for any reason).
     local _models_src; _models_src="$(to_host_path "$MODEL_STORAGE_DIR")"
-    if [ "$(read_pref "$SETTINGS_FILE" model_volume "$MODEL_VOLUME_DEFAULT")" = "yes" ]; then
+    if [ "$(read_setting model_volume)" = "yes" ]; then
         if ensure_model_in_volume "${_vol_files[@]}"; then
             _models_src="$MODEL_VOLUME_NAME"
             echo -e "${ICON_GEAR} Model storage: ${GREEN}fast volume (${MODEL_VOLUME_NAME})${NC}"
@@ -408,7 +408,7 @@ start_hub_engine() {
     [ "${NETWORK_INTERNAL:-false}" = "true" ] && _hub_net="$HUB_ISOLATED_NET"
 
     local _port_args=()
-    if [ "$(read_pref "$SETTINGS_FILE" expose_host_port no)" = "yes" ]; then
+    if [ "$(read_setting expose_host_port)" = "yes" ]; then
         # Bind to localhost only so the engine is not reachable from the LAN.
         _port_args=(-p "127.0.0.1:${ENGINE_PORT}:${ENGINE_PORT}")
         echo -e "${ICON_GEAR} Engine port: ${GREEN}published on localhost:${ENGINE_PORT}${NC}"
@@ -475,9 +475,9 @@ start_hub_engine() {
     write_pref "$STATE_FILE" engine_ctx "${MODEL_CTX_SIZE:-}"
     write_pref "$STATE_FILE" engine_kv "${MODEL_KV_TYPE:-q8_0}"
     write_pref "$STATE_FILE" engine_batch "${MODEL_BATCH_SIZE:-1024}/${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}"
-    write_pref "$STATE_FILE" engine_expose "$(read_pref "$SETTINGS_FILE" expose_host_port no)"
+    write_pref "$STATE_FILE" engine_expose "$(read_setting expose_host_port)"
     write_pref "$STATE_FILE" engine_net "${NETWORK_INTERNAL:-false}"
-    write_pref "$STATE_FILE" engine_mvol "$(read_pref "$SETTINGS_FILE" model_volume "$MODEL_VOLUME_DEFAULT")"
+    write_pref "$STATE_FILE" engine_mvol "$(read_setting model_volume)"
 	local _spec_state="${MODEL_SPEC_STRATEGY:-none}"
     [ "${#_draft_args[@]}" -gt 0 ] && _spec_state="external-draft"
     write_pref "$STATE_FILE" engine_spec "$_spec_state"
@@ -597,9 +597,9 @@ ensure_engine_currently_running() {
             "Context size|$(read_pref "$STATE_FILE" engine_ctx "")|${MODEL_CTX_SIZE:-}"
             "KV cache type|$(read_pref "$STATE_FILE" engine_kv "")|${MODEL_KV_TYPE:-q8_0}"
             "Batch size|$(read_pref "$STATE_FILE" engine_batch "")|${MODEL_BATCH_SIZE:-1024}/${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}"
-            "Host port exposure|$(read_pref "$STATE_FILE" engine_expose "")|$(read_pref "$SETTINGS_FILE" expose_host_port no)"
+            "Host port exposure|$(read_pref "$STATE_FILE" engine_expose "")|$(read_setting expose_host_port)"
             "Network isolation|$(read_pref "$STATE_FILE" engine_net "")|${NETWORK_INTERNAL:-false}"
-            "Model storage mode|$(read_pref "$STATE_FILE" engine_mvol "")|$(read_pref "$SETTINGS_FILE" model_volume "$MODEL_VOLUME_DEFAULT")"
+            "Model storage mode|$(read_pref "$STATE_FILE" engine_mvol "")|$(read_setting model_volume)"
             "Speculative decoding|$(read_pref "$STATE_FILE" engine_spec "")|$_cur_spec"
         )
         for _check in "${_restart_checks[@]}"; do
