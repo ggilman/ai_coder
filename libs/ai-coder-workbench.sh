@@ -462,6 +462,59 @@ _llama_supports_flag() {
     [ "${_cached##*|}" = "yes" ]
 }
 
+# Fetches .devops/cuda.Dockerfile at <ref> and prints (one per line) the
+# resolved FROM images (ARG defaults substituted in), for pre-pulling ahead
+# of `docker build`. Silent no-output (not a failure) if the fetch fails —
+# callers just skip pre-pulling and let `docker build` fetch them itself.
+_llama_dockerfile_base_images() {
+    local _ref="$1" _proxy="$2"
+    local _curl_args=(-fsSL --connect-timeout 10)
+    [ -n "$_proxy" ] && _curl_args+=(--proxy "$_proxy")
+    local _content
+    _content=$(curl "${_curl_args[@]}" \
+        "https://raw.githubusercontent.com/ggml-org/llama.cpp/${_ref}/.devops/cuda.Dockerfile" 2>/dev/null) || return 0
+    [ -n "$_content" ] || return 0
+
+    local -A _args=()
+    local _line
+    while IFS= read -r _line; do
+        [[ "$_line" =~ ^ARG[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)=(.+)$ ]] && _args["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
+    done <<< "$_content"
+
+    # ARG defaults can reference earlier ARGs (e.g. BASE_CUDA_DEV_CONTAINER
+    # embeds ${CUDA_VERSION}) — resolve the map against itself a few passes
+    # deep before using it to substitute into FROM lines.
+    local _pass _arg_name
+    for _pass in 1 2 3 4 5; do
+        for _arg_name in "${!_args[@]}"; do
+            local _other
+            for _other in "${!_args[@]}"; do
+                _args["$_arg_name"]="${_args[$_arg_name]//\$\{$_other\}/${_args[$_other]}}"
+                _args["$_arg_name"]="${_args[$_arg_name]//\$$_other/${_args[$_other]}}"
+            done
+        done
+    done
+
+    # Multi-stage builds: a FROM can reference an earlier stage's "AS <name>"
+    # alias instead of a real registry image (e.g. "FROM build AS base") —
+    # track aliases seen so far and skip those, since they aren't pullable.
+    local -A _stage_names=()
+    local _val _arg_name _alias
+    while IFS= read -r _line; do
+        [[ "$_line" =~ ^FROM[[:space:]]+([^[:space:]]+)([[:space:]]+[Aa][Ss][[:space:]]+([^[:space:]]+))? ]] || continue
+        _val="${BASH_REMATCH[1]}"; _alias="${BASH_REMATCH[3]}"
+        if [ -z "${_stage_names[$_val]:-}" ]; then
+            # $VAR / ${VAR} can appear anywhere in the ref (e.g. "node:$NODE_VERSION").
+            for _arg_name in "${!_args[@]}"; do
+                _val="${_val//\$\{$_arg_name\}/${_args[$_arg_name]}}"
+                _val="${_val//\$$_arg_name/${_args[$_arg_name]}}"
+            done
+            [ -n "$_val" ] && [ "$_val" != "scratch" ] && echo "$_val"
+        fi
+        [ -n "$_alias" ] && _stage_names["$_alias"]=1
+    done <<< "$_content" | sort -u
+}
+
 # Builds LLAMA_ASYM_IMAGE (the llama.cpp server with a CUDA Flash Attention
 # kernel for the q8_0 K / q4_0 V cache pair) when the asym KV mode selected
 # it as ENGINE_IMAGE and it doesn't exist yet. No-op otherwise. Called from
@@ -526,16 +579,45 @@ ensure_llama_asym_image() {
         --build-arg "http_proxy=$_http_proxy" --build-arg "https_proxy=$_http_proxy"
         --build-arg "HTTP_PROXY=$_http_proxy" --build-arg "HTTPS_PROXY=$_http_proxy")
 
+    # Pre-pull the Dockerfile's own base images (nvidia/cuda, node) through
+    # pull_image_if_missing rather than letting `docker build` fetch them: the
+    # Docker Desktop "docker:default" builder resolves a FROM tag from the
+    # local image store first and only hits the registry if it's missing, but
+    # its own registry client doesn't share pull_base_image_via_proxy's
+    # TLS/proxy handling — on a corporate MITM proxy that trips up buildkit's
+    # fetch (auth.docker.io cert errors) but not a plain `docker pull`.
+    local _base_img
+    while IFS= read -r _base_img; do
+        [ -n "$_base_img" ] || continue
+        pull_image_if_missing "$_base_img" || {
+            release_lock "$_lock_dir"; LLAMA_BUILD_LOCK_HELD=false
+            echo -e "${RED}✘ Couldn't pull base image ${_base_img} needed for the build${NC}"
+            exit 1
+        }
+    done < <(_llama_dockerfile_base_images "$_ref" "$_http_proxy")
+
     echo -e "${ICON_GEAR} Building llama.cpp ${CYAN}${_ref}${NC} with the asymmetric KV cache kernel (GPU arch ${_archs})..."
     echo -e "${YELLOW}  One-time build, typically 10-30 minutes. If it runs out of memory, give Docker Desktop more RAM.${NC}"
-    if ! docker build \
-        -f .devops/cuda.Dockerfile --target server \
-        --build-arg "CUDA_DOCKER_ARCH=${_archs} -DGGML_CUDA_FA_QUANTS=${_fa_quants}" \
-        --build-arg "APP_VERSION=${_ref}" \
-        --label "ai-coder.llama-ref=${_ref}" \
-        "${_proxy_args[@]}" \
-        -t "$LLAMA_ASYM_IMAGE" \
-        "https://github.com/ggml-org/llama.cpp.git#${_ref}"; then
+    # Retried once: transient Ubuntu/CUDA mirror hiccups inside the upstream
+    # Dockerfile's apt-get step ("Mirror sync in progress?") are common and
+    # BuildKit's layer cache means a retry only redoes the failed step, not
+    # the whole build.
+    local _attempt _build_ok=false
+    for _attempt in 1 2; do
+        if docker build \
+            -f .devops/cuda.Dockerfile --target server \
+            --build-arg "CUDA_DOCKER_ARCH=${_archs} -DGGML_CUDA_FA_QUANTS=${_fa_quants}" \
+            --build-arg "APP_VERSION=${_ref}" \
+            --label "ai-coder.llama-ref=${_ref}" \
+            "${_proxy_args[@]}" \
+            -t "$LLAMA_ASYM_IMAGE" \
+            "https://github.com/ggml-org/llama.cpp.git#${_ref}"; then
+            _build_ok=true
+            break
+        fi
+        [ "$_attempt" = 1 ] && echo -e "${YELLOW}  Build failed — retrying once (may be a transient mirror error)...${NC}"
+    done
+    if [ "$_build_ok" != true ]; then
         release_lock "$_lock_dir"; LLAMA_BUILD_LOCK_HELD=false
         echo -e "${RED}✘ llama.cpp build failed${NC}"
         echo -e "${YELLOW}  Pick the full (q8_0/q8_0) or q4_0 KV cache with: ${CYAN}ai --model${NC}"
