@@ -35,13 +35,12 @@ EOF
 }
 
 start_workbench() {
-    local _model_id="${MODEL_FILE##*/}"; _model_id="${_model_id%.gguf}"
     run_workbench \
         -v "$(to_host_path "$HOME/.npm-cache"):/root/.npm" \
         -v "$(to_host_path "$HOME/.qwen-config"):/root/.qwen" \
         -e OPENAI_API_KEY="${LOCAL_API_KEY}" \
-        -e OPENAI_BASE_URL="http://$GLOBAL_ENGINE_NAME:$ENGINE_PORT/v1" \
-        -e OPENAI_MODEL="$_model_id"
+        -e OPENAI_BASE_URL="$ENGINE_URL/v1" \
+        -e OPENAI_MODEL="$(model_id)"
 }
 
 execute_tool() {

@@ -87,8 +87,6 @@ EOF
 }
 
 start_workbench() {
-    local _model_id="${MODEL_FILE##*/}"
-    _model_id="${_model_id%.gguf}"
     # SGLang's radix prefix cache only hits across turns when Claude Code
     # stops prepending its per-request attribution header to the system
     # prompt (SGLang's own Claude Code guidance).
@@ -99,9 +97,9 @@ start_workbench() {
         -v "$(to_host_path "$HOME/.npm-cache"):/root/.npm" \
         -v "$(to_host_path "$HOME/.claude-config"):/root/.claude" \
         -v "$(to_host_path "$HOME/.claude-config.json"):/root/.claude.json" \
-        -e ANTHROPIC_BASE_URL="http://$GLOBAL_ENGINE_NAME:$ENGINE_PORT" \
+        -e ANTHROPIC_BASE_URL="$ENGINE_URL" \
         -e ANTHROPIC_API_KEY="${LOCAL_API_KEY}" \
-        -e ANTHROPIC_MODEL="$_model_id"
+        -e ANTHROPIC_MODEL="$(model_id)"
 }
 
 execute_tool() {

@@ -305,7 +305,7 @@ npm-package | server-key | command | arg1 arg2 ... | ENV_VAR1,ENV_VAR2 | net
 
 Lines starting with `#` and blank lines are ignored.
 
-> **Goose is the one exception.** It doesn't accept the Claude/Gemini-style JSON `mcpServers` config, so `_goose_mcp_extensions_yaml()` in `agents/ai-coder-goose.sh` renders the same pipe-delimited files into goose's YAML `extensions:` block instead. The file format above is identical — only the agent-side renderer differs.
+> **Goose is the one exception.** It doesn't accept the Claude/Gemini-style JSON `mcpServers` config, so `_goose_mcp_extension_yaml()` in `agents/ai-coder-goose.sh` renders the same pipe-delimited files (walked by the shared `_mcp_each_server` in `libs/ai-coder-env.sh`) into goose's YAML `extensions:` block instead. The file format above is identical — only the agent-side renderer differs.
 
 #### Core servers (`mcp-common.txt`) — always registered
 

@@ -74,7 +74,7 @@ _run_selection_menu() {
             else
                 echo "  $i) $_name"
             fi
-            (( i++ ))
+            i=$((i + 1))
         done
         echo "  q) Quit"
         [ -n "$default_choice" ] && echo -n "Selection [$default_choice]: " || echo -n "Selection: "

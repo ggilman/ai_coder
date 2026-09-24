@@ -85,7 +85,7 @@ _bundle_choose() {
     local i=1
     for _n in "${names[@]}"; do
         echo -e "  $i)  $_n" >&2
-        (( i++ ))
+        i=$((i + 1))
     done
     echo -ne "\nSelection [1-${#names[@]}]: " >&2
     local sel

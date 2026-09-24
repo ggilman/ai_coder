@@ -18,65 +18,38 @@ build_image() {
 RUN goose --version"
 }
 
-# Emit a goose config.yaml `extensions:` block from the same pipe-delimited
-# mcp-*.txt files the other agents use (see make_mcp_servers_json in
-# ai-coder-env.sh). Goose's YAML extension schema doesn't fit that JSON-only
-# helper, so this is a small standalone equivalent for the same file format.
-_goose_mcp_extensions_yaml() {
-    local workspace="$1"; shift
-    local file pkg key cmd args_str env_vars_str net_req
-    for file in "$@"; do
-        [ -f "$file" ] || continue
-        while IFS='|' read -r pkg key cmd args_str env_vars_str net_req; do
-            pkg=$(printf '%s' "$pkg" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-            pkg="${pkg#pip:}"
-            [[ "$pkg" =~ ^# ]] && continue
-            [ -z "$pkg" ] && continue
-            net_req=$(printf '%s' "${net_req:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-            [ "$net_req" = "online" ] && [ "${NETWORK_INTERNAL:-false}" = "true" ] && continue
-            key=$(printf '%s' "$key" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-            cmd=$(printf '%s' "$cmd" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-            args_str=$(printf '%s' "$args_str" | tr -d '\r' | \
-                sed "s|{workspace}|$workspace|g;s/^[[:space:]]*//;s/[[:space:]]*$//")
+# _mcp_each_server callback (ai-coder-env.sh) emitting one entry of goose's
+# config.yaml `extensions:` block — the same mcp-*.txt manifests the other
+# agents register as JSON. Values are double-quoted YAML, whose escapes are
+# JSON-compatible, so _mcp_json_escape covers them.
+_goose_mcp_extension_yaml() {
+    local key="$1" cmd="$2" args_str="$3" env_specs="$4" workspace="$5"
+    printf '  %s:\n    enabled: true\n    type: stdio\n    cmd: "%s"\n' "$key" "$(_mcp_json_escape "$cmd")"
+    if [ -n "$args_str" ]; then
+        printf '    args:\n'
+        local a
+        for a in $args_str; do printf '      - "%s"\n' "$(_mcp_json_escape "$a")"; done
+    else
+        printf '    args: []\n'
+    fi
 
-            printf '  %s:\n    enabled: true\n    type: stdio\n    cmd: "%s"\n' "$key" "$cmd"
-            if [ -n "$args_str" ]; then
-                printf '    args:\n'
-                local a
-                for a in $args_str; do printf '      - "%s"\n' "$a"; done
-            else
-                printf '    args: []\n'
-            fi
-
-            env_vars_str=$(printf '%s' "${env_vars_str:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-            if [ -n "$env_vars_str" ]; then
-                printf '    envs:\n'
-                local en env_names
-                IFS=',' read -ra env_names <<< "$env_vars_str"
-                for en in "${env_names[@]}"; do
-                    en=$(printf '%s' "$en" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-                    [ -z "$en" ] && continue
-                    if [[ "$en" == *=* ]]; then
-                        local ek="${en%%=*}" ev="${en#*=}"
-                        ev=$(printf '%s' "$ev" | sed "s|{workspace}|$workspace|g")
-                        printf '      %s: "%s"\n' "$ek" "$ev"
-                    else
-                        printf '      %s: "%s"\n' "$en" "${!en:-}"
-                    fi
-                done
-            else
-                printf '    envs: {}\n'
-            fi
-            printf '    timeout: 300\n'
-        done < "$file"
-    done
+    local pairs; pairs=$(_mcp_env_pairs "$env_specs" "$workspace")
+    if [ -n "$pairs" ]; then
+        printf '    envs:\n'
+        local pair
+        while IFS= read -r pair; do
+            printf '      %s: "%s"\n' "${pair%%=*}" "$(_mcp_json_escape "${pair#*=}")"
+        done <<< "$pairs"
+    else
+        printf '    envs: {}\n'
+    fi
+    printf '    timeout: 300\n'
 }
 
 configure_workbench() {
     local config_dir="$HOME/.goose-config"
     # Docker runs as root so mounted dir files can become root-owned on the WSL host.
     ensure_host_dir_writable "$config_dir"
-    local _model_id="${MODEL_FILE##*/}"; _model_id="${_model_id%.gguf}"
 
     local mcp_files=("$PACKAGES_DIR/mcp-common.txt")
     [ "$(read_setting mcp_extras)" = "yes" ] && mcp_files+=("$PACKAGES_DIR/mcp-extra.txt")
@@ -88,12 +61,12 @@ configure_workbench() {
     # stored here, OPENAI_API_KEY is injected via env var in start_workbench.
     cat > "$config_dir/config.yaml" <<EOF
 GOOSE_PROVIDER: openai
-GOOSE_MODEL: $_model_id
+GOOSE_MODEL: $(model_id)
 GOOSE_DISABLE_KEYRING: "1"
-OPENAI_HOST: http://$GLOBAL_ENGINE_NAME:$ENGINE_PORT
+OPENAI_HOST: $ENGINE_URL
 OPENAI_BASE_PATH: v1/chat/completions
 extensions:
-$(_goose_mcp_extensions_yaml "/$WORKSPACE_DIR" "${mcp_files[@]}")
+$(_mcp_each_server _goose_mcp_extension_yaml "/$WORKSPACE_DIR" "${mcp_files[@]}")
 EOF
 }
 

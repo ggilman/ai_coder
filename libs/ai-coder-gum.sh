@@ -10,6 +10,8 @@
 # BASH_SOURCE-relative paths.
 # ==============================================================================
 
+source "$(dirname "${BASH_SOURCE[0]}")/ai-coder-asset.sh"
+
 # ------------------------------------------------------------------------------
 # _download_gum_binary — download+extract a specific gum platform build
 #
@@ -28,45 +30,7 @@ _download_gum_binary() {
     fi
 
     mkdir -p "$_gum_dir"
-    [ -f "$_gum_dir/$gum_exe_name" ] && return 0
-
-    set +e
-    local _proxy_opt=""
-    # Fetch the proxy without depending on functions defined later: read
-    # user/settings.json with jq when a jq is already resolvable, else fall
-    # back to the ONE-GENERATION legacy flat grep of user/settings.conf
-    # (removable next release), else env. (Same strategy as _download_jq_binary.)
-    local _cur_proxy=""
-    local _rel_assets="$(dirname "${BASH_SOURCE[0]}")/../.assets"
-    local _settings_json="$(dirname "${BASH_SOURCE[0]}")/../user/settings.json"
-    local _settings_conf="$(dirname "${BASH_SOURCE[0]}")/../user/settings.conf"
-    # Only the current platform's .assets build (both may be present): Git
-    # Bash can't run the Linux ELF, and WSL/Linux shouldn't use jq.exe.
-    local _jq_probe="" _jq_asset="jq"
-    [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && _jq_asset="jq.exe"
-    if command -v jq &>/dev/null; then
-        _jq_probe="jq"
-    elif [ -f "$_rel_assets/$_jq_asset" ]; then
-        _jq_probe="$_rel_assets/$_jq_asset"
-    fi
-    if [ -n "$_jq_probe" ]; then
-        _cur_proxy=$("$_jq_probe" -r '(.proxy // empty)' "$_settings_json" 2>/dev/null || true)
-    fi
-    [ -z "$_cur_proxy" ] && _cur_proxy=$(grep "^proxy=" "$_settings_conf" 2>/dev/null | cut -d= -f2- || true)
-    # Also check if HTTP_PROXY/HTTPS_PROXY environment variables are set
-    [ -z "$_cur_proxy" ] && _cur_proxy=${HTTPS_PROXY:-${HTTP_PROXY:-${https_proxy:-${http_proxy:-}}}}
-    # Ensure we use -x for curl proxy. resolve_proxy_to_ip (ai-coder-env.sh) is
-    # only available via the full launch chain; this file is also sourced
-    # standalone (see header), so fall back to the raw proxy URL when it's
-    # not defined rather than erroring on an undefined function.
-    if [ -n "$_cur_proxy" ]; then
-        local _proxy_normalized; _proxy_normalized=$(echo "$_cur_proxy" | sed 's|^https://|http://|')
-        if declare -f resolve_proxy_to_ip >/dev/null 2>&1; then
-            _proxy_opt="-x $(resolve_proxy_to_ip "$_proxy_normalized")"
-        else
-            _proxy_opt="-x $_proxy_normalized"
-        fi
-    fi
+    _asset_present "$_gum_dir" "$gum_exe_name" && return 0
 
     # Windows builds are only published for x86_64 — gum_arch (which can be
     # arm64) only matters for the Linux search/fallback below.
@@ -74,55 +38,37 @@ _download_gum_binary() {
     [ "$platform" = "Windows" ] && search_arch="x86_64"
 
     local download_url
-    download_url=$(curl -sL $_proxy_opt --max-time 15 \
-        "https://api.github.com/repos/charmbracelet/gum/releases/latest" \
-        | grep "browser_download_url" \
-        | grep -i "${platform}_${search_arch}" \
-        | grep -i "${ext}" \
-        | grep -v "sbom" \
-        | grep -v ".sig" \
-        | grep -v ".pem" \
-        | cut -d'"' -f4 | head -n1 || true)
+    download_url=$(_asset_release_url charmbracelet/gum \
+        "https://github.com/charmbracelet/gum/releases/download/v0.17.0/gum_0.17.0_${platform}_${search_arch}${ext}" \
+        'sbom|\.sig|\.pem' "${platform}_${search_arch}" "$ext")
 
-    if [ -z "$download_url" ]; then
-        echo "⚠ Proxy block detected or no match. Falling back to hardcoded URL for Gum..."
-        download_url="https://github.com/charmbracelet/gum/releases/download/v0.17.0/gum_0.17.0_${platform}_${search_arch}${ext}"
-    fi
-
-    echo " Downloading asset from: $download_url"
-    local dl_status
-    if [ "$platform" = "Windows" ]; then
-        curl -sL $_proxy_opt --max-time 15 "$download_url" -o "$_gum_dir/gum.zip"
-        dl_status=$?
-        if command -v unzip >/dev/null 2>&1; then
-            unzip -o "$_gum_dir/gum.zip" -d "$_gum_dir" &>/dev/null
-        elif command -v tar >/dev/null 2>&1; then
-            tar -xf "$_gum_dir/gum.zip" -C "$_gum_dir" &>/dev/null
+    # Download and extract in a scratch dir, then move only the binary into
+    # place, so a failed run never leaves a partial gum behind. tar runs from
+    # inside the work dir: GNU tar reads a "C:/..." archive path as host:path.
+    local _work="$_gum_dir/.gum-download"
+    rm -rf "$_work"; mkdir -p "$_work"
+    local archive="$_work/gum$ext"
+    if _asset_fetch "$download_url" "$archive"; then
+        if [ "$ext" = ".zip" ]; then
+            if command -v unzip >/dev/null 2>&1; then
+                unzip -o "$archive" -d "$_work" &>/dev/null || true
+            elif command -v tar >/dev/null 2>&1; then
+                (cd "$_work" && tar -xf "gum$ext") &>/dev/null || true
+            else
+                local _py="import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])"
+                python3 -c "$_py" "$archive" "$_work" 2>/dev/null || \
+                    python -c "$_py" "$archive" "$_work" 2>/dev/null || true
+            fi
         else
-            python3 -c "import zipfile; zipfile.ZipFile('$_gum_dir/gum.zip', 'r').extractall('$_gum_dir')" 2>/dev/null || \
-            python -c "import zipfile; zipfile.ZipFile('$_gum_dir/gum.zip', 'r').extractall('$_gum_dir')" 2>/dev/null
+            (cd "$_work" && tar -xzf "gum$ext") &>/dev/null || true
         fi
-        [ -d "$_gum_dir/gum_0.17.0_Windows_x86_64" ] && mv "$_gum_dir/gum_0.17.0_Windows_x86_64/gum.exe" "$_gum_dir/gum.exe" 2>/dev/null
-        [ -d "$_gum_dir/gum_0.14.3_Windows_x86_64" ] && mv "$_gum_dir/gum_0.14.3_Windows_x86_64/gum.exe" "$_gum_dir/gum.exe" 2>/dev/null
-        [ -f "$_gum_dir/gum.exe" ] || find "$_gum_dir" -name "gum.exe" -exec mv {} "$_gum_dir/gum.exe" \; 2>/dev/null
-        rm -f "$_gum_dir/gum.zip"
-        find "$_gum_dir" -maxdepth 1 -type d -name "gum_*" -exec rm -rf {} + 2>/dev/null
-    else
-        curl -sL $_proxy_opt --max-time 15 "$download_url" -o "$_gum_dir/gum.tar.gz"
-        dl_status=$?
-        tar -xzf "$_gum_dir/gum.tar.gz" -C "$_gum_dir" &>/dev/null
-        find "$_gum_dir" -type f -name "gum" -exec mv {} "$_gum_dir/" \; &>/dev/null
-        rm -f "$_gum_dir/gum.tar.gz"
-        find "$_gum_dir" -maxdepth 1 -type d -name "gum_*" -exec rm -rf {} + 2>/dev/null
+        local _bin; _bin=$(find "$_work" -type f -name "$gum_exe_name" 2>/dev/null | head -n1 || true)
+        [ -n "$_bin" ] && mv -f "$_bin" "$_gum_dir/$gum_exe_name"
     fi
-    set -e
+    rm -rf "$_work"
 
-    if [ $dl_status -ne 0 ] || [ ! -f "$_gum_dir/$gum_exe_name" ]; then
-        return 1
-    fi
-
+    _asset_present "$_gum_dir" "$gum_exe_name" || return 1
     chmod +x "$_gum_dir/$gum_exe_name" 2>/dev/null || return 1
-    return 0
 }
 
 # ------------------------------------------------------------------------------
@@ -132,33 +78,13 @@ _download_gum_binary() {
 # already on PATH or installed in that directory, returns immediately.
 # ------------------------------------------------------------------------------
 ensure_gum() {
-    local gum_exe_name="gum"
-    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-        gum_exe_name="gum.exe"
-    fi
-
-    local _gum_dir
-    _gum_dir="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)/../.assets"
-    mkdir -p "$_gum_dir"
-
     echo -ne "⚡ Checking for interface engine (gum)... "
     command -v gum &>/dev/null && { echo "found in PATH"; return 0; }
-    [ -f "$_gum_dir/$gum_exe_name" ] && { echo "found locally"; return 0; }
+    _asset_resolve gum >/dev/null && { echo "found locally"; return 0; }
     echo "not found."
 
     echo "⚡ Bootstrapping status interface engine..."
-
-    local arch; arch=$(uname -m)
-    local gum_arch="x86_64"
-    case "$arch" in
-        x86_64|amd64) gum_arch="x86_64" ;;
-        aarch64|arm64) gum_arch="arm64" ;;
-    esac
-
-    local platform="Linux"
-    [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && platform="Windows"
-
-    if _download_gum_binary "$platform" "$gum_arch" "$_gum_dir"; then
+    if _download_gum_binary "$(_asset_host_platform)" "$(_asset_host_arch)" "$(_asset_dir)"; then
         echo "✅ Setup interface engine ready!"
     else
         echo "⚠ Failed to download gum — running without interface enhancements."
@@ -172,22 +98,6 @@ ensure_gum() {
 # Returns 0 on success, 1 if gum is not found anywhere.
 # ------------------------------------------------------------------------------
 resolve_gum_cmd() {
-    local _gum_dir
-    _gum_dir="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)/../.assets"
-    local gum_exe_name="gum"
-    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-        gum_exe_name="gum.exe"
-    fi
-
-    if command -v gum &> /dev/null; then
-        GUM_CMD="gum"
-        return 0
-    fi
-
-    if [ -f "$_gum_dir/$gum_exe_name" ]; then
-        GUM_CMD="$_gum_dir/$gum_exe_name"
-        return 0
-    fi
-
-    return 1
+    local _gum; _gum=$(_asset_resolve gum) || return 1
+    GUM_CMD="$_gum"
 }

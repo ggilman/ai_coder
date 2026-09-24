@@ -9,6 +9,8 @@
 # BASH_SOURCE-relative paths.
 # ==============================================================================
 
+source "$(dirname "${BASH_SOURCE[0]}")/ai-coder-asset.sh"
+
 # ------------------------------------------------------------------------------
 # _download_jq_binary - download a specific jq platform build
 #
@@ -31,74 +33,23 @@ _download_jq_binary() {
     fi
 
     mkdir -p "$_jq_dir"
-    [ -f "$_jq_dir/$jq_exe_name" ] && return 0
+    _asset_present "$_jq_dir" "$jq_exe_name" && return 0
 
-    set +e
-    local _proxy_opt=""
-    # Stored proxy, like _download_gum_binary: settings.json first (only when a
-    # jq is already resolvable to read it with), else ONE-GENERATION legacy
-    # flat grep of user/settings.conf (removable next release), else env.
-    local _cur_proxy=""
-    # Resolve a jq to read the stored proxy with: system binary first, then a
-    # previously-downloaded .assets copy for the CURRENT platform (the one
-    # being downloaded may be the other platform's, for offline/bundle.sh —
-    # Git Bash can't run the Linux ELF). Bare `jq` alone would miss the
-    # .assets-only case.
-    local _jq_bin=""
-    resolve_jq_cmd &>/dev/null && _jq_bin="$JQ_CMD"
-    if [ -n "$_jq_bin" ]; then
-        _cur_proxy=$("$_jq_bin" -r '(.proxy // empty)' "$(dirname "${BASH_SOURCE[0]}")/../user/settings.json" 2>/dev/null || true)
-    fi
-    [ -z "$_cur_proxy" ] && _cur_proxy=$(grep "^proxy=" "$(dirname "${BASH_SOURCE[0]}")/../user/settings.conf" 2>/dev/null | cut -d= -f2- || true)
-    [ -z "$_cur_proxy" ] && _cur_proxy=${HTTPS_PROXY:-${HTTP_PROXY:-${https_proxy:-${http_proxy:-}}}}
-    # resolve_proxy_to_ip (ai-coder-env.sh) is only available via the full
-    # launch chain; this file is also sourced standalone (see header), so fall
-    # back to the raw proxy URL when it's not defined rather than error.
-    if [ -n "$_cur_proxy" ]; then
-        local _proxy_normalized; _proxy_normalized=$(echo "$_cur_proxy" | sed 's|^https://|http://|')
-        if declare -f resolve_proxy_to_ip >/dev/null 2>&1; then
-            _proxy_opt="-x $(resolve_proxy_to_ip "$_proxy_normalized")"
-        else
-            _proxy_opt="-x $_proxy_normalized"
-        fi
-    fi
-
-    # Windows builds are only published for x86_64; the Linux arm64 search
-    # below still honors jq_arch (which can be arm64).
-    local search_arch="$jq_arch"
-    [ "$platform" = "Windows" ] && search_arch="x86_64"
+    # Windows builds are only published for x86_64; Linux honors jq_arch
+    # (which can be arm64).
     local asset_arch="amd64"
-    [ "$search_arch" = "arm64" ] && asset_arch="arm64"
+    [ "$platform" != "Windows" ] && [ "$jq_arch" = "arm64" ] && asset_arch="arm64"
 
     local asset_base="jq-${asset_os}-${asset_arch}"
     [ "$platform" = "Windows" ] && asset_base+=".exe"
 
     local download_url
-    download_url=$(curl -sL $_proxy_opt --max-time 15 \
-        "https://api.github.com/repos/jqlang/jq/releases/latest" \
-        | grep "browser_download_url" \
-        | grep "${asset_base}" \
-        | grep -v "sha256" \
-        | grep -v "sbom" \
-        | cut -d'"' -f4 | head -n1 || true)
+    download_url=$(_asset_release_url jqlang/jq \
+        "https://github.com/jqlang/jq/releases/download/jq-1.8.2/${asset_base}" \
+        'sha256|sbom' "$asset_base")
 
-    if [ -z "$download_url" ]; then
-        echo "⚠ Proxy block detected or no match. Falling back to hardcoded URL for jq..."
-        download_url="https://github.com/jqlang/jq/releases/download/jq-1.8.2/${asset_base}"
-    fi
-
-    echo " Downloading asset from: $download_url"
-    local dl_status
-    curl -sL $_proxy_opt --max-time 15 "$download_url" -o "$_jq_dir/$jq_exe_name"
-    dl_status=$?
-    set -e
-
-    if [ $dl_status -ne 0 ] || [ ! -f "$_jq_dir/$jq_exe_name" ]; then
-        return 1
-    fi
-
+    _asset_fetch "$download_url" "$_jq_dir/$jq_exe_name" || return 1
     chmod +x "$_jq_dir/$jq_exe_name" 2>/dev/null || return 1
-    return 0
 }
 
 # ------------------------------------------------------------------------------
@@ -108,34 +59,13 @@ _download_jq_binary() {
 # already on PATH or installed in that directory, returns immediately.
 # ------------------------------------------------------------------------------
 ensure_jq() {
-    local jq_exe_name="jq"
-    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-        jq_exe_name="jq.exe"
-    fi
-
-    local _jq_dir
-    _jq_dir="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)/../.assets"
-    mkdir -p "$_jq_dir"
-
     # Silent when jq is already available (PATH or .assets); the bootstrap
     # message only appears when a download is actually needed, so it doesn't
     # add startup noise on machines that already have jq.
-    command -v jq &>/dev/null && return 0
-    [ -f "$_jq_dir/$jq_exe_name" ] && return 0
+    _asset_resolve jq >/dev/null && return 0
 
     echo "⚡ Bootstrapping JSON engine (jq)..."
-
-    local arch; arch=$(uname -m)
-    local jq_arch="x86_64"
-    case "$arch" in
-        x86_64|amd64) jq_arch="x86_64" ;;
-        aarch64|arm64) jq_arch="arm64" ;;
-    esac
-
-    local platform="Linux"
-    [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && platform="Windows"
-
-    if _download_jq_binary "$platform" "$jq_arch" "$_jq_dir"; then
+    if _download_jq_binary "$(_asset_host_platform)" "$(_asset_host_arch)" "$(_asset_dir)"; then
         echo "✅ JSON engine ready!"
     else
         echo "⚠ Failed to download jq - user settings will fall back to defaults."
@@ -146,25 +76,31 @@ ensure_jq() {
 # resolve_jq_cmd - resolve the active jq binary into JQ_CMD
 #
 # Priority: PATH binary > installed binary (jq.exe preferred on Windows).
+# On Git Bash, JQ_CMD is the _jq_host_paths wrapper instead (see below).
 # Returns 0 on success, 1 if jq is not found anywhere.
 # ------------------------------------------------------------------------------
 resolve_jq_cmd() {
-    local _jq_dir
-    _jq_dir="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)/../.assets"
-    local jq_exe_name="jq"
+    local _jq; _jq=$(_asset_resolve jq) || return 1
     if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-        jq_exe_name="jq.exe"
+        _JQ_BIN="$_jq"
+        JQ_CMD="_jq_host_paths"
+    else
+        JQ_CMD="$_jq"
     fi
+}
 
-    if command -v jq &>/dev/null; then
-        JQ_CMD="jq"
-        return 0
-    fi
-
-    if [ -f "$_jq_dir/$jq_exe_name" ]; then
-        JQ_CMD="$_jq_dir/$jq_exe_name"
-        return 0
-    fi
-
-    return 1
+# Run jq with absolute file arguments converted to Windows form. The launch
+# chain exports MSYS_NO_PATHCONV=1 (ai-coder-core.sh), so a Windows-native
+# jq.exe would otherwise be handed /d/... paths it can't open — every
+# settings read silently fell back to defaults on Git Bash.
+_jq_host_paths() {
+    local _a _args=()
+    for _a in "$@"; do
+        if [[ "$_a" == /* ]] && [ -e "$_a" ]; then
+            _args+=("$(cygpath -m "$_a")")
+        else
+            _args+=("$_a")
+        fi
+    done
+    "$_JQ_BIN" "${_args[@]}"
 }

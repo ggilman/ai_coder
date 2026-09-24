@@ -17,7 +17,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/ai-coder-gum.sh"
 UI_GUM=false
 # GUM_CMD — resolved gum binary path, set by resolve_gum_cmd in ui_init
 GUM_CMD=""
-UI_BACKTITLE="ai-coder setup"
 
 # Beautiful CLI Theme Colors (256-color compatible)
 COLOR_ACCENT='\033[38;5;81m'     # Cyan

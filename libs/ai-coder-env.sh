@@ -142,68 +142,36 @@ _mcp_json_escape() {
     printf '%s' "$s"
 }
 
-_mcp_build_env_json() {
-    # Parses comma-separated env var specs into a JSON env fragment.
-    # "NAME"        → expands $NAME from the calling environment
-    # "NAME=value"  → literal value (supports {workspace} substitution)
-    # Output: ', "env": {...}' / ', "environment": {...}' or empty.
-    local env_vars_str="$1" workspace="$2" mode="$3"
+# Resolve comma-separated manifest env specs to NAME=value lines:
+# "NAME"        → expands $NAME from the calling environment
+# "NAME=value"  → literal value (supports {workspace} substitution)
+_mcp_env_pairs() {
+    local env_vars_str="$1" workspace="$2" env_name env_names
     [ -z "$env_vars_str" ] && return
-    local env_parts=() env_name
     IFS=',' read -ra env_names <<< "$env_vars_str"
     for env_name in "${env_names[@]}"; do
         env_name=$(_mcp_trim "$env_name")
         [ -z "$env_name" ] && continue
         if [[ "$env_name" == *=* ]]; then
-            local ev_key="${env_name%%=*}"
-            local ev_val; ev_val=$(printf '%s' "${env_name#*=}" | sed "s|{workspace}|$workspace|g")
-            env_parts+=("\"$ev_key\": \"$(_mcp_json_escape "$ev_val")\"")
+            printf '%s\n' "$env_name" | sed "s|{workspace}|$workspace|g"
         else
-            env_parts+=("\"$env_name\": \"$(_mcp_json_escape "${!env_name:-}")\"")
+            printf '%s=%s\n' "$env_name" "${!env_name:-}"
         fi
     done
-    [ "${#env_parts[@]}" -eq 0 ] && return
-    local env_joined; env_joined=$(printf ',%s' "${env_parts[@]}")
-    local env_field="env"
-    [ "$mode" = "opencode" ] && env_field="environment"
-    printf ', "%s": {%s}' "$env_field" "${env_joined:1}"
 }
 
-_mcp_format_entry() {
-    # Formats one MCP server JSON entry for the given mode.
-    # standard (Claude/Gemini): {"command": "...", "args": [...], "env": {...}}
-    # opencode:                 {"type": "local", "command": [...], "enabled": true, "environment": {...}}
-    local mode="$1" key="$2" cmd="$3" args_str="$4" env_json="$5"
-    local arr=() a
-    for a in $args_str; do arr+=("\"$(_mcp_json_escape "$a")\""); done
-    if [ "$mode" = "opencode" ]; then
-        local oc_arr=("\"$cmd\"")
-        [ "${#arr[@]}" -gt 0 ] && oc_arr+=("${arr[@]}")
-        local oc_joined; oc_joined=$(printf ',%s' "${oc_arr[@]}")
-        printf '    "%s": {"type": "local", "command": [%s], "enabled": true%s}' \
-            "$key" "${oc_joined:1}" "$env_json"
-    else
-        local args_json="[]"
-        if [ "${#arr[@]}" -gt 0 ]; then
-            local joined; joined=$(printf ',%s' "${arr[@]}"); args_json="[${joined:1}]"
-        fi
-        printf '    "%s": {"command": "%s", "args": %s%s}' "$key" "$cmd" "$args_json" "$env_json"
-    fi
-}
-
-# Emit indented mcpServers JSON entries from one or more server list files.
-# Usage: make_mcp_servers_json <workspace-path> <mode> <file1> [file2 ...]
-# mode: "standard" (Claude / Gemini format) or "opencode"
-# File format (pipe-delimited): npm-pkg | server-key | command | arg1 arg2 ... | ENV_VAR1,ENV_VAR2 | net
-# Use {workspace} in args as a placeholder for <workspace-path>.
-# The optional 5th field lists env var *names* (comma-separated) whose values are
-# expanded from the calling environment and embedded in the generated config.
-# The optional 6th field: set to "online" to skip the server when NETWORK_INTERNAL=true.
-make_mcp_servers_json() {
-    local workspace="$1" mode="${2:-standard}"
+# Walk pipe-delimited MCP server manifests and call <callback> once for every
+# server to register this launch, as:
+#   <callback> <key> <command> <args> <env-specs> <workspace-path>
+# with each field trimmed and {workspace} in args replaced by <workspace-path>.
+# File format: npm-pkg | server-key | command | arg1 arg2 ... | ENV_SPECS | net
+# The optional 5th field lists env specs (see _mcp_env_pairs). The optional
+# 6th field: set to "online" to skip the server when NETWORK_INTERNAL=true.
+# Usage: _mcp_each_server <callback> <workspace-path> <file1> [file2 ...]
+_mcp_each_server() {
+    local callback="$1" workspace="$2"
     shift 2
-    local entries=()
-    local file
+    local file pkg key cmd args_str env_vars_str net_req
     for file in "$@"; do
         [ -f "$file" ] || continue
         while IFS='|' read -r pkg key cmd args_str env_vars_str net_req; do
@@ -211,22 +179,57 @@ make_mcp_servers_json() {
             [[ "$pkg" =~ ^# ]] && continue
             [ -z "$pkg" ] && continue
             [ "$(_mcp_trim "${net_req:-}")" = "online" ] && [ "${NETWORK_INTERNAL:-false}" = "true" ] && continue
-            key=$(_mcp_trim "$key")
-            cmd=$(_mcp_trim "$cmd")
             args_str=$(printf '%s' "$args_str" | tr -d '\r' | \
                 sed "s|{workspace}|$workspace|g;s/^[[:space:]]*//;s/[[:space:]]*$//")
-            local env_json; env_json=$(_mcp_build_env_json "$(_mcp_trim "${env_vars_str:-}")" "$workspace" "$mode")
-            entries+=("$(_mcp_format_entry "$mode" "$key" "$cmd" "$args_str" "$env_json")")
+            "$callback" "$(_mcp_trim "$key")" "$(_mcp_trim "$cmd")" "$args_str" \
+                "$(_mcp_trim "${env_vars_str:-}")" "$workspace"
         done < "$file"
     done
-    local i
-    for i in "${!entries[@]}"; do
-        if [ "$i" -lt $(( ${#entries[@]} - 1 )) ]; then
-            printf '%s,\n' "${entries[$i]}"
-        else
-            printf '%s\n' "${entries[$i]}"
+}
+
+# _mcp_each_server callback printing one mcpServers JSON entry per line, in
+# the format named by _mcp_mode (a local of make_mcp_servers_json):
+# standard (Claude/Gemini): {"command": "...", "args": [...], "env": {...}}
+# opencode:                 {"type": "local", "command": [...], "enabled": true, "environment": {...}}
+_mcp_json_entry() {
+    local key="$1" cmd="$2" args_str="$3" env_specs="$4" workspace="$5"
+    local arr=() a
+    for a in $args_str; do arr+=("\"$(_mcp_json_escape "$a")\""); done
+
+    local env_json="" env_parts=() pair
+    while IFS= read -r pair; do
+        env_parts+=("\"${pair%%=*}\": \"$(_mcp_json_escape "${pair#*=}")\"")
+    done < <(_mcp_env_pairs "$env_specs" "$workspace")
+    if [ "${#env_parts[@]}" -gt 0 ]; then
+        local env_joined; env_joined=$(printf ',%s' "${env_parts[@]}")
+        local env_field="env"
+        [ "$_mcp_mode" = "opencode" ] && env_field="environment"
+        env_json=$(printf ', "%s": {%s}' "$env_field" "${env_joined:1}")
+    fi
+
+    if [ "$_mcp_mode" = "opencode" ]; then
+        local oc_arr=("\"$cmd\"")
+        [ "${#arr[@]}" -gt 0 ] && oc_arr+=("${arr[@]}")
+        local oc_joined; oc_joined=$(printf ',%s' "${oc_arr[@]}")
+        printf '    "%s": {"type": "local", "command": [%s], "enabled": true%s}\n' \
+            "$key" "${oc_joined:1}" "$env_json"
+    else
+        local args_json="[]"
+        if [ "${#arr[@]}" -gt 0 ]; then
+            local joined; joined=$(printf ',%s' "${arr[@]}"); args_json="[${joined:1}]"
         fi
-    done
+        printf '    "%s": {"command": "%s", "args": %s%s}\n' "$key" "$cmd" "$args_json" "$env_json"
+    fi
+}
+
+# Emit indented, comma-separated mcpServers JSON entries from one or more
+# server manifests (file format: see _mcp_each_server).
+# Usage: make_mcp_servers_json <workspace-path> <mode> <file1> [file2 ...]
+# mode: "standard" (Claude / Gemini format) or "opencode"
+make_mcp_servers_json() {
+    local workspace="$1" _mcp_mode="${2:-standard}"
+    shift 2
+    _mcp_each_server _mcp_json_entry "$workspace" "$@" | sed '$!s/$/,/'
 }
 
 # Emit the mcpServers JSON entries an agent should register this launch:

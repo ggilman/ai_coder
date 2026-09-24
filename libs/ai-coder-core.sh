@@ -25,6 +25,9 @@ OPEN_WEBUI_HOST_PORT=3000
 # "expose host port" setting publishes ENGINE_PORT on localhost too.
 ENGINE_PORT=8080
 PROXY_PORT=4000
+# The engine as agents reach it over the Docker network (append /v1 for the
+# OpenAI-compatible API; Claude Code uses the bare URL for /v1/messages).
+ENGINE_URL="http://$GLOBAL_ENGINE_NAME:$ENGINE_PORT"
 MODEL_VOLUME_NAME="ai-coder-models"
 HUB_NETWORK="ai-engineering-net"
 HUB_ISOLATED_NET="ai-engineering-isolated"
@@ -159,7 +162,7 @@ get_litellm_config() {
     litellm_params:
       model: openai/local
       custom_llm_provider: openai
-      api_base: http://$GLOBAL_ENGINE_NAME:$ENGINE_PORT/v1
+      api_base: $ENGINE_URL/v1
       api_key: sk-1234
       timeout: 600
       stream_timeout: 600
@@ -193,6 +196,13 @@ resolve_resume_args() {
     if [ "$CONTINUE_SESSION" = "true" ] && [ -n "$RESUME_FLAG" ]; then
         RESUME_ARGS=("$RESUME_FLAG")
     fi
+}
+
+# The model name agents request: MODEL_FILE's basename minus any .gguf
+# (an SGLang snapshot directory has none).
+model_id() {
+    local _id="${MODEL_FILE##*/}"
+    printf '%s' "${_id%.gguf}"
 }
 
 # --- [ COMMANDS ] -------------------------------------------------------------
@@ -325,8 +335,8 @@ run_open_webui_container() {
     # just happen to share the same number).
     docker run -d --name "$_name" --network "$_wb_network" \
         -p "127.0.0.1:${OPEN_WEBUI_HOST_PORT}:8080" \
-        -e "OPENAI_API_BASE_URL=http://${GLOBAL_ENGINE_NAME}:${ENGINE_PORT}/v1" \
-        -e "OPENAI_API_BASE_URLS=http://${GLOBAL_ENGINE_NAME}:${ENGINE_PORT}/v1" \
+        -e "OPENAI_API_BASE_URL=${ENGINE_URL}/v1" \
+        -e "OPENAI_API_BASE_URLS=${ENGINE_URL}/v1" \
         -e "OPENAI_API_KEY=${LOCAL_API_KEY}" \
         -e "OPENAI_API_KEYS=${LOCAL_API_KEY}" \
         -e "ENABLE_OPENAI_API=True" \
