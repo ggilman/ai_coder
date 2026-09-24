@@ -94,19 +94,26 @@ _run_selection_menu() {
 
 # ------------------------------------------------------------------------------
 # show_family_menu — prompt user to select a model family
+# Under SGLang, only families that define an SGLang candidate list are shown.
 # ------------------------------------------------------------------------------
 show_family_menu() {
     local current_key="${1:-}"
     local pairs=()
     for f in "$FAMILIES_DIR"/*.conf; do
         [ -f "$f" ] || continue
+        if engine_is_sglang && ! family_conf_supports_sglang "$f"; then continue; fi
         local name; name=$(grep -m1 '^MODEL_FAMILY=' "$f" | sed 's/^MODEL_FAMILY=//;s/"//g;s/\${[^:]*:-//;s/}//')
         [ -n "$name" ] || continue
         local key; key=$(basename "$f" .conf)
         pairs+=("$name:$key")
     done
+    if [ "${#pairs[@]}" -eq 0 ]; then
+        echo -e "${RED}✘ No model family defines $(engine_display_name) models.${NC}"
+        echo -e "${YELLOW}  Switch the engine back with: $(basename "$0") --setup${NC}"
+        exit 1
+    fi
     IFS=$'\n' pairs=($(printf '%s\n' "${pairs[@]}" | sort)); unset IFS
-    _run_selection_menu "Please select your preferred model family:" "$STATE_FILE" "family_pref" "$current_key" "${pairs[@]}"
+    _run_selection_menu "Please select your preferred model family ($(engine_display_name)):" "$STATE_FILE" "family_pref" "$current_key" "${pairs[@]}"
 }
 
 # ------------------------------------------------------------------------------

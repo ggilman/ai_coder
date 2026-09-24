@@ -88,7 +88,13 @@ EOF
 start_workbench() {
     local _model_id="${MODEL_FILE##*/}"
     _model_id="${_model_id%.gguf}"
+    # SGLang's radix prefix cache only hits across turns when Claude Code
+    # stops prepending its per-request attribution header to the system
+    # prompt (SGLang's own Claude Code guidance).
+    local _engine_env=()
+    engine_is_sglang && _engine_env=(-e CLAUDE_CODE_ATTRIBUTION_HEADER=0)
     run_workbench \
+        "${_engine_env[@]}" \
         -v "$(to_host_path "$HOME/.npm-cache"):/root/.npm" \
         -v "$(to_host_path "$HOME/.claude-config"):/root/.claude" \
         -v "$(to_host_path "$HOME/.claude-config.json"):/root/.claude.json" \

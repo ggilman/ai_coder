@@ -5,7 +5,9 @@
 # run_workbench/exec_in_container for the per-project spoke container, and
 # start_hub_engine (plus its GPU arg resolution and fast-storage model volume
 # sync) for the shared Hub, plus the --rebuild image sweep, the engine
-# (re)start decision, and the post-start readiness poll.
+# (re)start decision, and the post-start readiness poll. start_hub_engine is
+# engine-neutral apart from the docker run itself: _run_llamacpp_engine here,
+# _run_sglang_engine in ai-coder-sglang.sh.
 # ==============================================================================
 
 # Emit the shared Dockerfile template every agent image is built from
@@ -180,18 +182,23 @@ run_workbench() {
 }
 
 _resolve_engine_gpu_args() {
-    # Sets _gpus_flag, _ts_args, _cuda_env for the caller based on GPU_MODE.
+    # Sets _gpus_flag, _ts_args, _tp_args, _cuda_env for the caller based on
+    # GPU_MODE. _ts_args is llama.cpp's --tensor-split, _tp_args SGLang's --tp
+    # (see _resolve_sglang_tp_args); only the active engine's is ever set.
     # "single": exposes only GPU 0; also sets CUDA_VISIBLE_DEVICES to guard against
     # Docker Desktop / WSL2 passthrough quirks where --gpus device=0 isn't fully enforced.
     # "multi": exposes all GPUs and builds --tensor-split from per-GPU VRAM so llama.cpp
     # distributes compute (not just VRAM) across every card.
     _gpus_flag="all"
     _ts_args=()
+    _tp_args=()
     _cuda_env=()
     if [ "${GPU_MODE:-multi}" = "single" ]; then
         _gpus_flag="device=0"
         _cuda_env=(-e CUDA_VISIBLE_DEVICES=0)
         echo -e "${ICON_GEAR} GPU Mode: ${YELLOW}Single (GPU 0 only)${NC}"
+    elif engine_is_sglang; then
+        _resolve_sglang_tp_args
     else
         # Split by FREE VRAM (fallback: capacity) so the display GPU — which
         # loses VRAM to the desktop — receives proportionally fewer layers.
@@ -217,36 +224,51 @@ _resolve_engine_gpu_args() {
 }
 
 # Ensure the given models exist inside the fast-storage Docker volume.
-# Usage: ensure_model_in_volume <gguf-file> [more-gguf-files...]
+# Usage: ensure_model_in_volume <model> [more-models...]
+# Each <model> is a path relative to MODEL_STORAGE_DIR: a GGUF file
+# (llama.cpp) or a Hugging Face snapshot directory (SGLang).
 # On Windows hosts, bind mounts go through Docker Desktop's 9p bridge, making
 # the engine's model load (every cold start) several times slower than the
 # named volume, which lives on the Docker VM's native disk. The host copies in
 # MODEL_STORAGE_DIR remain the download cache and source of truth; this copies
-# them into the volume once per model (size-verified, interruption-safe via a
-# .part rename). Previously synced models are retained in the volume so
-# switching family or tier back is instant; remove the volume to reclaim disk.
-# Requires $LLAMA_IMAGE to be present (caller pulls it first).
+# them into the volume once per model (size-verified — a directory by the sum
+# of its file sizes — and interruption-safe via a .part rename). Previously
+# synced models are retained in the volume so switching family, tier or
+# engine back is instant; remove the volume to reclaim disk.
+# Runs its helper containers from $ENGINE_IMAGE (caller pulls it first), so
+# an SGLang-only setup never pulls the llama.cpp image just for this.
+
+# Shell snippet shared by the host and the helper containers: _msz <path>
+# (_msz) prints a file's size, or the summed size of every file under a directory
+# (directory entries' own sizes differ between filesystems, so du is avoided).
+_MODEL_SZ_FN='_msz() { if [ -d "$1" ]; then find "$1" -type f -exec stat -c%s {} + 2>/dev/null | awk "{s+=\$1} END{print s+0}"; elif [ -f "$1" ]; then stat -c%s "$1"; else echo 0; fi; }'
+
 ensure_model_in_volume() {
     local files=("$@") f
     [ "${#files[@]}" -gt 0 ] || return 1
     for f in "${files[@]}"; do
-        [ -f "$MODEL_STORAGE_DIR/$f" ] || return 1
+        [ -e "$MODEL_STORAGE_DIR/$f" ] || return 1
     done
+    eval "$_MODEL_SZ_FN"
 
     docker volume create "$MODEL_VOLUME_NAME" >/dev/null 2>&1 || true
 
-    # One container call lists current volume contents as "name size" lines.
-    local vol_listing
+    # One container call lists current volume contents as "name size" lines:
+    # every GGUF, plus every completed snapshot directory (marker present).
     # find (not a flat glob) so models nested under a family subfolder are
     # reported with their subfolder-relative path, matching $f below.
-    vol_listing=$(docker run --rm --entrypoint /bin/sh -v "$MODEL_VOLUME_NAME:/vol" "$LLAMA_IMAGE" \
-        -c 'find /vol -type f -name "*.gguf" 2>/dev/null | while read -r p; do printf "%s %s\n" "${p#/vol/}" "$(stat -c%s "$p")"; done; true' \
+    local vol_listing
+    vol_listing=$(docker run --rm --entrypoint /bin/sh -v "$MODEL_VOLUME_NAME:/vol" "$ENGINE_IMAGE" \
+        -c "$_MODEL_SZ_FN"'
+            find /vol -type f -name "*.gguf" 2>/dev/null | while read -r p; do printf "%s %s\n" "${p#/vol/}" "$(_msz "$p")"; done
+            find /vol -type f -name "$1" 2>/dev/null | while read -r m; do d="${m%/*}"; printf "%s %s\n" "${d#/vol/}" "$(_msz "$d")"; done
+            true' sh "$SGL_COMPLETE_MARKER" \
         2>/dev/null | tr -d '\r') || vol_listing=""
 
     local sync_files=() total_sz=0 host_sz vol_sz
     for f in "${files[@]}"; do
-        host_sz=$(stat -c%s "$MODEL_STORAGE_DIR/$f" 2>/dev/null || echo 0)
-        [ "$host_sz" -gt 0 ] || return 1
+        host_sz=$(_msz "$MODEL_STORAGE_DIR/$f")
+        [ "${host_sz:-0}" -gt 0 ] || return 1
         vol_sz=$(printf '%s\n' "$vol_listing" | awk -v n="$f" '$1==n{print $2}')
         if [ "${vol_sz:-0}" != "$host_sz" ]; then
             sync_files+=("$f")
@@ -270,23 +292,22 @@ ensure_model_in_volume() {
     docker run -d --name "$_sync_name" --entrypoint /bin/sh \
         -v "$MODEL_VOLUME_NAME:/vol" \
         -v "$(to_host_path "$MODEL_STORAGE_DIR"):/src:ro" \
-        "$LLAMA_IMAGE" -c '
+        "$ENGINE_IMAGE" -c '
             for f; do
                 mkdir -p "/vol/$(dirname "$f")"
-                rm -f "/vol/$f.part" "/vol/$f"
-                cp "/src/$f" "/vol/$f.part" && mv "/vol/$f.part" "/vol/$f" || exit 1
+                rm -rf "/vol/$f.part" "/vol/$f"
+                cp -r "/src/$f" "/vol/$f.part" && mv "/vol/$f.part" "/vol/$f" || exit 1
             done
         ' sh "${sync_files[@]}" >/dev/null || return 1
 
     local human_total; human_total=$(_human_size "$total_sz")
     while container_running "$_sync_name"; do
         local cur
-        cur=$(docker exec "$_sync_name" /bin/sh -c '
+        cur=$(docker exec "$_sync_name" /bin/sh -c "$_MODEL_SZ_FN"'
             tot=0
             for f; do
-                if [ -f "/vol/$f" ]; then s=$(stat -c%s "/vol/$f")
-                elif [ -f "/vol/$f.part" ]; then s=$(stat -c%s "/vol/$f.part")
-                else s=0; fi
+                if [ -e "/vol/$f" ]; then s=$(_msz "/vol/$f")
+                else s=$(_msz "/vol/$f.part"); fi
                 tot=$((tot+s))
             done
             echo $tot
@@ -331,21 +352,11 @@ EOF
     }
 }
 
-start_hub_engine() {
-    echo -e "${ICON_GEAR} Initializing Global GPU Hub..."
-
-    docker stop "$GLOBAL_ENGINE_NAME" 2>/dev/null || true
-    docker rm   "$GLOBAL_ENGINE_NAME" 2>/dev/null || true
-    if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
-        docker stop "$GLOBAL_PROXY_NAME" 2>/dev/null || true
-        docker rm   "$GLOBAL_PROXY_NAME" 2>/dev/null || true
-    fi
-
-    pull_image_if_missing "$LLAMA_IMAGE" || return 1
-    if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
-        pull_image_if_missing "$LITELLM_IMAGE" || return 1
-    fi
-
+# llama.cpp docker run, called by start_hub_engine after the shared prelude
+# has resolved _hub_net, _gpus_flag, _cuda_env, _ts_args, _port_args,
+# _models_src and _draft_args (all in the caller's scope). Also sets
+# LLAMA_SPEC_FLAGS, which start_hub_engine records in engine_spec state.
+_run_llamacpp_engine() {
     # Speculative decoding strategy: initialize flags and map to llama.cpp args.
     # MTP uses built-in draft heads, ngram uses hashing, none disables it.
     LLAMA_SPEC_FLAGS=""
@@ -380,40 +391,6 @@ start_hub_engine() {
             ;;
     esac
 
-    # External draft model: a small GGUF that proposes tokens the main
-    # model verifies in one pass — typically 1.5-2x generation speed on code.
-    local _draft_args=() _vol_files=("$MODEL_FILE")
-    if spec_decode_enabled && [ -f "$MODEL_STORAGE_DIR/$MODEL_DRAFT_FILE" ]; then
-        _draft_args=(--model-draft "/models/$MODEL_DRAFT_FILE" -ngld 99)
-        _vol_files+=("$MODEL_DRAFT_FILE")
-        echo -e "${ICON_GEAR} External draft model: ${GREEN}enabled${NC} ${DIM}(draft: ${MODEL_DRAFT_FILE})${NC}"
-    fi
-
-    # Model mount: fast Docker volume when enabled (with fallback to the
-    # direct host folder mount if the sync fails for any reason).
-    local _models_src; _models_src="$(to_host_path "$MODEL_STORAGE_DIR")"
-    if [ "$(read_setting model_volume)" = "yes" ]; then
-        if ensure_model_in_volume "${_vol_files[@]}"; then
-            _models_src="$MODEL_VOLUME_NAME"
-            echo -e "${ICON_GEAR} Model storage: ${GREEN}fast volume (${MODEL_VOLUME_NAME})${NC}"
-        else
-            echo -e "${YELLOW}⚠ Falling back to direct host folder mount for models.${NC}"
-        fi
-    fi
-
-    local _gpus_flag _ts_args=() _cuda_env=()
-    _resolve_engine_gpu_args
-
-    local _hub_net="$HUB_NETWORK"
-    [ "${NETWORK_INTERNAL:-false}" = "true" ] && _hub_net="$HUB_ISOLATED_NET"
-
-    local _port_args=()
-    if [ "$(read_setting expose_host_port)" = "yes" ]; then
-        # Bind to localhost only so the engine is not reachable from the LAN.
-        _port_args=(-p "127.0.0.1:${ENGINE_PORT}:${ENGINE_PORT}")
-        echo -e "${ICON_GEAR} Engine port: ${GREEN}published on localhost:${ENGINE_PORT}${NC}"
-    fi
-
     local _jinja_args=()
     if [ "${MODEL_JINJA:-true}" = "true" ]; then
         _jinja_args=(--jinja)
@@ -442,13 +419,6 @@ start_hub_engine() {
     # --cache-reuse: agent conversations grow by appending, so reusing KV
     # cache chunks across requests avoids reprocessing the whole prompt each
     # turn — a large time-to-first-token win in agent loops.
-    #
-    # --restart no (NOT on-failure): a restart policy persists across Docker
-    # daemon restarts, so after a crash/BSOD mid-load the engine would reload
-    # the model at full GPU power unattended as soon as Docker Desktop came
-    # back — exactly the wrong behaviour on a machine that just crashed
-    # (observed 2026-07-15: overnight re-crash after a GPU hardware failure).
-    # A failed engine stays down until a human relaunches it.
     docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$_hub_net" --gpus "$_gpus_flag" --restart no \
         "${_port_args[@]}" "${_cuda_env[@]}" \
         -v "${_models_src}:/models" \
@@ -459,10 +429,75 @@ start_hub_engine() {
         --batch-size "${MODEL_BATCH_SIZE:-1024}" --ubatch-size "${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}" --defrag-thold 0.1 \
         --cache-reuse "${MODEL_CACHE_REUSE:-256}" \
         ${LLAMA_SPEC_FLAGS} \
-        "${_draft_args[@]}" "${_think_args[@]}" "${_rp_args[@]}" "${_jinja_args[@]}" "${_ts_args[@]}" > /dev/null || {
+        "${_draft_args[@]}" "${_think_args[@]}" "${_rp_args[@]}" "${_jinja_args[@]}" "${_ts_args[@]}" > /dev/null
+}
+
+start_hub_engine() {
+    echo -e "${ICON_GEAR} Initializing Global GPU Hub ($(engine_display_name))..."
+
+    docker stop "$GLOBAL_ENGINE_NAME" 2>/dev/null || true
+    docker rm   "$GLOBAL_ENGINE_NAME" 2>/dev/null || true
+    if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
+        docker stop "$GLOBAL_PROXY_NAME" 2>/dev/null || true
+        docker rm   "$GLOBAL_PROXY_NAME" 2>/dev/null || true
+    fi
+
+    pull_image_if_missing "$ENGINE_IMAGE" || return 1
+    if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
+        pull_image_if_missing "$LITELLM_IMAGE" || return 1
+    fi
+
+    # External draft model: a small GGUF that proposes tokens the main
+    # model verifies in one pass — typically 1.5-2x generation speed on code.
+    # (Never under SGLang: spec_decode_enabled is false there.)
+    local _draft_args=() _vol_files=("$MODEL_FILE")
+    if spec_decode_enabled && [ -f "$MODEL_STORAGE_DIR/$MODEL_DRAFT_FILE" ]; then
+        _draft_args=(--model-draft "/models/$MODEL_DRAFT_FILE" -ngld 99)
+        _vol_files+=("$MODEL_DRAFT_FILE")
+        echo -e "${ICON_GEAR} External draft model: ${GREEN}enabled${NC} ${DIM}(draft: ${MODEL_DRAFT_FILE})${NC}"
+    fi
+
+    # Model mount: fast Docker volume when enabled (with fallback to the
+    # direct host folder mount if the sync fails for any reason).
+    local _models_src; _models_src="$(to_host_path "$MODEL_STORAGE_DIR")"
+    if [ "$(read_setting model_volume)" = "yes" ]; then
+        if ensure_model_in_volume "${_vol_files[@]}"; then
+            _models_src="$MODEL_VOLUME_NAME"
+            echo -e "${ICON_GEAR} Model storage: ${GREEN}fast volume (${MODEL_VOLUME_NAME})${NC}"
+        else
+            echo -e "${YELLOW}⚠ Falling back to direct host folder mount for models.${NC}"
+        fi
+    fi
+
+    local _gpus_flag _ts_args=() _tp_args=() _cuda_env=()
+    _resolve_engine_gpu_args
+
+    local _hub_net="$HUB_NETWORK"
+    [ "${NETWORK_INTERNAL:-false}" = "true" ] && _hub_net="$HUB_ISOLATED_NET"
+
+    local _port_args=()
+    if [ "$(read_setting expose_host_port)" = "yes" ]; then
+        # Bind to localhost only so the engine is not reachable from the LAN.
+        _port_args=(-p "127.0.0.1:${ENGINE_PORT}:${ENGINE_PORT}")
+        echo -e "${ICON_GEAR} Engine port: ${GREEN}published on localhost:${ENGINE_PORT}${NC}"
+    fi
+
+    # --restart no (NOT on-failure), for both engines: a restart policy
+    # persists across Docker daemon restarts, so after a crash/BSOD mid-load
+    # the engine would reload the model at full GPU power unattended as soon
+    # as Docker Desktop came back — exactly the wrong behaviour on a machine
+    # that just crashed (observed 2026-07-15: overnight re-crash after a GPU
+    # hardware failure). A failed engine stays down until a human relaunches it.
+    LLAMA_SPEC_FLAGS=""
+    if engine_is_sglang; then
+        _run_sglang_engine
+    else
+        _run_llamacpp_engine
+    fi || {
         echo -e "${RED}✘ Failed to start engine container${NC}"; return 1
     }
 
+    write_pref "$STATE_FILE" engine_backend "$ENGINE_BACKEND"
     write_pref "$STATE_FILE" engine_gpu_mode "${GPU_MODE:-multi}"
     write_pref "$STATE_FILE" engine_model "${MODEL_FILE:-}"
     # Informational only — deliberately NOT part of the restart-detection
@@ -478,7 +513,9 @@ start_hub_engine() {
     write_pref "$STATE_FILE" engine_expose "$(read_setting expose_host_port)"
     write_pref "$STATE_FILE" engine_net "${NETWORK_INTERNAL:-false}"
     write_pref "$STATE_FILE" engine_mvol "$(read_setting model_volume)"
-	local _spec_state="${MODEL_SPEC_STRATEGY:-none}"
+    write_pref "$STATE_FILE" engine_memfrac "$(_current_sgl_memfrac)"
+    local _spec_state="${MODEL_SPEC_STRATEGY:-none}"
+    engine_is_sglang && _spec_state="none"
     [ "${#_draft_args[@]}" -gt 0 ] && _spec_state="external-draft"
     write_pref "$STATE_FILE" engine_spec "$_spec_state"
 
@@ -487,6 +524,12 @@ start_hub_engine() {
     if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
         _start_litellm_proxy "$_hub_net" || return 1
     fi
+}
+
+# SGLang's mem-fraction for the engine_memfrac restart check — "-" under
+# llama.cpp, which has no such setting, so it never triggers a restart there.
+_current_sgl_memfrac() {
+    engine_is_sglang && echo "${SGL_MEM_FRACTION:-0.85}" || echo "-"
 }
 
 # Sets WORKBENCH_STARTED_BY_US so the caller's cleanup only stops containers
@@ -592,6 +635,8 @@ ensure_engine_currently_running() {
         _cur_spec=no
         spec_decode_enabled && [ -f "$MODEL_STORAGE_DIR/${MODEL_DRAFT_FILE:-}" ] && _cur_spec=yes
         _restart_checks=(
+            "Engine|$(read_pref "$STATE_FILE" engine_backend "")|${ENGINE_BACKEND:-llamacpp}"
+            "SGLang memory fraction|$(read_pref "$STATE_FILE" engine_memfrac "")|$(_current_sgl_memfrac)"
             "GPU mode|$(read_pref "$STATE_FILE" engine_gpu_mode "")|${GPU_MODE:-multi}"
             "Model|$(read_pref "$STATE_FILE" engine_model "")|${MODEL_FILE:-}"
             "Context size|$(read_pref "$STATE_FILE" engine_ctx "")|${MODEL_CTX_SIZE:-}"
@@ -623,6 +668,22 @@ ensure_engine_currently_running() {
     fi
 }
 
+# GET <url> from inside the engine container (2s timeout), printing the body.
+# llama.cpp's image ships curl; SGLang's is only guaranteed to have Python,
+# so it uses urllib there. Errors print nothing, which callers treat as down.
+engine_http_get() {
+    if engine_is_sglang; then
+        docker exec "$GLOBAL_ENGINE_NAME" python3 -c '
+import sys, urllib.request
+try:
+    sys.stdout.write(urllib.request.urlopen(sys.argv[1], timeout=2).read().decode())
+except Exception:
+    pass' "$1" 2>/dev/null
+    else
+        docker exec "$GLOBAL_ENGINE_NAME" curl -s -m 2 "$1" 2>/dev/null
+    fi
+}
+
 # Wait until the engine (and the LiteLLM proxy, when in use) answers its
 # readiness probes, printing progress as it polls; on success runs the VRAM
 # oversubscription check, on timeout prints engine log diagnostics.
@@ -630,6 +691,9 @@ wait_for_engine_ready() {
     echo -ne "${CYAN}◈ Syncing VRAM Slots:${NC} "
     retry_count=0
     max_retries=300
+    # SGLang's first start JIT-compiles kernels and captures CUDA graphs
+    # before serving, which can take several minutes on its own.
+    engine_is_sglang && max_retries=900
     engine_ready=false
     proxy_ready=false
 
@@ -645,7 +709,7 @@ wait_for_engine_ready() {
         engine_ready=false
         proxy_ready=false
         # Fire both checks in parallel to avoid waiting serially
-        docker exec "$GLOBAL_ENGINE_NAME" curl -s -m 2 "http://localhost:${ENGINE_PORT}/v1/models" 2>/dev/null | grep -q '"id"' &
+        engine_http_get "http://localhost:${ENGINE_PORT}/v1/models" | grep -q '"id"' &
         _engine_pid=$!
 
         if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
@@ -653,7 +717,7 @@ wait_for_engine_ready() {
             # container) — on the isolated internal network the proxy's published
             # port is not reachable from the host, so a host-side curl would
             # never succeed.
-            docker exec "$GLOBAL_ENGINE_NAME" curl -s -m 2 "http://$GLOBAL_PROXY_NAME:${PROXY_PORT}/v1/models" 2>/dev/null | grep -q '"object"' &
+            engine_http_get "http://$GLOBAL_PROXY_NAME:${PROXY_PORT}/v1/models" | grep -q '"object"' &
             _proxy_pid=$!
             wait "$_engine_pid" && engine_ready=true
             wait "$_proxy_pid"  && proxy_ready=true
@@ -670,7 +734,7 @@ wait_for_engine_ready() {
 
     if [ "$engine_ready" = "true" ] && [ "$proxy_ready" = "true" ]; then
         echo -e " ${GREEN}READY${NC}"
-        # llama.cpp can report ready while a GPU is silently oversubscribed
+        # The engine can report ready while a GPU is silently oversubscribed
         # (WDDM pages the overflow to system RAM) — check and warn before use.
         warn_if_vram_oversubscribed
     else

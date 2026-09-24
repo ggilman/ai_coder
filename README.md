@@ -6,7 +6,7 @@ This repository contains essential shell scripts for interacting with the AI Hub
 
 The environment uses a **Hub & Spoke** model:
 
-- **Hub**: Centralized infrastructure providing AI capabilities, including `ai-hub-engine` (local model execution via `llama.cpp`) and `ai-hub-proxy` (unified API via `litellm`).
+- **Hub**: Centralized infrastructure providing AI capabilities, including `ai-hub-engine` (local model execution via `llama.cpp` or, optionally, SGLang — see [Inference Engine](#inference-engine-llamacpp-or-sglang)) and `ai-hub-proxy` (unified API via `litellm`).
 - **Spoke**: Individual workbench containers (`coder-<tool>-<project-id>`) where your development and coding tasks occur.
 
 ## Scripts
@@ -35,6 +35,7 @@ The environment uses a **Hub & Spoke** model:
 | `agents/ai-coder-goose.sh` | Goose overrides (sourced automatically when Goose is selected) |
 | `agents/ai-coder-hub.sh` | Hub-only mode — starts the engine without a coding tool; press any key to stop |
 | `agents/ai-coder-webui.sh` | Open WebUI mode — starts the engine + Open WebUI chat interface at `localhost:3000` |
+| `libs/ai-coder-sglang.sh` | SGLang engine support — Hugging Face snapshot download, tensor-parallel sizing, engine launch args (sourced by core) |
 | `libs/ai-coder-commands.sh` | One-shot CLI commands: `--fix-project`, `--update`, `--version`, `--doctor`, `--logs` (sourced by `ai-coder`) |
 | `libs/ai-coder-menus.sh` | Interactive family and tool selection menus (sourced by `ai-coder`) |
 | `libs/ai-coder-setup.sh` | Setup wizard for `--setup` (sourced by `ai-coder`) |
@@ -66,6 +67,17 @@ The launcher normally picks the first (best) entry whose `WEIGHTS_GB` fits in ef
 - `MODEL_DRAFT_URL`: Direct download URL.
 - `MODEL_DRAFT_SHA256`: Expected sha256 (blank = skip verification).
 - `MODEL_DRAFT_VRAM_GB`: VRAM reserved for the draft in tier selection (default 1).
+
+**SGLang Candidates (Optional):** a family runs under the [SGLang engine](#inference-engine-llamacpp-or-sglang) only if it defines this second, separate candidate list of Hugging Face repos. Same best-first order and `WEIGHTS_GB=0` fallback rule; no CPU offload.
+- `MODEL_SGL_COUNT`: Total number of SGLang candidates.
+- `MODEL_SGL_TOOL_PARSER`: SGLang `--tool-call-parser` (e.g. `qwen25`, `gpt-oss`, `mistral`, `llama3`). Required for agents — without it tool calls come back as plain text.
+- `MODEL_SGL_REASONING_PARSER`: SGLang `--reasoning-parser` (e.g. `qwen3`, `gpt-oss`); blank for non-reasoning models.
+- `MODEL_SGL_N_REPO`: Hugging Face repo id (`owner/name`), downloaded to `~/ai-models/sglang/<owner>--<name>/`.
+- `MODEL_SGL_N_REVISION`: Commit hash to pin (blank = `main`) — the repo equivalent of the GGUF list's sha256 check.
+- `MODEL_SGL_N_DESC`: Human-readable label shown in logs and menus.
+- `MODEL_SGL_N_WEIGHTS_GB`: Ceiling of the repo's weight size in GB; `0` = unconditional fallback.
+- `MODEL_SGL_N_QUANT`: Optional `--quantization` override (normally auto-detected from the repo's `config.json`).
+- `MODEL_SGL_N_SIZE_GB`: Optional, for the `WEIGHTS_GB=0` fallback entry: its real size. SGLang can't offload to CPU, so the launcher warns up front when even the fallback won't fit.
 
 **Family Defaults:**
 - `MODEL_FAMILY`: Display name in the selection menu.
@@ -104,11 +116,11 @@ A single launcher for Claude Code, OpenCode, Aider, Gemini CLI, Qwen Code, and G
 | --- | --- |
 | (no argument) | Launch the AI tool inside the active workbench container |
 | `--continue` | Resume the previous agent session — passes the tool's native continue flag (`--continue` for Claude/OpenCode/Aider, `--resume` for Gemini/Qwen Code/Goose) |
-| `--model` | Reset model family, tool, Open WebUI, context level **and** low-VRAM KV cache preferences; show the selection menus again |
+| `--model` | Reset model family, tool, Open WebUI, context level **and** KV cache preferences (low-VRAM q4 for llama.cpp, FP8 for SGLang); show the selection menus again |
 | `--models [family]` | Dry-run model tier selection: hardware audit, VRAM reserves, and which tier a launch would pick — no Docker, no launch |
-| `--speed [family]` | Generation-speed benchmark: run `llama-bench` on your model on a clean GPU and print tokens/s (requires the *generation speed tracking* setup option) |
+| `--speed [family]` | Generation-speed benchmark: run `llama-bench` on your model on a clean GPU and print tokens/s (requires the *generation speed tracking* setup option; llama.cpp engine only) |
 | `--status` | Show the real-time GPU and engine status dashboard |
-| `--setup` | First-time and re-configuration wizard: alias, proxy, network isolation, GPU mode, git identity |
+| `--setup` | First-time and re-configuration wizard: alias, proxy, network isolation, inference engine, GPU mode, git identity |
 | `--update` | Download and install the latest release from GitHub (refused in a git checkout — use `git pull` there — unless `--update --force`) |
 | `--fix-project` | Normalize line endings in the current project folder for AI editing (run once per project) |
 | `--clean` | Stop and remove all Hub and Spoke containers |
@@ -123,13 +135,36 @@ A single launcher for Claude Code, OpenCode, Aider, Gemini CLI, Qwen Code, and G
 ai [COMMAND]
 ```
 
+## Inference Engine (llama.cpp or SGLang)
+
+The Hub engine can run on either of two inference servers, chosen in `--setup` (the *Inference engine* step, saved as `engine` in `user/settings.json`):
+
+| | **llama.cpp** (default) | **SGLang** |
+| --- | --- | --- |
+| Model format | GGUF files | Hugging Face repos (AWQ / GPTQ / FP8 / MXFP4 safetensors) |
+| Families | All | Only families that define `MODEL_SGL_*` candidates — currently **Gemma 4**, **Qwen3.8**, **Qwen3**, **Qwen 2.5 Coder**, and **gpt-oss-20b** (Qwen3.8's smallest SGLang build is ~19.5 GB, so it needs a ~24 GB+ GPU) |
+| Image | `ghcr.io/ggml-org/llama.cpp:server-cuda` | `lmsysorg/sglang:v0.5.20-runtime` (~15 GB; CUDA 13, so Blackwell / RTX 50-series works) |
+| Multi-GPU | Uneven `--tensor-split` by free VRAM | Even tensor parallel (`--tp`), power-of-two GPU count |
+| CPU offload, speculative decoding, `--speed` | Yes | No — hidden in `--setup` and skipped |
+| VRAM sizing | Overhead reserve (`--setup`) | Memory fraction (`--setup`, default 0.85) — SGLang pre-allocates that share of each GPU for weights + KV pool |
+| KV cache option (`--model`) | Low-VRAM `q4_0` | FP8 (`fp8_e4m3`) |
+
+Both engines listen on the same port (8080) and serve the OpenAI `/v1` and Anthropic `/v1/messages` APIs, so every agent, Open WebUI and the status dashboard work unchanged. Claude Code additionally gets `CLAUDE_CODE_ATTRIBUTION_HEADER=0` under SGLang so its prefix cache is reused across turns.
+
+Notes:
+- **Switching engines** in `--setup` clears the saved model family, so the next launch shows the family menu for the new engine. A warm Hub restarts automatically on the next launch.
+- **Downloads**: SGLang models are fetched with `huggingface_hub` inside the SGLang image into `~/ai-models/sglang/<owner>--<name>/` (resumable; a `.ai-coder-complete` marker is written last). Gated repos need `HF_TOKEN` — put it in `~/.ai-coder-env`. The engine itself runs with `HF_HUB_OFFLINE=1`, so network isolation still works.
+- **Context**: SGLang refuses a context longer than the model was trained for, so the chosen level is capped at the model's `max_position_embeddings` (e.g. 40,960 for Qwen3).
+- **Overrides**: `ENGINE_BACKEND=sglang|llamacpp` for one session, `SGLANG_IMAGE` for a different image tag, and `SGL_EXTRA_ARGS` for any other `sglang.launch_server` flags.
+- Offline bundles (`offline/bundle.sh`) are llama.cpp-only for now.
+
 ## Multi-GPU Support
 
 When two or more NVIDIA GPUs are present, `--setup` will ask whether to use all cards for inference. Single-GPU machines skip this question automatically.
 
 | Mode | Behaviour |
 | --- | --- |
-| **multi** (default) | All GPUs exposed to the engine container. `--tensor-split` is set automatically using each card's VRAM as proportional weights, so both compute *and* VRAM are distributed across GPUs. |
+| **multi** (default) | All GPUs exposed to the engine container. `--tensor-split` is set automatically using each card's VRAM as proportional weights, so both compute *and* VRAM are distributed across GPUs. Under SGLang, `--tp` splits evenly across a power-of-two number of GPUs instead, so the smallest card sets the per-GPU budget. |
 | **single** | Only GPU 0 is exposed (`--gpus device=0`). VRAM tier selection is also scoped to GPU 0 so the right model size is chosen. Useful when secondary GPUs are used for display output or other workloads. |
 
 The choice is saved to `user/settings.json`. To change it, run `./ai-coder --setup` again.
@@ -192,6 +227,8 @@ A rebuild (`./ai-coder --rebuild` followed by `./ai-coder`) is only needed when 
 | Toggle fast model storage (`--setup`) | No | Engine restarts with the new mount on next launch |
 | Toggle speculative decoding (`--setup`) | No | Engine restarts with/without the draft model on next launch |
 | Toggle low-VRAM KV cache (`--model`) | No | Engine restarts with the new KV cache type on next launch |
+| Switch inference engine (`--setup`) | No | Engine restarts on the new server on next launch; the workbench images are engine-independent |
+| Change SGLang memory fraction (`--setup`) or FP8 KV cache (`--model`) | No | Engine restarts with the new value on next launch |
 | Change proxy or network isolation (`--setup`) | No | Applied at container start time |
 | Change git identity (`--setup`) | **Yes** | Requires an `--rebuild` to bake into the image |
 | Upgrade `BASE_IMAGE` in `ai-coder-core.sh` | **Yes** | The base layer must be pulled and rebuilt |
@@ -418,7 +455,7 @@ Git checkouts are tracked through git itself: `--version` reports the local `ori
 
 ### Setup (`--setup`)
 
-**`--setup` must be run once before first launch.** It walks through up to thirteen configuration steps. On first run the installer downloads [gum](https://github.com/charmbracelet/gum) — a CLI tool for beautiful interactive prompts — and uses it for the wizard on both WSL and Git Bash. If gum is unavailable it falls back to plain text prompts. Either way the questions and defaults are the same:
+**`--setup` must be run once before first launch.** It walks through up to fourteen configuration steps — which ones depends on the inference engine you choose, since options one engine doesn't use are not shown. On first run the installer downloads [gum](https://github.com/charmbracelet/gum) — a CLI tool for beautiful interactive prompts — and uses it for the wizard on both WSL and Git Bash. If gum is unavailable it falls back to plain text prompts. Either way the questions and defaults are the same:
 
 ```bash
 ./ai-coder --setup
@@ -427,18 +464,20 @@ Git checkouts are tracked through git itself: `--version` reports the local `ori
 1. **Shell alias** — optionally adds an `ai` shortcut to your rc file. Skip if you prefer to manage your PATH yourself. Any previously added alias is removed if you decline.
 2. **Proxy** — enter an HTTP proxy URL, or leave blank for none.
 3. **Network isolation** — optionally block all internet access from containers.
-4. **GPU mode** — only shown when 2+ GPUs are detected; choose multi (all GPUs) or single.
-5. **VRAM overhead reserve** — how many GB of VRAM to reserve for CUDA/system overhead when sizing the model tier (default 1 GB). Larger values can prevent OOMs on high-load GPUs.
-6. **CPU offload threshold** — run a bigger model with a few layers on CPU when at least this percentage of it fits in VRAM (default 90, range 50–99, `0` disables). At 90% the worst case is roughly half generation speed; only fires for a genuinely bigger model, never for a higher quant of the same one. See [Family Configuration Format](#family-configuration-format).
-7. **MCP extras** — register the optional MCP servers (memory, thinking, conan, context7, brave-search, github, fetch, time) with each agent. Off by default: fewer registered tools means faster prompts and better tool selection on small local models.
-8. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Also asks for an idle timeout (default 60 min, `0` = forever) after which the warm hub stops itself to release VRAM; stop it immediately with `--clean`.
-9. **Fast model storage** — cache models in a Docker volume so engine cold starts load from the VM's native disk instead of the slow Windows filesystem bridge. Default on for WSL/Git Bash; see [Model Storage](#model-storage).
-10. **Speculative decoding** — use a small draft model to speed up generation, typically 1.5–2× on code. Default on; costs ~1 GB VRAM and applies only to families that define a draft (currently Qwen3). See [Speculative Decoding](#speculative-decoding).
-11. **Generation speed tracking** — off by default. Enables the `--speed` command: a one-shot `llama-bench` pass on your model on a clean GPU that prints tokens-per-second (tg = generation, pp = prompt processing).
-12. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
-13. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
+4. **Inference engine** — llama.cpp (default) or SGLang. See [Inference Engine](#inference-engine-llamacpp-or-sglang).
+5. **GPU mode** — only shown when 2+ GPUs are detected; choose multi (all GPUs) or single.
+6. **VRAM overhead reserve** *(llama.cpp)* — how many GB of VRAM to reserve for CUDA/system overhead when sizing the model tier (default 1 GB). Larger values can prevent OOMs on high-load GPUs.
+7. **CPU offload threshold** *(llama.cpp)* — run a bigger model with a few layers on CPU when at least this percentage of it fits in VRAM (default 90, range 50–99, `0` disables). At 90% the worst case is roughly half generation speed; only fires for a genuinely bigger model, never for a higher quant of the same one. See [Family Configuration Format](#family-configuration-format).
+   **SGLang memory fraction** *(SGLang, replaces 6–7)* — share of each GPU's VRAM SGLang pre-allocates for model + KV cache (default 0.85, range 0.50–0.95). Lower it if the GPU also drives your display.
+8. **MCP extras** — register the optional MCP servers (memory, thinking, conan, context7, brave-search, github, fetch, time) with each agent. Off by default: fewer registered tools means faster prompts and better tool selection on small local models.
+9. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Also asks for an idle timeout (default 60 min, `0` = forever) after which the warm hub stops itself to release VRAM; stop it immediately with `--clean`.
+10. **Fast model storage** — cache models in a Docker volume so engine cold starts load from the VM's native disk instead of the slow Windows filesystem bridge. Default on for WSL/Git Bash; see [Model Storage](#model-storage).
+11. **Speculative decoding** *(llama.cpp)* — use a small draft model to speed up generation, typically 1.5–2× on code. Default on; costs ~1 GB VRAM and applies only to families that define a draft (currently Qwen3). See [Speculative Decoding](#speculative-decoding).
+12. **Generation speed tracking** *(llama.cpp)* — off by default. Enables the `--speed` command: a one-shot `llama-bench` pass on your model on a clean GPU that prints tokens-per-second (tg = generation, pp = prompt processing).
+13. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
+14. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
 
-Context window level (4k–256k, default 64k) and the low-VRAM KV cache (`q4_0` quant, off by default) are deliberately not wizard steps: both change which model tier fits in VRAM, so `--model` re-prompts them on every run instead.
+Context window level (4k–256k, default 64k) and the KV cache option (low-VRAM `q4_0` for llama.cpp, FP8 for SGLang; off by default) are deliberately not wizard steps: both change which model tier fits in VRAM, so `--model` re-prompts them on every run instead.
 
 In gum mode, pressing **Esc** or **Cancel** on any step keeps that setting unchanged and moves to the next question — nothing is lost mid-wizard. To force the plain-text prompts even where gum is installed, set `AI_CODER_NO_GUM=1`.
 
@@ -471,6 +510,8 @@ It will prompt for:
 1. **Model family** — which family conf to use (e.g. Devstral 2)
 2. **VRAM tier** — which quantization level to include
 
+Bundles are llama.cpp-only: if your engine is set to SGLang, the script says so and packages the llama.cpp engine and a GGUF model anyway (the installed copy starts on llama.cpp).
+
 The script then downloads the selected model (if not already cached), saves all required Docker images as `.tar.gz` archives, copies all project scripts (including `config/families/`), and writes a `bundle.manifest`. Everything lands in `bundle/`.
 
 It also fetches both platform builds of [gum](https://github.com/charmbracelet/gum) and ships them at `scripts/.assets/` — since the target has no internet access to fetch gum itself, this is what gives it the same gum-powered prompts as the source machine (`--setup`, `--model`, `--status`, and `unbundle.sh`'s own prompts) instead of falling back to plain text.
@@ -496,7 +537,7 @@ No internet connection is required on the target machine.
 ## Troubleshooting
 
 - **Model Loading Issues**: Run `./ai-status.sh` to check GPU availability and VRAM.
-- **Tool call errors in Claude Code** (`missing parameter`): Claude Code requires llama.cpp's native Anthropic endpoint. The workbench connects directly to the engine at port 8080 (`/v1/messages`) to avoid format conversion errors.
+- **Tool call errors in Claude Code** (`missing parameter`): Claude Code requires the engine's native Anthropic endpoint (both llama.cpp and SGLang provide one). The workbench connects directly to the engine at port 8080 (`/v1/messages`) to avoid format conversion errors.
 - **Connectivity Issues**: Ensure `DOWNLOAD_PROXY` is set correctly. The scripts use `getent`/`nslookup` to resolve proxy hostnames to IPs so Docker build containers can reach the proxy.
   > ⚠️ **Security note**: When a proxy is configured, image builds disable TLS certificate verification for apt, pip, and npm (many corporate proxies re-sign TLS traffic with an internal CA the build containers don't trust). This means packages baked into workbench images are not certificate-verified while the proxy is set. Only use a proxy you trust, and leave the proxy setting empty on networks with direct internet access.
 - **Brave Search not working**: Ensure `BRAVE_API_KEY` is exported in your shell before running `./ai-coder`. Get a free key at [brave.com/search/api](https://brave.com/search/api).

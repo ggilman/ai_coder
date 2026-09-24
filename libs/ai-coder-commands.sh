@@ -330,6 +330,22 @@ cmd_doctor() {
     done
     [ "$_legacy_any" -eq 0 ] && echo -e "  ${DIM}none found${NC}"
 
+    # --- inference engine vs. saved model family --------------------------------
+    # Under SGLang, only families with a MODEL_SGL_* list can run; a family
+    # saved back when llama.cpp was the engine would fail at next launch.
+    echo -e "${ICON_GEAR} Inference engine: ${CYAN}$(engine_display_name)${NC}"
+    if engine_is_sglang; then
+        local _fam; _fam=$(read_pref "$STATE_FILE" family_pref "")
+        if [ -n "$_fam" ] && [ -f "$ROOT_DIR/config/families/${_fam}.conf" ] && \
+           ! family_conf_supports_sglang "$ROOT_DIR/config/families/${_fam}.conf"; then
+            echo -e "  ${YELLOW}⚠${NC} saved model family ${DIM}${_fam}${NC} has no SGLang models"
+            echo -e "    ${DIM}Pick another with: $(basename "$0") --model${NC}"
+            issues=$((issues + 1))
+        else
+            echo -e "  ${DIM}saved model family is compatible${NC}"
+        fi
+    fi
+
     # --- corrupt user JSON config ---------------------------------------------
     # A user/*.json that isn't valid JSON degrades to defaults at read time,
     # but is worth surfacing so it can be fixed (hand-truncated / mid-write).

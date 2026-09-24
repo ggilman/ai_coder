@@ -17,6 +17,42 @@ ensure_git_identity() {
     export GIT_USER_NAME="${git_name:-}"
 }
 
+# Resolve the inference engine behind the Hub: "llamacpp" (default) or
+# "sglang". An exported ENGINE_BACKEND wins over the saved engine setting;
+# anything unrecognised falls back to llamacpp. Also sets ENGINE_IMAGE, the
+# image the engine container (and the model-volume sync helper) runs from.
+# Called once by ai-coder-core.sh right after the prefs migration, so every
+# later stage (menus, --setup, model selection, engine start) sees it.
+ensure_engine_config() {
+    local _engine="${ENGINE_BACKEND:-}"
+    [ -n "$_engine" ] || _engine=$(read_setting engine)
+    case "$_engine" in
+        sglang) ENGINE_BACKEND=sglang;   ENGINE_IMAGE="$SGLANG_IMAGE" ;;
+        *)      ENGINE_BACKEND=llamacpp; ENGINE_IMAGE="$LLAMA_IMAGE" ;;
+    esac
+}
+
+# True when the Hub runs SGLang rather than llama.cpp.
+engine_is_sglang() {
+    [ "${ENGINE_BACKEND:-llamacpp}" = "sglang" ]
+}
+
+# Human-readable engine name for messages and menus.
+engine_display_name() {
+    engine_is_sglang && echo "SGLang" || echo "llama.cpp"
+}
+
+# Reads the SGLang static memory fraction (share of each GPU's total VRAM
+# SGLang pre-allocates for weights + KV pool) into SGL_MEM_FRACTION.
+# Anything outside 0.50-0.95 falls back to the default of 0.85.
+ensure_sgl_config() {
+    local _frac; _frac=$(read_setting sgl_mem_fraction)
+    case "$_frac" in
+        0.[5-8][0-9]|0.9[0-5]|0.[5-9]) SGL_MEM_FRACTION="$_frac" ;;
+        *)                             SGL_MEM_FRACTION=0.85 ;;
+    esac
+}
+
 # Load or prompt for network isolation preference, then store it for future runs.
 # Sets NETWORK_INTERNAL in the calling environment.
 ensure_network_config() {
@@ -55,7 +91,15 @@ ensure_ctx_config() {
 # Attention kernel even on the stock ghcr.io/ggml-org image; mismatched
 # types (the asymmetric approach this replaced) silently fall back to a
 # CPU-bound path — see ggml-org/llama.cpp#20866 and #22411.
+#
+# SGLang has no q4 KV cache and ignores the family's llama.cpp KV type: it
+# uses "auto" (the model's own dtype) unless the FP8 KV cache setting is on.
 ensure_kv_config() {
+    if engine_is_sglang; then
+        MODEL_KV_TYPE=auto
+        [ "$(read_setting sgl_kv_fp8)" = "yes" ] && MODEL_KV_TYPE="fp8_e4m3"
+        return 0
+    fi
     [ "$(read_setting kv_q4)" = "yes" ] && MODEL_KV_TYPE="q4_0" || true
 }
 

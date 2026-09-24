@@ -134,9 +134,13 @@ main() {
                 total_slots=$(echo "$slots_raw" | { grep -o '"id"' || true; } | wc -l | xargs)
                 active_slots=$(echo "$slots_raw" | { grep -o '"is_processing":true' || true; } | wc -l | xargs)
                 slot_info="$total_slots slot(s) | $active_slots active"
+            elif [ "$ENGINE_KIND" = "sglang" ]; then
+                slot_info="n/a (SGLang has no slot endpoint)"
             else
                 slot_info="busy processing tasks"
             fi
+            local _engine_label="llama.cpp"
+            [ "$ENGINE_KIND" = "sglang" ] && _engine_label="SGLang"
 
             model_name=$(get_model_name)
 
@@ -147,6 +151,7 @@ main() {
             local _status_word
             printf -v _status_word "%-22s" "ONLINE"
             engine_status_text="⚙️  \e[1mENGINE HUB:\e[0m   \e[32m🟢  ${_status_word}\e[0m${E_PAD}
+🧠  \e[1mEngine:\e[0m       $_engine_label
 📦  \e[1mActive Model:\e[0m \e[36m$model_name\e[0m
 🔄  \e[1mCapacity:\e[0m     $slot_info"
             

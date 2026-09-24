@@ -2,9 +2,11 @@
 # ==============================================================================
 # AI-CODER | Setup Wizard
 # The --setup wizard: setup_toggle_pref plus one setup_step_* per question,
-# called in sequence from cmd_setup. setup_step_ctx and setup_step_kv are
-# also called from the --model flow in ai-coder (model-affecting choices are
-# re-prompted there instead of living in the wizard).
+# called in sequence from cmd_setup. setup_step_ctx and setup_step_kv /
+# setup_step_sgl_kv are also called from the --model flow in ai-coder
+# (model-affecting choices are re-prompted there instead of living in the
+# wizard). Steps that only apply to one inference engine are skipped by
+# cmd_setup for the other (see setup_step_engine).
 # ==============================================================================
 
 # gum bootstrap/resolution (ensure_gum, resolve_gum_cmd, _download_gum_binary)
@@ -112,6 +114,73 @@ setup_step_network() {
         "${DIM}  Network isolation disabled.${NC}"
 }
 
+# Inference engine behind the Hub. Changing it clears the saved model family
+# (state.json family_pref) so the next launch re-shows the family menu,
+# filtered to what the new engine can run — SGLang only lists families that
+# define MODEL_SGL_* candidates. Updates ENGINE_BACKEND/ENGINE_IMAGE in place
+# so the rest of this wizard shows the new engine's questions.
+setup_step_engine() {
+    local _cur_engine; _cur_engine=$(read_setting engine)
+    local _engine_input; _engine_input=$(ui_menu "Inference engine" \
+        "Inference engine — which server should run the local model?" \
+        "llama.cpp (default): GGUF models, every model family, CPU offload and
+speculative decoding. SGLang: Hugging Face (AWQ/GPTQ/FP8) models with a
+faster serving path, but only for families that define SGLang models, and
+its Docker image is ~15GB (pulled on first launch)." \
+        "Engine [${_cur_engine}]:" \
+        "$_cur_engine" \
+        "llamacpp" "llama.cpp — GGUF, all families (default)" \
+        "sglang"   "SGLang — Hugging Face models, selected families")
+    case "$_engine_input" in
+        llamacpp|sglang)
+            write_pref "$SETTINGS_FILE" engine "$_engine_input"
+            if [ "$_engine_input" != "$_cur_engine" ]; then
+                write_pref "$STATE_FILE" family_pref ""
+                echo -e "${ICON_OK} Engine set to ${GREEN}${_engine_input}${NC} — you'll pick a model family on next launch."
+            else
+                printf "%s  Engine unchanged (%s)%s\n" "$DIM" "$_cur_engine" "$NC"
+            fi
+            ;;
+        "")
+            printf "%s  Engine unchanged (%s)%s\n" "$DIM" "$_cur_engine" "$NC"
+            ;;
+        *)
+            printf "%s⚠ Unknown engine '%s' — keeping %s%s\n" "$YELLOW" "$_engine_input" "$_cur_engine" "$NC"
+            ;;
+    esac
+    if [ -n "${ENGINE_BACKEND_ENV:-}" ]; then
+        echo -e "${YELLOW}  Note: ENGINE_BACKEND=${ENGINE_BACKEND_ENV} is exported in your environment and overrides this setting.${NC}"
+    fi
+    ENGINE_BACKEND="${ENGINE_BACKEND_ENV:-}"
+    ensure_engine_config
+}
+
+# SGLang only: share of each GPU's VRAM SGLang pre-allocates up front for
+# the model weights plus its KV-cache pool.
+setup_step_sgl_mem_fraction() {
+    local _cur_frac; _cur_frac=$(read_setting sgl_mem_fraction)
+    local _frac_input; _frac_input=$(ui_input "SGLang memory fraction" \
+        "SGLang memory fraction — share of each GPU's VRAM to pre-allocate for model + KV cache?" \
+        "Recommended: 0.85. SGLang claims this share of total VRAM at start-up.
+Lower it (e.g. 0.75) if the GPU also drives your display or you see
+out-of-memory errors; range 0.50-0.95." \
+        "Fraction [${_cur_frac}]:" \
+        "$_cur_frac" \
+        "$_cur_frac")
+    case "$_frac_input" in
+        "")
+            printf "%s  SGLang memory fraction unchanged (%s)%s\n" "$DIM" "$_cur_frac" "$NC"
+            ;;
+        0.[5-8][0-9]|0.9[0-5]|0.[5-9])
+            write_pref "$SETTINGS_FILE" sgl_mem_fraction "$_frac_input"
+            echo -e "${ICON_OK} SGLang memory fraction set to ${GREEN}${_frac_input}${NC}."
+            ;;
+        *)
+            printf "%s⚠ Out of range (0.50-0.95) — keeping %s%s\n" "$YELLOW" "$_cur_frac" "$NC"
+            ;;
+    esac
+}
+
 # GPU mode — only prompt if multiple GPUs are detected
 setup_step_gpu() {
     local _gpu_count; _gpu_count=$($SMI --query-gpu=name --format=csv,noheader,nounits 2>/dev/null | grep -c '.' || echo 1)
@@ -172,6 +241,22 @@ silently fall back to a much slower CPU-bound path)." \
         "$_cur_kvq4" "$_cur_kvq4" \
         "${ICON_OK} Low-VRAM KV cache ${GREEN}enabled${NC} (q4_0/q4_0) — applied on next engine start." \
         "${DIM}  Low-VRAM KV cache disabled — using the family's default KV type.${NC}"
+}
+
+# SGLang counterpart of setup_step_kv (called from the --model flow):
+# SGLang has no q4 KV cache, but can store it as FP8 instead of the model's
+# 16-bit dtype, halving the KV pool per token.
+setup_step_sgl_kv() {
+    local _cur_fp8; _cur_fp8=$(read_setting sgl_kv_fp8)
+    setup_toggle_pref sgl_kv_fp8 "FP8 KV cache" \
+        "FP8 KV cache — store SGLang's KV cache as fp8_e4m3?" \
+        "Halves KV-cache VRAM vs the model's own 16-bit dtype, which can unlock
+a bigger model tier or larger context. Small quality cost on long-context
+recall." \
+        "Enable FP8 KV cache? [y/N]:" \
+        "$_cur_fp8" "$_cur_fp8" \
+        "${ICON_OK} FP8 KV cache ${GREEN}enabled${NC} — applied on next engine start." \
+        "${DIM}  FP8 KV cache disabled — using the model's own dtype.${NC}"
 }
 
 setup_step_vram_overhead() {
@@ -347,7 +432,7 @@ Enable it, then measure any time with: ai --speed" \
 setup_step_expose_port() {
     local _cur_expose; _cur_expose=$(read_setting expose_host_port)
     setup_toggle_pref expose_host_port "Host port exposure" \
-        "Host port exposure — publish the engine on localhost:${ENGINE_PORT}?" \
+        "Host port exposure — publish the $(engine_display_name) engine on localhost:${ENGINE_PORT}?" \
         "Allows external applications (e.g. Open WebUI) to connect directly.
 Leave disabled if you only need the AI coding tools inside Docker." \
         "Expose engine on localhost:${ENGINE_PORT}? [y/N]:" \
@@ -413,14 +498,25 @@ cmd_setup() {
     setup_step_alias
     setup_step_proxy
     setup_step_network
+    setup_step_engine
     setup_step_gpu
-    setup_step_vram_overhead
-    setup_step_cpu_offload
+    # Engine-specific steps: only the questions the chosen engine uses.
+    # (setup_step_engine has already updated ENGINE_BACKEND.) SGLang's memory
+    # fraction replaces the VRAM overhead reserve — the share it leaves
+    # unallocated is its overhead allowance.
+    if engine_is_sglang; then
+        setup_step_sgl_mem_fraction
+    else
+        setup_step_vram_overhead
+        setup_step_cpu_offload
+    fi
     setup_step_mcp_extras
     setup_step_keep_hub
     setup_step_model_volume
-    setup_step_spec_decode
-    setup_step_speed_tracking
+    if ! engine_is_sglang; then
+        setup_step_spec_decode
+        setup_step_speed_tracking
+    fi
     setup_step_expose_port
     setup_step_git_identity
 

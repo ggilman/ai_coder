@@ -20,7 +20,8 @@ OPEN_WEBUI_HOST_PORT=3000
 # Container-internal ports for the Hub engine and LiteLLM proxy — every agent
 # and helper talks to $GLOBAL_ENGINE_NAME:$ENGINE_PORT / $GLOBAL_PROXY_NAME:
 # $PROXY_PORT over the Docker network. Not user-configurable: these are fixed
-# by llama.cpp's/LiteLLM's own defaults, not published to the host unless the
+# by llama.cpp's/LiteLLM's own defaults (SGLang is started with --port
+# $ENGINE_PORT to match), not published to the host unless the
 # "expose host port" setting publishes ENGINE_PORT on localhost too.
 ENGINE_PORT=8080
 PROXY_PORT=4000
@@ -35,6 +36,16 @@ WORKBENCH_PREFIX="coder"
 LITELLM_IMAGE="ghcr.io/berriai/litellm:main-latest"
 LLAMA_IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
 LLAMA_IMAGE_FULL="ghcr.io/ggml-org/llama.cpp:full-cuda"
+# SGLang engine image (used when the "engine" setting is sglang). Pinned to a
+# release rather than :latest so an upstream flag rename can't silently break
+# engine start. The -runtime variant is the serving-only build; v0.5.20 is a
+# CUDA 13 build, which Blackwell (RTX 50-series, sm_120) cards require.
+SGLANG_IMAGE="${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.20-runtime}"
+# Inference engine: "llamacpp" or "sglang". Empty here = use the saved
+# engine setting; resolved (with ENGINE_IMAGE) by ensure_engine_config below.
+ENGINE_BACKEND="${ENGINE_BACKEND:-}"
+ENGINE_BACKEND_ENV="$ENGINE_BACKEND"   # the exported value, kept for --setup messaging
+ENGINE_IMAGE=""
 # (Stored-proxy read moved below, after env.sh/jq.sh are sourced and jq is
 # resolved - the user settings are now JSON, not a flat grep-able file.)
 DOWNLOAD_PROXY="${DOWNLOAD_PROXY:-}"
@@ -112,6 +123,7 @@ source "$SCRIPT_DIR/ai-coder-migrate.sh"   # settings JSON schema versioning + o
 source "$SCRIPT_DIR/ai-coder-settings.sh"   # git identity + launch-time preference resolution
 source "$SCRIPT_DIR/ai-coder-model.sh"      # docker preflight, VRAM budgeting, model select/download
 source "$SCRIPT_DIR/ai-coder-workbench.sh"  # workbench + hub engine container lifecycle
+source "$SCRIPT_DIR/ai-coder-sglang.sh"     # SGLang engine: HF snapshot download, launch args
 
 # User settings/state are JSON, so jq must be resolvable before the first
 # read_pref/write_pref. Ensure it's available (downloads on first use),
@@ -121,6 +133,7 @@ source "$SCRIPT_DIR/ai-coder-workbench.sh"  # workbench + hub engine container l
 ensure_jq
 resolve_jq_cmd || true
 migrate_user_prefs
+ensure_engine_config
 if [ -z "$DOWNLOAD_PROXY" ] && [ -f "$SETTINGS_FILE" ]; then
     DOWNLOAD_PROXY=$(read_setting proxy)
 fi

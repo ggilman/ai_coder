@@ -36,14 +36,14 @@ Usage: $(basename "$0") [COMMAND]
 Commands:
   --status           Show GPU and engine status dashboard
   --logs             Show hub container logs (--tail N, -f to follow, --proxy, --webui)
-  --setup            First-time and re-configuration wizard (alias, proxy, isolation, GPU, git)
+  --setup            First-time and re-configuration wizard (alias, proxy, isolation, engine, GPU, git)
   --update           Download and install the latest release from GitHub (refused in a git checkout unless --force)
   --fix-project      Fix line endings in the current project for AI editing (run from project folder)
   --clean            Stop and remove all containers
   --rebuild          Remove all workbench images to force a full rebuild on next run
   --model            Reset model family, tool, Open WebUI, context level and KV cache type preferences, show selection menus
    --models [family]   Dry-run model tier selection: hardware audit, VRAM reserves and which tier a launch would pick (no Docker, no launch)
-   --speed [family]   Generation-speed benchmark: run llama-bench on your model on a clean GPU and print t/s
+   --speed [family]   Generation-speed benchmark: run llama-bench on your model on a clean GPU and print t/s (llama.cpp engine only)
   --build-only       Build the workbench image then exit (no Hub or agent launch)
   --continue         Resume the previous agent session (passes the tool's native continue flag)
   --version          Show the installed release, its checkin date, and git branch status
@@ -138,9 +138,9 @@ fi
 # Handle --model flag: clears the family, tool, and Open WebUI preferences so
 # all the selection questions are shown again on the next step of this run,
 # and re-prompts the two settings that change which model gets selected
-# (context level and low-VRAM KV cache type) directly — both always have
-# defaults, so they have no "empty means show" gate to piggyback on like the
-# other three.
+# (context level and the KV cache type — q4 for llama.cpp, FP8 for SGLang)
+# directly — both always have defaults, so they have no "empty means show"
+# gate to piggyback on like the other three.
 _prev_family=""; _prev_tool=""; _prev_webui=""
 if [[ "${1:-}" == "--model" ]]; then
     _prev_family=$(read_pref "$STATE_FILE" family_pref "")
@@ -152,7 +152,11 @@ if [[ "${1:-}" == "--model" ]]; then
     shift
     _menu_ui_init
     setup_step_ctx
-    setup_step_kv
+    if engine_is_sglang; then
+        setup_step_sgl_kv
+    else
+        setup_step_kv
+    fi
 fi
 
 # --- [ FAMILY SELECTION ] ----------------------------------------------------
@@ -170,6 +174,12 @@ if [ ! -f "$FAMILY_CONF" ]; then
     exit 1
 fi
 source "$FAMILY_CONF"
+# Under SGLang, only families with an SGLang candidate list can run (a
+# family saved while llama.cpp was the engine may not have one).
+if ! require_family_supports_engine "$FAMILY_PREF"; then
+    write_pref "$STATE_FILE" family_pref ""
+    exit 1
+fi
 
 # --- [ TOOL SELECTION ] ------------------------------------------------------
 # Show the tool menu on first run or after --model clears the preference.
@@ -274,12 +284,18 @@ if [ -n "$_guard_trip" ]; then
     echo -e "${YELLOW}  Check cooling/dust/airflow before another long run (threshold: MODEL_GPU_MAX_TEMP_C).${NC}"
     write_pref "$STATE_FILE" engine_guard_trip ""
 fi
+ensure_sgl_config
 ensure_gpu_config
 ensure_ctx_config
 ensure_kv_config
 ensure_overhead_config
 ensure_offload_config
 detect_model || true
+# SGLang only: even the family's smallest model can't fit (detect_model has
+# already said why) — stop before downloading it.
+if [ "${MODEL_WONT_FIT:-false}" = "true" ]; then
+    exit 1
+fi
 download_model || {
     echo -e "${RED}✘ Model download failed${NC}"
     echo -e "${YELLOW}  If you are on a corporate or proxy network, run: ${CYAN}$(basename "$0") --setup${NC}"

@@ -166,6 +166,8 @@ main() {
                 total_slots=$(echo "$slots_raw" | { grep -o '"id"' || true; } | wc -l | xargs)
                 active_slots=$(echo "$slots_raw" | { grep -o '"is_processing":true' || true; } | wc -l | xargs)
                 slot_info="${total_slots} slot(s) | ${active_slots} active"
+            elif [ "$ENGINE_KIND" = "sglang" ]; then
+                slot_info="SGLang"
             else
                 slot_info="${YELLOW}busy processing${NC}${BOLD}"
             fi

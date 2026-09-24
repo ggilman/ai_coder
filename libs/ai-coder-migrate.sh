@@ -33,6 +33,9 @@ STATE_SCHEMA_VERSION=1
 pref_default() {
     case "$1" in
         proxy)            echo "" ;;
+        engine)           echo "llamacpp" ;;
+        sgl_mem_fraction) echo "0.85" ;;
+        sgl_kv_fp8)       echo "no" ;;
         isolated)         echo "no" ;;
         gpu_mode)         echo "multi" ;;
         ctx_level)        echo "64k" ;;

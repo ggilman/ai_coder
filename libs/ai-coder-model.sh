@@ -88,9 +88,10 @@ check_docker() {
 # accurate whether or not the low-VRAM KV cache toggle is on.
 _estimate_kv_reserve_gb() {
     local _q8_bpt="${MODEL_KV_BYTES_PER_TOKEN:-98304}" _bpt
+    # SGLang types: "auto" is the model's own (16-bit) dtype; fp8 is q8-sized.
     case "${MODEL_KV_TYPE:-q8_0}" in
-        f16|bf16)  _bpt=$(( _q8_bpt * 2 )) ;;
-        q4_0|q4_1) _bpt=$(( _q8_bpt / 2 )) ;;
+        f16|bf16|bfloat16|auto) _bpt=$(( _q8_bpt * 2 )) ;;
+        q4_0|q4_1)              _bpt=$(( _q8_bpt / 2 )) ;;
         *)         _bpt="$_q8_bpt" ;;
     esac
     echo $(( (${MODEL_CTX_SIZE:-65536} * _bpt + 1073741823) / 1073741824 ))
@@ -103,6 +104,48 @@ _estimate_kv_reserve_gb() {
 # real pick can't drift when the fit metric changes.
 _tier_fits() {
     [ "$1" -eq 0 ] || [ "$2" -ge "$1" ]
+}
+
+# Candidate-list accessor shared by select_model_for_vram and
+# print_model_candidates, so both engines use one selection algorithm.
+# llama.cpp reads MODEL_<i>_<field> (GGUF files); SGLang reads the family's
+# separate MODEL_SGL_<i>_<field> list (Hugging Face repos). For SGLang, FILE
+# is derived from REPO — a snapshot directory under MODEL_STORAGE_DIR, e.g.
+# sglang/Qwen--Qwen3-8B-AWQ — and URL is the repo id itself.
+# Usage: _cand_field <index|COUNT> [FIELD]
+_cand_field() {
+    local i="$1" field="${2:-}" _v
+    if engine_is_sglang; then
+        if [ "$i" = "COUNT" ]; then echo "${MODEL_SGL_COUNT:-0}"; return; fi
+        case "$field" in
+            FILE)
+                _v="MODEL_SGL_${i}_REPO"
+                [ -n "${!_v:-}" ] && echo "sglang/${!_v//\//--}"
+                ;;
+            URL) _v="MODEL_SGL_${i}_REPO"; echo "${!_v:-}" ;;
+            # Repos are pinned by revision instead of a checksum, and
+            # layer counts only matter for llama.cpp's CPU offload.
+            SHA256|LAYERS) ;;
+            *) _v="MODEL_SGL_${i}_${field}"; echo "${!_v:-}" ;;
+        esac
+        return 0
+    fi
+    if [ "$i" = "COUNT" ]; then echo "${MODEL_COUNT:-0}"; return; fi
+    _v="MODEL_${i}_${field}"
+    echo "${!_v:-}"
+}
+
+# True when the selected model is fully on disk: the GGUF file for
+# llama.cpp, or the snapshot directory's completion marker for SGLang
+# (written last by download_sglang_model, so a partial download never counts).
+model_present() {
+    local _f="${1:-${MODEL_FILE:-}}"
+    [ -n "$_f" ] || return 1
+    if engine_is_sglang; then
+        [ -f "$MODEL_STORAGE_DIR/$_f/$SGL_COMPLETE_MARKER" ]
+    else
+        [ -f "$MODEL_STORAGE_DIR/$_f" ]
+    fi
 }
 
 # Walks the MODEL_1..MODEL_N candidate list defined by the active family conf,
@@ -120,12 +163,13 @@ _tier_fits() {
 # entries whose MODEL_N_LAYERS differs from the full-fit choice qualify:
 # quants of the same model share a layer count, and halving generation speed
 # for a quant bump is a bad trade. MODEL_NGL is the -ngl value for llama.cpp
-# (99 = all layers on GPU, the pre-offload behaviour).
+# (99 = all layers on GPU, the pre-offload behaviour). Under SGLang the
+# MODEL_SGL_* list is walked instead (see _cand_field) and offload is skipped.
 # The last candidate should have MODEL_N_WEIGHTS_GB=0 — it is always selected
 # unconditionally as the fallback when nothing larger fits.
 select_model_for_vram() {
-    local vram="${1:-0}" i _fv _wv _lv _uv _sv _dv _w
-    local _count="${MODEL_COUNT:-0}"
+    local vram="${1:-0}" i _w _l
+    local _count; _count=$(_cand_field COUNT)
     MODEL_NGL=99
 
     # Pass 1: first entry that fits entirely in VRAM (the full-fit choice).
@@ -133,45 +177,47 @@ select_model_for_vram() {
     # use the last defined candidate.
     local _full=0
     for (( i=1; i<=_count; i++ )); do
-        _fv="MODEL_${i}_FILE"
-        [ -z "${!_fv:-}" ] && break
-        _wv="MODEL_${i}_WEIGHTS_GB"
-        if _tier_fits "${!_wv:-0}" "$vram"; then _full=$i; break; fi
+        [ -z "$(_cand_field "$i" FILE)" ] && break
+        _w=$(_cand_field "$i" WEIGHTS_GB)
+        if _tier_fits "${_w:-0}" "$vram"; then _full=$i; break; fi
     done
     [ "$_full" -eq 0 ] && _full=$(( _count > 0 ? _count : 1 ))
     local _sel=$_full
 
     # Pass 2: partial CPU offload — the best-ranked entry above the full-fit
     # choice wins if enough of it fits and it is a different model.
+    # llama.cpp only: SGLang has no per-layer GPU/CPU split.
     local _pct="${MODEL_CPU_OFFLOAD_PCT:-90}"
-    _lv="MODEL_${_full}_LAYERS"
-    local _full_layers="${!_lv:-0}"
+    engine_is_sglang && _pct=0
+    local _full_layers; _full_layers=$(_cand_field "$_full" LAYERS)
+    _full_layers="${_full_layers:-0}"
     if [ "$_pct" -gt 0 ] 2>/dev/null; then
         for (( i=1; i<_full; i++ )); do
-            _wv="MODEL_${i}_WEIGHTS_GB"; _w="${!_wv:-0}"
-            _lv="MODEL_${i}_LAYERS"
+            _w=$(_cand_field "$i" WEIGHTS_GB); _w="${_w:-0}"
+            _l=$(_cand_field "$i" LAYERS)
             [ "$_w" -gt 0 ] || continue
-            [ -n "${!_lv:-}" ] || continue
-            [ "${!_lv}" -ne "$_full_layers" ] || continue
+            [ -n "$_l" ] || continue
+            [ "$_l" -ne "$_full_layers" ] || continue
             if [ $(( vram * 100 / _w )) -ge "$_pct" ]; then
                 _sel=$i
                 # Floor division is deliberately conservative: WEIGHTS_GB also
                 # covers tensors that never offload per-layer (embeddings,
                 # output head), so the true per-layer cost is slightly lower.
-                MODEL_NGL=$(( ${!_lv} * vram / _w ))
+                MODEL_NGL=$(( _l * vram / _w ))
                 break
             fi
         done
     fi
 
-    _fv="MODEL_${_sel}_FILE"; _uv="MODEL_${_sel}_URL"
-    _sv="MODEL_${_sel}_SHA256"; _dv="MODEL_${_sel}_DESC"
-    _lv="MODEL_${_sel}_LAYERS"
-    MODEL_FILE="${!_fv:-}"
-    MODEL_URL="${!_uv:-}"
-    MODEL_SHA256="${!_sv:-}"
-    MODEL_TIER="${!_dv:-model-$_sel}"
-    MODEL_LAYERS="${!_lv:-}"
+    MODEL_SEL_INDEX="$_sel"
+    MODEL_FILE=$(_cand_field "$_sel" FILE)
+    MODEL_URL=$(_cand_field "$_sel" URL)
+    MODEL_SHA256=$(_cand_field "$_sel" SHA256)
+    MODEL_TIER=$(_cand_field "$_sel" DESC); MODEL_TIER="${MODEL_TIER:-model-$_sel}"
+    MODEL_LAYERS=$(_cand_field "$_sel" LAYERS)
+    # SGLang-only per-candidate extras (always empty under llama.cpp).
+    MODEL_REVISION=$(_cand_field "$_sel" REVISION)
+    MODEL_QUANT=$(_cand_field "$_sel" QUANT)
 }
 
 # Download a URL to a local path. Selects the best available tool and handles proxy.
@@ -228,7 +274,9 @@ _verify_sha256() {
 
 # True when speculative decoding should be used: the setting is on (default)
 # and the active model family defines a draft model.
+# Always false under SGLang: the family draft models are llama.cpp GGUFs.
 spec_decode_enabled() {
+    engine_is_sglang && return 1
     [ "$(read_setting spec_decode)" = "yes" ] && [ -n "${MODEL_DRAFT_FILE:-}" ]
 }
 
@@ -357,6 +405,10 @@ build_pip_install_cmds() {
 # MODEL_FILE isn't set yet, then download to a .part file (verify sha256,
 # rename into place).
 download_model() {
+    if engine_is_sglang; then
+        download_sglang_model
+        return
+    fi
     if [ -n "${MODEL_FILE:-}" ]; then
         local _new_path="$MODEL_STORAGE_DIR/$MODEL_FILE"
         _migrate_flat_model_file "$_new_path"
@@ -423,6 +475,9 @@ detect_model() {
     container_running "$GLOBAL_ENGINE_NAME" && _use_free=false
 
     local total_vram=0 free_vram=0 gpu_idx=0 gpus_used=0 _t _f
+    # SGLang only: per-GPU budget = min(free, total x mem-fraction), and
+    # tensor parallelism splits evenly, so the smallest GPU sets the pace.
+    local _sgl_min_mb=-1 _sgl_gpu
     while IFS=', ' read -r _t _f _; do
         case "$_t" in ''|*[!0-9]*) gpu_idx=$((gpu_idx + 1)); continue ;; esac
         # In single-GPU mode only count VRAM from GPU 0 so the tier selection
@@ -431,13 +486,26 @@ detect_model() {
             gpu_idx=$((gpu_idx + 1)); continue
         fi
         total_vram=$((total_vram + _t))
-        case "$_f" in ''|*[!0-9]*) free_vram=$((free_vram + _t)) ;; *) free_vram=$((free_vram + _f)) ;; esac
+        case "$_f" in ''|*[!0-9]*) _f="$_t" ;; esac
+        free_vram=$((free_vram + _f))
+        if engine_is_sglang; then
+            _sgl_gpu=$(awk -v t="$_t" -v m="${SGL_MEM_FRACTION:-0.85}" 'BEGIN{printf "%d", t*m}')
+            if $_use_free && [ "$_f" -lt "$_sgl_gpu" ]; then _sgl_gpu="$_f"; fi
+            if [ "$_sgl_min_mb" -lt 0 ] || [ "$_sgl_gpu" -lt "$_sgl_min_mb" ]; then _sgl_min_mb="$_sgl_gpu"; fi
+        fi
         gpus_used=$((gpus_used + 1))
         gpu_idx=$((gpu_idx + 1))
     done <<< "$vram_list"
     VRAM_GB=$((total_vram / 1024))
     local budget_gb=$VRAM_GB
-    if $_use_free; then
+    if engine_is_sglang; then
+        # TP size is a power of two (see sglang_tp_size); extra GPUs idle.
+        local _tp; _tp=$(sglang_tp_size "$gpus_used")
+        [ "$_sgl_min_mb" -lt 0 ] && _sgl_min_mb=0
+        budget_gb=$(( _sgl_min_mb * _tp / 1024 ))
+        gpus_used="$_tp"
+        echo -e "${ICON_GEAR} Hardware Audit: Detected ${BOLD}${VRAM_GB}GB Total VRAM${NC} ${DIM}(SGLang: ${budget_gb}GB inside mem-fraction ${SGL_MEM_FRACTION:-0.85}, ${_tp} GPU)${NC}"
+    elif $_use_free; then
         budget_gb=$((free_vram / 1024))
         echo -e "${ICON_GEAR} Hardware Audit: Detected ${BOLD}${VRAM_GB}GB Total VRAM${NC} ${DIM}(${budget_gb}GB free)${NC}"
     else
@@ -456,19 +524,42 @@ detect_model() {
         draft_reserve="${MODEL_DRAFT_VRAM_GB:-1}"
         _draft_note=" + ${draft_reserve}GB draft"
     fi
+    # Under SGLang the budget is already capped at the mem-fraction share of
+    # each GPU; the (1 - fraction) SGLang leaves unallocated is its overhead
+    # allowance, so the llama.cpp overhead reserve would double-count it.
     local overhead_reserve=$(( ${MODEL_VRAM_OVERHEAD_GB:-1} * gpus_used ))
+    engine_is_sglang && overhead_reserve=0
     EFFECTIVE_VRAM_GB=$(( budget_gb - kv_reserve - draft_reserve - overhead_reserve ))
     [ "$EFFECTIVE_VRAM_GB" -lt 0 ] && EFFECTIVE_VRAM_GB=0
     echo -e "${ICON_GEAR} VRAM Reserve: ${BOLD}~${kv_reserve}GB KV${NC} ${DIM}(${MODEL_CTX_LEVEL:-64k} ctx, ${MODEL_KV_TYPE:-q8_0})${_draft_note} + ${overhead_reserve}GB overhead (${gpus_used} GPU)${NC} → ${BOLD}${EFFECTIVE_VRAM_GB}GB${NC} usable for model"
 
     select_model_for_vram "$EFFECTIVE_VRAM_GB"
     echo -e "${ICON_GEAR} Model: ${BOLD}${MODEL_TIER}${NC}"
-    echo -e "${ICON_GEAR} File:  ${CYAN}${MODEL_FILE}${NC}"
+    if engine_is_sglang; then
+        echo -e "${ICON_GEAR} Repo:  ${CYAN}${MODEL_URL}${NC}"
+        # SGLang has no CPU offload, so a fallback tier (WEIGHTS_GB=0) larger
+        # than the whole GPU budget can't load at all. MODEL_SGL_N_SIZE_GB
+        # (optional, fallback entries only) gives its real size to catch that.
+        # Sets MODEL_WONT_FIT so a real launch stops before a pointless download.
+        MODEL_WONT_FIT=false
+        local _sgl_size; _sgl_size=$(_cand_field "${MODEL_SEL_INDEX:-0}" SIZE_GB)
+        if [ -n "$_sgl_size" ] && [ "$_sgl_size" -gt "$budget_gb" ] 2>/dev/null; then
+            MODEL_WONT_FIT=true
+            echo -e "${RED}⚠ Even this family's smallest SGLang model (~${_sgl_size}GB) is larger than SGLang's ${budget_gb}GB GPU budget — it will fail to load.${NC}"
+            echo -e "${YELLOW}  Use llama.cpp for this family on this GPU (--setup), or pick another family (--model).${NC}"
+        fi
+    else
+        echo -e "${ICON_GEAR} File:  ${CYAN}${MODEL_FILE}${NC}"
+    fi
     if [ "${MODEL_NGL:-99}" -lt 99 ]; then
         echo -e "${YELLOW}⚠ CPU offload: ${MODEL_NGL}/${MODEL_LAYERS} layers on GPU — running a bigger model at reduced speed (threshold ${MODEL_CPU_OFFLOAD_PCT:-90}%, disable via --setup)${NC}"
     fi
 
-    if [ -f "$MODEL_STORAGE_DIR/$MODEL_FILE" ]; then
+    if [ -z "${MODEL_FILE:-}" ]; then
+        echo -e "${RED}✘ No $(engine_display_name) model candidates defined for ${MODEL_FAMILY:-this family}${NC}"
+        return 1
+    fi
+    if model_present; then
         echo -e "${ICON_OK} Target Model: ${CYAN}${MODEL_FILE}${NC}"
         return 0
     fi
@@ -482,21 +573,17 @@ detect_model() {
 # the tier a launch would select (matching MODEL_FILE), and a note when
 # that selection runs with partial CPU offload.
 print_model_candidates() {
-    local _count="${MODEL_COUNT:-0}"
+    local _count; _count=$(_cand_field COUNT)
     local _eff="${EFFECTIVE_VRAM_GB:-0}"
-    local i _fv _dv _wv _lv _file _desc _w _l _fit _mark
-    echo -e "\n${BOLD}Model candidates${NC} ${DIM}(${_eff}GB usable after reserves)${NC}"
+    local i _file _desc _w _l _fit _mark
+    echo -e "\n${BOLD}Model candidates${NC} ${DIM}($(engine_display_name), ${_eff}GB usable after reserves)${NC}"
     echo -e "${DIM}  # | DESC | WeightsGB | Layers | Fit${NC}"
     for (( i=1; i<=_count; i++ )); do
-        _fv="MODEL_${i}_FILE"
-        [ -n "${!_fv:-}" ] || break
-        _dv="MODEL_${i}_DESC"
-        _wv="MODEL_${i}_WEIGHTS_GB"
-        _lv="MODEL_${i}_LAYERS"
-        _file="${!_fv}"
-        _desc="${!_dv:-}"
-        _w="${!_wv:-0}"
-        _l="${!_lv:-}"
+        _file=$(_cand_field "$i" FILE)
+        [ -n "$_file" ] || break
+        _desc=$(_cand_field "$i" DESC)
+        _w=$(_cand_field "$i" WEIGHTS_GB); _w="${_w:-0}"
+        _l=$(_cand_field "$i" LAYERS)
         if _tier_fits "$_w" "$_eff"; then _fit="yes"; else _fit="no"; fi
         _mark=""
         [ "$_file" = "${MODEL_FILE:-}" ] && _mark="  ${GREEN}◀ selected${NC}"
@@ -529,10 +616,12 @@ cmd_models() {
         return 1
     fi
     source "$_conf"
+    require_family_supports_engine "$family_key" || return 1
 
     # Apply the same launch-time settings a real run resolves before
     # detect_model (see the IGNITION section in ai-coder), so the GPU
     # budget and VRAM reserves match what a launch would compute.
+    ensure_sgl_config
     ensure_gpu_config
     ensure_ctx_config
     ensure_kv_config
@@ -555,6 +644,11 @@ cmd_speed() {
     if [ -z "$family_key" ]; then
         echo -e "${RED}No model family selected yet. Pass a family key or run ${CYAN}--model${NC} first:${NC}"
         echo -e "${DIM}  $(basename "$0") --speed <family-key>${NC}"
+        return 1
+    fi
+    if engine_is_sglang; then
+        echo -e "${YELLOW}The llama-bench speed test is llama.cpp-only (the engine is set to SGLang).${NC}"
+        echo -e "${DIM}  Switch engines with: $(basename "$0") --setup${NC}"
         return 1
     fi
     if [ "$(read_setting speed_tracking)" != "yes" ]; then

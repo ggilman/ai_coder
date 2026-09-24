@@ -40,6 +40,17 @@ echo -e "${DIM}Output: ${BUNDLE_DIR}${NC}\n"
 
 check_docker || exit 1
 
+# Bundles are llama.cpp-only: they package GGUF models and the llama.cpp
+# images. The installed copy starts on the default engine (llama.cpp), so a
+# bundle made on an SGLang machine still works — it just isn't SGLang.
+if engine_is_sglang; then
+    echo -e "${YELLOW}⚠ Offline bundles are llama.cpp-only for now — this bundle packages GGUF${NC}"
+    echo -e "${YELLOW}  models and the llama.cpp engine, not your SGLang setup.${NC}\n"
+    # Model download/selection below must take the GGUF path.
+    ENGINE_BACKEND=llamacpp
+    ENGINE_IMAGE="$LLAMA_IMAGE"
+fi
+
 # Bootstrap gum once for both selection prompts below; falls back to plain
 # numbered prompts if gum can't be installed or run (or with AI_CODER_NO_GUM=1).
 ensure_gum
