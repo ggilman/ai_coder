@@ -5,6 +5,8 @@
 
 IMAGE_NAME="ai-coder-gemini"
 TOOL_NAME="Gemini"
+# Gemini CLI's native resume flag is --resume (not --continue).
+RESUME_FLAG="--resume"
 NEEDS_LITELLM_PROXY=true
 
 build_image() {
@@ -47,11 +49,8 @@ start_workbench() {
 }
 
 execute_tool() {
-    # Gemini CLI's native resume flag is --resume (not --continue).
-    local _resume=()
-    [ "${CONTINUE_SESSION:-false}" = "true" ] && _resume=(--resume)
     exec_in_container \
         -e TERM=xterm-256color -e COLORTERM=truecolor \
         -e GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:${PROXY_PORT}" \
-        "$WORKBENCH" gemini --max_iterations 20 "${_resume[@]}"
+        "$WORKBENCH" gemini --max_iterations 20 "${RESUME_ARGS[@]}"
 }

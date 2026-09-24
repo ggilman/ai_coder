@@ -5,6 +5,8 @@
 
 IMAGE_NAME="ai-coder-qwencode"
 TOOL_NAME="Qwen Code"
+# Qwen Code inherits Gemini CLI's --resume (not --continue).
+RESUME_FLAG="--resume"
 
 build_image() {
     build_npm_agent_image "Dockerfile.qwencode" "apt-qwencode.txt" "mcp-qwencode.txt" \
@@ -43,10 +45,7 @@ start_workbench() {
 }
 
 execute_tool() {
-    # Qwen Code inherits Gemini CLI's --resume (not --continue).
-    local _resume=()
-    [ "${CONTINUE_SESSION:-false}" = "true" ] && _resume=(--resume)
     exec_in_container \
         -e TERM=xterm-256color -e COLORTERM=truecolor \
-        "$WORKBENCH" qwen "${_resume[@]}"
+        "$WORKBENCH" qwen "${RESUME_ARGS[@]}"
 }

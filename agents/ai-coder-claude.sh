@@ -5,6 +5,7 @@
 
 IMAGE_NAME="ai-coder-claude"
 TOOL_NAME="Claude"
+RESUME_FLAG="--continue"
 
 build_image() {
     build_npm_agent_image "Dockerfile" "apt-claude.txt" "mcp-claude.txt" \
@@ -104,7 +105,5 @@ start_workbench() {
 }
 
 execute_tool() {
-    local _resume=()
-    [ "${CONTINUE_SESSION:-false}" = "true" ] && _resume=(--continue)
-    exec_in_container -e CLAUDE_CODE_SIMPLE=1 "$WORKBENCH" claude --bare "${_resume[@]}"
+    exec_in_container -e CLAUDE_CODE_SIMPLE=1 "$WORKBENCH" claude --bare "${RESUME_ARGS[@]}"
 }

@@ -5,6 +5,7 @@
 
 IMAGE_NAME="ai-coder-goose"
 TOOL_NAME="Goose"
+RESUME_FLAG="--resume"
 
 build_image() {
     # Goose ships no npm package of its own (Rust binary via install script), so
@@ -104,9 +105,7 @@ start_workbench() {
 }
 
 execute_tool() {
-    local _resume=()
-    [ "${CONTINUE_SESSION:-false}" = "true" ] && _resume=(--resume)
     exec_in_container \
         -e TERM=xterm-256color -e COLORTERM=truecolor \
-        "$WORKBENCH" goose session "${_resume[@]}"
+        "$WORKBENCH" goose session "${RESUME_ARGS[@]}"
 }

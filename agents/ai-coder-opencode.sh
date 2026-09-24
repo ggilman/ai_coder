@@ -5,6 +5,7 @@
 
 IMAGE_NAME="ai-coder-opencode"
 TOOL_NAME="OpenCode"
+RESUME_FLAG="--continue"
 
 build_image() {
     build_npm_agent_image "Dockerfile.oc" "apt-opencode.txt" "mcp-opencode.txt" \
@@ -64,7 +65,5 @@ execute_tool() {
     # directly — OpenCode doesn't handle Ctrl-C well from inside a docker exec
     # TTY, and the wrapper strips it from the input stream instead. The wrapper
     # forwards any extra args it receives straight through to opencode.
-    local _resume=()
-    [ "${CONTINUE_SESSION:-false}" = "true" ] && _resume=(--continue)
-    exec_in_container "$WORKBENCH" python3 /opt/opencode-pty.py "${_resume[@]}"
+    exec_in_container "$WORKBENCH" python3 /opt/opencode-pty.py "${RESUME_ARGS[@]}"
 }

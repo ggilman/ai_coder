@@ -5,6 +5,9 @@
 
 IMAGE_NAME="ai-coder-aider"
 TOOL_NAME="Aider"
+# Aider has no --continue flag; its native session-resume equivalent is
+# --restore-chat-history (reloads prior messages from .aider.chat.history.md).
+RESUME_FLAG="--restore-chat-history"
 
 build_image() {
     if [ -n "$(docker images -q "$IMAGE_NAME" 2>/dev/null)" ]; then
@@ -50,11 +53,7 @@ start_workbench() {
 }
 
 execute_tool() {
-    # Aider has no --continue flag; its native session-resume equivalent is
-    # --restore-chat-history (reloads prior messages from .aider.chat.history.md).
-    local _resume=()
-    [ "${CONTINUE_SESSION:-false}" = "true" ] && _resume=(--restore-chat-history)
     exec_in_container \
         -e TERM=xterm-256color -e COLORTERM=truecolor \
-        "$WORKBENCH" /opt/aider/bin/aider --no-check-update --config /root/.aider-config/.aider.conf.yml "${_resume[@]}"
+        "$WORKBENCH" /opt/aider/bin/aider --no-check-update --config /root/.aider-config/.aider.conf.yml "${RESUME_ARGS[@]}"
 }

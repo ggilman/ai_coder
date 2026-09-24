@@ -384,5 +384,6 @@ if [ "$TOOL_PREF" != "webui" ]; then
 fi
 
 echo -e "${ICON_GEAR} Attaching to workbench..."
+resolve_resume_args
 execute_tool
 # Cleanup is handled by the EXIT trap (see above).

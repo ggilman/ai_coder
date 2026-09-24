@@ -32,6 +32,9 @@ NETWORK_INTERNAL=false
 NEEDS_LITELLM_PROXY=false
 BUILD_ONLY=false
 CONTINUE_SESSION=false
+# Agents set RESUME_FLAG to their native resume flag; see resolve_resume_args.
+RESUME_FLAG=""
+RESUME_ARGS=()
 WORKBENCH_PREFIX="coder"
 LITELLM_IMAGE="ghcr.io/berriai/litellm:main-latest"
 LLAMA_IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
@@ -181,6 +184,15 @@ start_workbench() {
 
 execute_tool() {
     echo -e "${RED}✘ execute_tool() not implemented in child${NC}"; return 1
+}
+
+# Fill RESUME_ARGS with the agent's RESUME_FLAG when --continue was given, so
+# execute_tool can append "${RESUME_ARGS[@]}" to the tool's command line.
+resolve_resume_args() {
+    RESUME_ARGS=()
+    if [ "$CONTINUE_SESSION" = "true" ] && [ -n "$RESUME_FLAG" ]; then
+        RESUME_ARGS=("$RESUME_FLAG")
+    fi
 }
 
 # --- [ COMMANDS ] -------------------------------------------------------------
