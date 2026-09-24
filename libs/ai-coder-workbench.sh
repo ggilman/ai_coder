@@ -401,10 +401,17 @@ _run_llamacpp_engine() {
 
     # Thinking mode: reasoning models (Qwen3) burn hundreds of tokens before
     # every tool call. MODEL_THINKING=false disables it for snappier turns.
+    # With thinking on, --no-reasoning-preserve drops earlier turns' reasoning
+    # from the prompt (templates like Qwen3.8's keep it by default), so it
+    # stops eating context; MODEL_REASONING_PRESERVE=true keeps it.
     local _think_args=()
     if [ "${MODEL_THINKING:-true}" = "false" ]; then
         _think_args=(--reasoning-budget 0)
         echo -e "${ICON_GEAR} Thinking mode: ${YELLOW}disabled (--reasoning-budget 0)${NC}"
+    elif [ "${MODEL_REASONING_PRESERVE:-false}" != "true" ] && \
+         _llama_supports_flag "$ENGINE_IMAGE" --no-reasoning-preserve; then
+        _think_args=(--no-reasoning-preserve)
+        echo -e "${ICON_GEAR} Thinking mode: ${GREEN}enabled${NC} ${DIM}(past turns' reasoning dropped from context)${NC}"
     fi
 
     # Repeat penalty is off unless a family conf sets MODEL_REPEAT_PENALTY —
@@ -430,6 +437,29 @@ _run_llamacpp_engine() {
         --cache-reuse "${MODEL_CACHE_REUSE:-256}" \
         ${LLAMA_SPEC_FLAGS} \
         "${_draft_args[@]}" "${_think_args[@]}" "${_rp_args[@]}" "${_jinja_args[@]}" "${_ts_args[@]}" > /dev/null
+}
+
+# Usage: _llama_supports_flag <image> <flag> — true when that image's
+# llama-server --help lists <flag>. The stock image is pulled once and never
+# refreshed, so an older one can predate a flag, and an unknown flag stops
+# llama-server from starting at all. The --help run (a second or two) is
+# cached in state.json per image ID and flag, so it happens once per image.
+_llama_supports_flag() {
+    local _img="$1" _flag="$2" _id _key _cached
+    _id=$(docker image inspect -f '{{.Id}}' "$_img" 2>/dev/null | tr -d '\r') || return 1
+    _key="llama_flag_${_flag//[^a-zA-Z0-9]/_}"
+    _cached=$(read_pref "$STATE_FILE" "$_key" "")
+    if [ "${_cached%%|*}" != "$_id" ]; then
+        # Via a temp file, not a pipe: grep -q exiting early would fail the
+        # docker run side under pipefail.
+        local _res=no _tmp="${TMPDIR:-/tmp}/.ai-coder-llama-help.$$"
+        MSYS_NO_PATHCONV=1 docker run --rm --entrypoint /app/llama-server "$_img" --help > "$_tmp" 2>&1 || true
+        grep -q -- "$_flag" "$_tmp" && _res=yes
+        rm -f "$_tmp"
+        _cached="$_id|$_res"
+        write_pref "$STATE_FILE" "$_key" "$_cached"
+    fi
+    [ "${_cached##*|}" = "yes" ]
 }
 
 # Builds LLAMA_ASYM_IMAGE (the llama.cpp server with a CUDA Flash Attention
@@ -641,9 +671,13 @@ _current_sgl_memfrac() {
 }
 
 # Thinking mode for the engine_thinking restart check — "-" under SGLang,
-# where it's a per-request option rather than an engine flag.
+# where it's a per-request option rather than an engine flag. "true+preserve"
+# when thinking is on and past reasoning is kept (MODEL_REASONING_PRESERVE).
 _current_thinking() {
-    engine_is_sglang && echo "-" || echo "${MODEL_THINKING:-true}"
+    if engine_is_sglang; then echo "-"; return; fi
+    local _t="${MODEL_THINKING:-true}"
+    [ "$_t" != "false" ] && [ "${MODEL_REASONING_PRESERVE:-false}" = "true" ] && _t="$_t+preserve"
+    echo "$_t"
 }
 
 # Sets WORKBENCH_STARTED_BY_US so the caller's cleanup only stops containers

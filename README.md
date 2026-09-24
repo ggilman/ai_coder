@@ -498,7 +498,7 @@ Settings that change which model tier fits in VRAM are deliberately not wizard s
 
 `--model` also asks one question that doesn't affect sizing but is worth revisiting per model:
 
-- **Thinking mode** *(llama.cpp)* — family default, on, or off. Reasoning models write a block of reasoning before every reply and tool call: better planning on hard tasks, but each agent turn produces many more tokens and takes longer. Off passes `--reasoning-budget 0`. The family default is on for the Qwen families and gpt-oss, off for GLM-4.7-Flash. (Under SGLang thinking is a per-request option, so there's no engine-level switch.)
+- **Thinking mode** *(llama.cpp)* — family default, on, or off. Reasoning models write a block of reasoning before every reply and tool call: better planning on hard tasks, but each agent turn produces many more tokens and takes longer. Off passes `--reasoning-budget 0`. When it's on, earlier turns' reasoning is dropped from the prompt (`--no-reasoning-preserve`) so it doesn't use up context; set `MODEL_REASONING_PRESERVE=true` to keep it. The family default is on for the Qwen families and gpt-oss, off for GLM-4.7-Flash. (Under SGLang thinking is a per-request option, so there's no engine-level switch.)
 
 In gum mode, pressing **Esc** or **Cancel** on any step keeps that setting unchanged and moves to the next question — nothing is lost mid-wizard. To force the plain-text prompts even where gum is installed, set `AI_CODER_NO_GUM=1`.
 
