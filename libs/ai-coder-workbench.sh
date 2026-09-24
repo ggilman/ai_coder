@@ -371,7 +371,14 @@ _run_llamacpp_engine() {
             # ai-coder) is what tells the two cases apart. Without this check,
             # a disabled/failed Qwen3.8 draft would still get --spec-type
             # draft-mtp with no draft model loaded to back it.
-            if [ "${MODEL_DRAFT_DEFINED:-false}" != "true" ] || spec_decode_enabled; then
+            # MODEL_MTP additionally covers built-in-head families where only
+            # some tiers actually have them baked in (e.g. Gemma 4's 12B/E2B
+            # don't) — llama.cpp hard-errors on load if forced against a GGUF
+            # without MTP layers, so this must be checked even when there's no
+            # external draft file to speak of.
+            if [ "${MODEL_DRAFT_DEFINED:-false}" != "true" ] && [ "${MODEL_MTP:-true}" = "false" ]; then
+                echo -e "${ICON_GEAR} Speculative decoding: ${DIM}disabled (this model tier has no built-in MTP draft heads)${NC}"
+            elif [ "${MODEL_DRAFT_DEFINED:-false}" != "true" ] || spec_decode_enabled; then
                 # MODEL_SPEC_DRAFT_N_MAX is per-family (default 3) — e.g.
                 # qwen3.6MTP.conf's own verified value is 2; don't assume one
                 # n-max fits every MTP model.

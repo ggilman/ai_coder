@@ -233,6 +233,10 @@ select_model_for_vram() {
     MODEL_SHA256=$(_cand_field "$_sel" SHA256)
     MODEL_TIER=$(_cand_field "$_sel" DESC); MODEL_TIER="${MODEL_TIER:-model-$_sel}"
     MODEL_LAYERS=$(_cand_field "$_sel" LAYERS)
+    # Per-tier override for MTP families where only some quants/sizes bake in
+    # built-in draft heads (e.g. Gemma 4's 12B/E2B don't) — blank/unset means
+    # "has them", matching every MTP family conf before this field existed.
+    MODEL_MTP=$(_cand_field "$_sel" MTP)
     # SGLang-only per-candidate extras (always empty under llama.cpp).
     MODEL_REVISION=$(_cand_field "$_sel" REVISION)
     MODEL_QUANT=$(_cand_field "$_sel" QUANT)
