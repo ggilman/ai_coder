@@ -109,3 +109,45 @@ get_engine_footprint() {
         printf "%.1fGB model, %.1fGB KV (%dk %s), ~%.1fGB VRAM", w/g, k/g, c/1024, t, v/g
     }'
 }
+
+# Usage: get_engine_speed — echoes the engine's recent throughput, parsed from
+# the tail of its container log (the engine logs its own timings, so this
+# never sends it a request and costs it nothing), e.g.
+#   "21.6 t/s generating"                      (mid-reply, last ~3 s)
+#   "reading prompt, 223 t/s"                  (mid-prompt)
+#   "last reply 21.7 t/s, prompt 222 t/s"      (idle)
+# llama.cpp prints these lines itself; SGLang only logs a generation rate
+# on its decode batches. Echoes nothing when no timings are logged yet.
+# Written via a temp file rather than $(docker logs) — see _ENGINE_TMP above.
+get_engine_speed() {
+    local _tmp="/tmp/ai_status_speed_$$"
+    docker logs --tail 300 "$ENGINE_NAME" > "$_tmp" 2>&1 || true
+    awk '
+        function num(s) { sub(/^[^0-9]*/, "", s); return s + 0 }
+        /prompt eval time =/ {
+            if (match($0, /[0-9.]+ tokens per second/)) pp = num(substr($0, RSTART, RLENGTH)); next
+        }
+        / eval time =/ {
+            if (match($0, /[0-9.]+ tokens per second/)) tg = num(substr($0, RSTART, RLENGTH))
+            state = "done"; next
+        }
+        /prompt processing, n_tokens/ {
+            if (match($0, /[0-9.]+ tokens per second/)) live_pp = num(substr($0, RSTART, RLENGTH))
+            state = "reading"; next
+        }
+        /n_gen = .* tg_3s = / {
+            if (match($0, /tg_3s = +[0-9.]+/)) live_tg = num(substr($0, RSTART + 5, RLENGTH - 5))
+            state = "generating"; next
+        }
+        /gen throughput \(token\/s\): / {
+            if (match($0, /\(token\/s\): +[0-9.]+/)) live_tg = num(substr($0, RSTART + 11, RLENGTH - 11))
+            state = "sglang"; next
+        }
+        END {
+            if (state == "generating")   printf "%.1f t/s generating", live_tg
+            else if (state == "reading") printf "reading prompt, %.0f t/s", live_pp
+            else if (state == "sglang")  printf "%.1f t/s (latest decode batch)", live_tg
+            else if (state == "done")    printf "last reply %.1f t/s, prompt %.0f t/s", tg, pp
+        }' "$_tmp" 2>/dev/null | tr -d '\r' || true
+    rm -f "$_tmp"
+}

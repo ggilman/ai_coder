@@ -147,6 +147,10 @@ main() {
             _footprint=$(get_engine_footprint "$SCRIPT_DIR")
             [ -n "$_footprint" ] && _footprint_line="
 💾  \e[1mSize:\e[0m         $_footprint"
+            local _speed
+            _speed=$(get_engine_speed)
+            [ -n "$_speed" ] && _footprint_line="$_footprint_line
+⚡  \e[1mSpeed:\e[0m        $_speed"
 
             # Status word is padded to a fixed width so the E_PAD cursor-skip
             # (see comment at its definition) always lands on the same column

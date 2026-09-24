@@ -197,6 +197,15 @@ main() {
                 printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$size_text" "$size_pad" "" "$CYAN" "$NC"
             fi
 
+            speed_text=$(get_engine_speed)
+            if [ -n "$speed_text" ]; then
+                speed_text="⚡  Speed: ${speed_text}"
+                speed_len=$(get_visible_length "$speed_text")
+                speed_pad=$((70 - speed_len))
+                [ "$speed_pad" -lt 0 ] && speed_pad=0
+                printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$speed_text" "$speed_pad" "" "$CYAN" "$NC"
+            fi
+
             # Network isolation status
             _iso_val=$(get_network_isolation_status "$SCRIPT_DIR")
             if [ "$_iso_val" = "yes" ]; then
