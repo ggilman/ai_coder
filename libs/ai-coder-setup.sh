@@ -463,8 +463,8 @@ setup_step_spec_decode() {
         "A tiny draft model proposes tokens the main model verifies in one pass —
 typically 1.5-2x faster code generation. Costs ~1-2GB extra VRAM.
 Applies only to model families that define an external draft (currently
-Qwen3 and Qwen3.8). Gemma 4 and Qwen3.6 MTP always use their own built-in
-MTP draft heads baked into the main model regardless of this setting —
+Qwen3 and Qwen3.8). Qwen3.6 MTP always uses its own built-in MTP draft
+heads baked into the main model regardless of this setting —
 there's no toggle for those." \
         "Use speculative decoding? [Y/n]:" \
         "$_cur_spec" "$_cur_spec" \

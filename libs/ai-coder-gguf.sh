@@ -26,10 +26,11 @@ gguf_read_header() {
 }
 
 # Usage: gguf_kv_geometry <header_file> — parse the metadata and print
-#   <arch> <layers> <K> <V> <K_swa> <V_swa> <window> <note>
+#   <arch> <layers> <K> <V> <K_swa> <V_swa> <window> <note> <mtp_layers>
 # K/V are cache elements per token summed over the full-context layers; the
 # _swa columns over the sliding-window layers (which cache at most <window>
-# tokens). Element counts are quant-independent — the estimator applies the
+# tokens); <mtp_layers> is the built-in MTP draft-head layer count
+# (nextn_predict_layers, 0 when absent). Element counts are quant-independent — the estimator applies the
 # KV cache type. Prints "SHORT" when the header needs more bytes and
 # "ERROR <reason>" when the file can't be sized.
 #
@@ -167,7 +168,7 @@ gguf_kv_geometry() {
             if (swa) { KS += k; VS += v } else { KF += k; VF += v }
         }
         if (KS == 0 && VS == 0) win = 0
-        printf "%s %d %d %d %d %d %d %s\n", arch, L, KF, VF, KS, VS, win, (note == "" ? "-" : note)
+        printf "%s %d %d %d %d %d %d %s %d\n", arch, L, KF, VF, KS, VS, win, (note == "" ? "-" : note), nextn
     }
     '
 }
@@ -189,6 +190,18 @@ gguf_probe() {
     rm -f "$_tmp"
     [ "$_res" = "SHORT" ] && _res="ERROR metadata larger than 32 MiB"
     echo "$_res"
+}
+
+# Usage: gguf_mtp_layers <path> — the built-in MTP draft-head layer count of a
+# local GGUF (llama.cpp's --spec-type draft-mtp needs > 0). Prints nothing and
+# returns 1 when the header can't be read.
+gguf_mtp_layers() {
+    local _res _n
+    _res=$(gguf_probe "$1") || return 1
+    [ "${_res%% *}" = "ERROR" ] && return 1
+    _n=$(echo "$_res" | awk '{ print $9 }')
+    [ -n "$_n" ] || return 1
+    echo "$_n"
 }
 
 # jq program for hf_kv_probe: a Hugging Face config.json →
@@ -310,7 +323,7 @@ _kv_probe_row() {
 _kv_probe_family() {
     local _conf="$1" _write="$2"
     local i _count _file _src _res _desc _repo _rev
-    local _arch _l _k _v _ks _vs _win _extra _kv _swa _max _old _new _changed=0
+    local _arch _l _k _v _ks _vs _win _extra _nextn _kv _swa _max _old _new _changed=0
     local _head="   # | DESC                                               | arch            | K/V elems/token | SWA K/V@window     | KV GB now → new"
     ENGINE_BACKEND=llamacpp
     source "$_conf"
@@ -330,7 +343,7 @@ _kv_probe_family() {
             printf '  %2d | %-50.50s | %b\n' "$i" "$_desc" "${RED}${_res#ERROR }${NC}"
             continue
         fi
-        read -r _arch _l _k _v _ks _vs _win _extra <<< "$_res"
+        read -r _arch _l _k _v _ks _vs _win _extra _nextn <<< "$_res"
         _kv="$_k/$_v"; _swa=""
         [ "$_win" -gt 0 ] && _swa="$_ks/$_vs@$_win"
         _old=$(_estimate_kv_bytes "$i")

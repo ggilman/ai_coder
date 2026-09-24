@@ -362,7 +362,7 @@ _run_llamacpp_engine() {
     LLAMA_SPEC_FLAGS=""
     case "${MODEL_SPEC_STRATEGY:-none}" in
         mtp)
-            # Most MTP families (Gemma 4, Qwen3.6 MTP) bake the draft heads into
+            # Most MTP families (e.g. Qwen3.6 MTP) bake the draft heads into
             # the main GGUF itself — no MODEL_DRAFT_FILE, so the flags always
             # apply. Qwen3.8 instead pairs this with a real external draft file
             # (see qwen3.8.conf), which the spec_decode setting — or a failed
@@ -371,7 +371,17 @@ _run_llamacpp_engine() {
             # ai-coder) is what tells the two cases apart. Without this check,
             # a disabled/failed Qwen3.8 draft would still get --spec-type
             # draft-mtp with no draft model loaded to back it.
-            if [ "${MODEL_DRAFT_DEFINED:-false}" != "true" ] || spec_decode_enabled; then
+            # Self-contained MTP also needs the heads to actually be in the
+            # GGUF — not every tier of an MTP family ships them (unsloth's
+            # Gemma 4 GGUFs don't), and llama-server exits at load when they
+            # are missing. An unreadable header keeps the family's choice.
+            local _mtp_n=""
+            if [ "${MODEL_DRAFT_DEFINED:-false}" != "true" ]; then
+                _mtp_n=$(gguf_mtp_layers "$MODEL_STORAGE_DIR/$MODEL_FILE") || _mtp_n=""
+            fi
+            if [ "$_mtp_n" = "0" ]; then
+                echo -e "${ICON_GEAR} Speculative decoding: ${DIM}disabled (model has no MTP layers)${NC}"
+            elif [ "${MODEL_DRAFT_DEFINED:-false}" != "true" ] || spec_decode_enabled; then
                 # MODEL_SPEC_DRAFT_N_MAX is per-family (default 3) — e.g.
                 # qwen3.6MTP.conf's own verified value is 2; don't assume one
                 # n-max fits every MTP model.
