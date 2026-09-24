@@ -85,22 +85,45 @@ ensure_ctx_config() {
     esac
 }
 
-# Sets MODEL_KV_TYPE to q4_0 (both K and V) from the low-VRAM KV cache
-# preference (ai-coder --setup, off by default), overriding the family
-# default. Matched K/V quant types use llama.cpp's fused CUDA Flash
-# Attention kernel even on the stock ghcr.io/ggml-org image; mismatched
-# types (the asymmetric approach this replaced) silently fall back to a
-# CPU-bound path — see ggml-org/llama.cpp#20866 and #22411.
+# Sets MODEL_KV_TYPE (K cache, -ctk) and MODEL_KV_TYPE_V (V cache, -ctv)
+# from the kv_mode setting (chosen in ai-coder --model):
+#   default — the family's own MODEL_KV_TYPE for both (q8_0 for most)
+#   asym    — q8_0 K / q4_0 V: keys are the quantization-sensitive side
+#   q4      — q4_0 for both
+# llama.cpp only compiles CUDA Flash Attention kernels for the K/V pairs
+# listed in GGML_CUDA_FA_QUANTS (default q4_0-q4_0;q8_0-q8_0;f16-f16;
+# bf16-bf16). A pair outside that list — like q8_0-q4_0 on the stock
+# ghcr.io/ggml-org image — falls back to a far slower path, so asym also
+# switches ENGINE_IMAGE to a locally built image that compiles the pair
+# (see ensure_llama_asym_image).
 #
-# SGLang has no q4 KV cache and ignores the family's llama.cpp KV type: it
-# uses "auto" (the model's own dtype) unless the FP8 KV cache setting is on.
+# SGLang has no q4 or asymmetric KV cache and ignores the family's llama.cpp
+# KV type: it uses "auto" (the model's own dtype) unless the FP8 KV cache
+# setting is on.
 ensure_kv_config() {
     if engine_is_sglang; then
         MODEL_KV_TYPE=auto
         [ "$(read_setting sgl_kv_fp8)" = "yes" ] && MODEL_KV_TYPE="fp8_e4m3"
+        MODEL_KV_TYPE_V="$MODEL_KV_TYPE"
         return 0
     fi
-    [ "$(read_setting kv_q4)" = "yes" ] && MODEL_KV_TYPE="q4_0" || true
+    MODEL_KV_TYPE="${MODEL_KV_TYPE:-q8_0}"
+    MODEL_KV_TYPE_V="${MODEL_KV_TYPE_V:-$MODEL_KV_TYPE}"
+    case "$(read_setting kv_mode)" in
+        q4)
+            MODEL_KV_TYPE=q4_0; MODEL_KV_TYPE_V=q4_0 ;;
+        asym)
+            MODEL_KV_TYPE=q8_0; MODEL_KV_TYPE_V=q4_0
+            ENGINE_IMAGE="$LLAMA_ASYM_IMAGE" ;;
+    esac
+}
+
+# The KV cache type as one token for display and the engine_kv restart
+# check: "q8_0" when K and V match, "q8_0/q4_0" (K/V) when they don't.
+kv_type_label() {
+    local _k="${MODEL_KV_TYPE:-q8_0}"
+    local _v="${MODEL_KV_TYPE_V:-$_k}"
+    [ "$_k" = "$_v" ] && echo "$_k" || echo "$_k/$_v"
 }
 
 ensure_overhead_config() {

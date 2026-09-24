@@ -83,7 +83,7 @@ The launcher normally picks the first (best) entry whose `WEIGHTS_GB` fits in ef
 
 **Family Defaults:**
 - `MODEL_FAMILY`: Display name in the selection menu.
-- `MODEL_KV_TYPE`: KV cache quantization (e.g., `q8_0`, `q4_0`). Applied to both K and V.
+- `MODEL_KV_TYPE`: KV cache quantization (e.g., `q8_0`, `q4_0`). Applied to both K and V unless the `--model` KV cache choice overrides it (`MODEL_KV_TYPE_V` overrides the V side alone).
 - `MODEL_JINJA`: Enable model's built-in Jinja template.
 - `MODEL_THINKING`: Toggle reasoning tokens (e.g., for Qwen3 family).
 
@@ -118,7 +118,7 @@ A single launcher for Claude Code, OpenCode, Aider, Gemini CLI, Qwen Code, and G
 | --- | --- |
 | (no argument) | Launch the AI tool inside the active workbench container |
 | `--continue` | Resume the previous agent session — passes the tool's native continue flag (`--continue` for Claude/OpenCode/Aider, `--resume` for Gemini/Qwen Code/Goose) |
-| `--model` | Reset model family, tool, Open WebUI, context level **and** KV cache preferences (low-VRAM q4 for llama.cpp, FP8 for SGLang); show the selection menus again |
+| `--model` | Reset model family, tool, Open WebUI, context level **and** KV cache preferences (q8_0 / asymmetric q8_0-K q4_0-V / q4_0 for llama.cpp, FP8 for SGLang); show the selection menus again |
 | `--models [family]` | Dry-run model tier selection: hardware audit, VRAM reserves, and which tier a launch would pick — no Docker, no launch |
 | `--speed [family]` | Generation-speed benchmark: run `llama-bench` on your model on a clean GPU and print tokens/s (requires the *generation speed tracking* setup option; llama.cpp engine only) |
 | `--status` | Show the real-time GPU and engine status dashboard |
@@ -126,7 +126,7 @@ A single launcher for Claude Code, OpenCode, Aider, Gemini CLI, Qwen Code, and G
 | `--update` | Download and install the latest release from GitHub (refused in a git checkout — use `git pull` there — unless `--update --force`) |
 | `--fix-project` | Normalize line endings in the current project folder for AI editing (run once per project) |
 | `--clean` | Stop and remove all Hub and Spoke containers |
-| `--rebuild` | Remove all workbench images to force a full rebuild on next run |
+| `--rebuild` | Remove all workbench images (and the locally built asymmetric-KV llama.cpp image) to force a full rebuild on next run |
 | `--build-only` | Build the workbench image then exit (no Hub or agent launch) |
 | `--help` | Show help information |
 
@@ -149,7 +149,7 @@ The Hub engine can run on either of two inference servers, chosen in `--setup` (
 | Multi-GPU | Uneven `--tensor-split` by free VRAM | Even tensor parallel (`--tp`), power-of-two GPU count |
 | CPU offload, speculative decoding, `--speed` | Yes | No — hidden in `--setup` and skipped |
 | VRAM sizing | Overhead reserve (`--setup`) | Memory fraction (`--setup`, default 0.85) — SGLang pre-allocates that share of each GPU for weights + KV pool |
-| KV cache option (`--model`) | Low-VRAM `q4_0` | FP8 (`fp8_e4m3`) |
+| KV cache option (`--model`) | Family default (`q8_0`), asymmetric `q8_0` K / `q4_0` V ([locally built image](#asymmetric-kv-cache)), or `q4_0` | FP8 (`fp8_e4m3`) — one dtype for K and V, no asymmetric mode |
 
 Both engines listen on the same port (8080) and serve the OpenAI `/v1` and Anthropic `/v1/messages` APIs, so every agent, Open WebUI and the status dashboard work unchanged. Claude Code additionally gets `CLAUDE_CODE_ATTRIBUTION_HEADER=0` under SGLang so its prefix cache is reused across turns.
 
@@ -159,6 +159,18 @@ Notes:
 - **Context**: SGLang refuses a context longer than the model was trained for, so the chosen level is capped at the model's `max_position_embeddings` (e.g. 40,960 for Qwen3).
 - **Overrides**: `ENGINE_BACKEND=sglang|llamacpp` for one session, `SGLANG_IMAGE` for a different image tag, and `SGL_EXTRA_ARGS` for any other `sglang.launch_server` flags.
 - Offline bundles (`offline/bundle.sh`) are llama.cpp-only for now.
+
+### Asymmetric KV cache
+
+The *asymmetric* KV cache option in `--model` keeps keys at `q8_0` and stores values at `q4_0`, which uses about 25% less KV VRAM than `q8_0`/`q8_0` for much less quality loss than `q4_0`/`q4_0` (keys are the quantization-sensitive side).
+
+llama.cpp only compiles CUDA Flash Attention kernels for the K/V pairs listed in its `GGML_CUDA_FA_QUANTS` build option. The default list is `q4_0-q4_0;q8_0-q8_0;f16-f16;bf16-bf16`, so on the stock `server-cuda` image a mismatched pair falls back to a much slower path. Choosing asymmetric therefore builds a local image, `ai-coder/llama.cpp:server-cuda-asym`, the first time it's needed:
+
+- It runs llama.cpp's own `.devops/cuda.Dockerfile` straight from GitHub (no local checkout), adds `q8_0-q4_0` to the kernel list, and compiles only for the GPU architectures `nvidia-smi` reports.
+- The build is one-time and usually takes 10–30 minutes. It runs before the Hub starts; a second session launched meanwhile waits for it. nvcc needs a lot of memory, so if the build is killed for running out of memory, give Docker Desktop more RAM.
+- It builds the latest llama.cpp release; export `LLAMA_BUILD_REF=<tag>` to pin one. `--rebuild` removes the image so the next asymmetric launch builds a newer llama.cpp. `--doctor` shows which llama.cpp release the image was built from.
+- It needs internet access, so it won't build with network isolation on. An image built earlier (or loaded from an offline bundle, which includes it when present) still works.
+- The q8_0/q8_0 and q4_0/q4_0 options keep using the stock image.
 
 ## Multi-GPU Support
 
@@ -228,7 +240,7 @@ A rebuild (`./ai-coder --rebuild` followed by `./ai-coder`) is only needed when 
 | Change GPU mode (`--setup`) | No | Passed as flags when the engine container starts |
 | Toggle fast model storage (`--setup`) | No | Engine restarts with the new mount on next launch |
 | Toggle speculative decoding (`--setup`) | No | Engine restarts with/without the draft model on next launch |
-| Toggle low-VRAM KV cache (`--model`) | No | Engine restarts with the new KV cache type on next launch |
+| Change the KV cache type (`--model`) | No | Engine restarts with the new KV cache type on next launch; the first switch to asymmetric builds llama.cpp locally (one time) |
 | Switch inference engine (`--setup`) | No | Engine restarts on the new server on next launch; the workbench images are engine-independent |
 | Change SGLang memory fraction (`--setup`) or FP8 KV cache (`--model`) | No | Engine restarts with the new value on next launch |
 | Change proxy or network isolation (`--setup`) | No | Applied at container start time |
@@ -383,7 +395,7 @@ echo "@some-org/server | key | cmd | args" >> packages/mcp-opencode.txt
 | Gemini CLI | Auth tokens, session state, settings | `~/.gemini-config/` (directory) |
 | Qwen Code | Auth tokens, session state, settings | `~/.qwen-config/` (directory) |
 | Goose | Config, provider settings, MCP extensions | `~/.goose-config/` (directory) |
-| ai-coder | **All settings** — proxy, isolation, GPU mode, context level, low-VRAM KV cache, VRAM overhead, CPU offload threshold, MCP extras, keep-hub, model volume, speculative decoding, speed tracking, port exposure, git identity | `<install-dir>/user/settings.json` |
+| ai-coder | **All settings** — proxy, isolation, GPU mode, context level, KV cache type, VRAM overhead, CPU offload threshold, MCP extras, keep-hub, model volume, speculative decoding, speed tracking, port exposure, git identity | `<install-dir>/user/settings.json` |
 | ai-coder | **Runtime state** — tool + family + Open WebUI preferences, update-check hash/timestamp, running-engine settings | `<install-dir>/user/state.json` |
 | ai-coder | Setup completion sentinel | `<install-dir>/user/.setup-done` |
 | ai-coder | Git identity mounted into containers as `/root/.gitconfig` | `~/.gitconfig-container` |
@@ -479,7 +491,7 @@ Git checkouts are tracked through git itself: `--version` reports the local `ori
 13. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
 14. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
 
-Context window level (4k–256k, default 64k) and the KV cache option (low-VRAM `q4_0` for llama.cpp, FP8 for SGLang; off by default) are deliberately not wizard steps: both change which model tier fits in VRAM, so `--model` re-prompts them on every run instead.
+Context window level (4k–256k, default 64k) and the KV cache option (family default `q8_0`, asymmetric `q8_0`/`q4_0` or `q4_0` for llama.cpp; FP8 for SGLang, off by default) are deliberately not wizard steps: both change which model tier fits in VRAM, so `--model` re-prompts them on every run instead.
 
 In gum mode, pressing **Esc** or **Cancel** on any step keeps that setting unchanged and moves to the next question — nothing is lost mid-wizard. To force the plain-text prompts even where gum is installed, set `AI_CODER_NO_GUM=1`.
 
@@ -493,7 +505,7 @@ source ~/.bashrc         # WSL / Linux (bash)
 source ~/.zshrc          # WSL / Linux (zsh)
 ```
 
-To change any setting, run `--setup` again — except for context window level and the low-VRAM KV cache, which affect which model gets selected and are re-prompted by `--model` instead.
+To change any setting, run `--setup` again — except for context window level and the KV cache type, which affect which model gets selected and are re-prompted by `--model` instead.
 
 ## Offline / Air-Gapped Deployment
 

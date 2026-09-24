@@ -264,11 +264,14 @@ cmd_doctor() {
     # single preference write or the Hub check-then-restart section — a couple
     # of seconds at most. One older than 2 minutes belonged to a session that
     # died while holding it (crash, kill -9) rather than one still in progress.
+    # The exception is the llama.cpp asym-image build lock, held for the whole
+    # 10-30 minute build: it only counts as orphaned after 90 minutes.
     echo -e "${ICON_GEAR} Orphaned lock directories..."
     local _lock_found=() _d
     while IFS= read -r _d; do
         [ -n "$_d" ] && _lock_found+=("$_d")
-    done < <(find "$USER_DIR" -maxdepth 1 -name "*.lock" -type d -mmin +2 2>/dev/null)
+    done < <(find "$USER_DIR" -maxdepth 1 -name "*.lock" -not -name ".llama-build.lock" -type d -mmin +2 2>/dev/null
+             find "$USER_DIR" -maxdepth 1 -name ".llama-build.lock" -type d -mmin +90 2>/dev/null)
     if [ "${#_lock_found[@]}" -gt 0 ]; then
         for _d in "${_lock_found[@]}"; do
             rmdir "$_d" 2>/dev/null && echo -e "  ${GREEN}✔${NC} removed ${DIM}$(basename "$_d")${NC}"
@@ -344,6 +347,14 @@ cmd_doctor() {
             issues=$((issues + 1))
         else
             echo -e "  ${DIM}saved model family is compatible${NC}"
+        fi
+    elif [ "$(read_setting kv_mode)" = "asym" ] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+        # Asymmetric KV cache runs on a locally built llama.cpp image.
+        local _asym_ref
+        if _asym_ref=$(docker image inspect --format '{{ index .Config.Labels "ai-coder.llama-ref" }}' "$LLAMA_ASYM_IMAGE" 2>/dev/null); then
+            echo -e "  ${DIM}asymmetric KV image ${LLAMA_ASYM_IMAGE} present (llama.cpp ${_asym_ref:-unknown})${NC}"
+        else
+            echo -e "  ${DIM}asymmetric KV image not built yet — the next launch builds it (~10-30 min)${NC}"
         fi
     fi
 

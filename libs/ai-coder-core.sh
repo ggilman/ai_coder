@@ -36,6 +36,12 @@ WORKBENCH_PREFIX="coder"
 LITELLM_IMAGE="ghcr.io/berriai/litellm:main-latest"
 LLAMA_IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
 LLAMA_IMAGE_FULL="ghcr.io/ggml-org/llama.cpp:full-cuda"
+# Locally built llama.cpp server image for the asymmetric (q8_0 K / q4_0 V)
+# KV cache, which the stock image has no Flash Attention kernel for — see
+# ensure_llama_asym_image. LLAMA_BUILD_REF pins the llama.cpp git tag/branch
+# it builds; empty = the latest release at build time.
+LLAMA_ASYM_IMAGE="${LLAMA_ASYM_IMAGE:-ai-coder/llama.cpp:server-cuda-asym}"
+LLAMA_BUILD_REF="${LLAMA_BUILD_REF:-}"
 # SGLang engine image (used when the "engine" setting is sglang). Pinned to a
 # release rather than :latest so an upstream flag rename can't silently break
 # engine start. The -runtime variant is the serving-only build; v0.5.20 is a

@@ -227,20 +227,43 @@ Larger = more context, but higher VRAM usage and slower responses." \
     esac
 }
 
+# llama.cpp KV cache quantization (kv_mode, resolved by ensure_kv_config).
 setup_step_kv() {
-    local _cur_kvq4; _cur_kvq4=$(read_setting kv_q4)
-    setup_toggle_pref kv_q4 "Low-VRAM KV cache" \
-        "Low-VRAM KV cache — quantize both K and V cache to q4_0?" \
-        "Roughly halves the KV-cache VRAM reserve vs the family's default (usually
-q8_0), which can unlock a bigger model tier or larger context on low-VRAM
-cards. Real quality cost on long-context recall — keys are more
-quantization-sensitive than values. K and V stay matched, so llama.cpp
-keeps using its fast fused Flash Attention kernel (mismatched K/V types
-silently fall back to a much slower CPU-bound path)." \
-        "Enable low-VRAM (q4_0) KV cache? [y/N]:" \
-        "$_cur_kvq4" "$_cur_kvq4" \
-        "${ICON_OK} Low-VRAM KV cache ${GREEN}enabled${NC} (q4_0/q4_0) — applied on next engine start." \
-        "${DIM}  Low-VRAM KV cache disabled — using the family's default KV type.${NC}"
+    local _cur_kv; _cur_kv=$(read_setting kv_mode)
+    local _kv_input; _kv_input=$(ui_menu "KV cache" \
+        "KV cache quantization — how compactly should the model's context be stored?" \
+        "Smaller KV cache = less VRAM, which can unlock a bigger model tier or a
+larger context, at some cost to long-context recall. Keys are more
+quantization-sensitive than values, so the asymmetric option keeps keys at
+q8_0. It needs a llama.cpp kernel the stock image doesn't ship, so the first
+launch builds llama.cpp locally (one time, ~10-30 min)." \
+        "KV cache [${_cur_kv}]:" \
+        "$_cur_kv" \
+        "default" "Full q8_0/q8_0 — best quality (family default)" \
+        "asym"    "Asymmetric q8_0 K / q4_0 V — ~25% less KV VRAM, near-q8 quality" \
+        "q4"      "q4_0/q4_0 — ~50% less KV VRAM, noticeable long-context loss")
+    case "$_kv_input" in
+        default)
+            write_pref "$SETTINGS_FILE" kv_mode default
+            echo -e "${ICON_OK} KV cache set to the family default (usually ${GREEN}q8_0/q8_0${NC}) — applied on next engine start."
+            ;;
+        asym)
+            write_pref "$SETTINGS_FILE" kv_mode asym
+            echo -e "${ICON_OK} KV cache set to ${GREEN}q8_0 K / q4_0 V${NC} — applied on next engine start."
+            docker image inspect "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1 || \
+                echo -e "${YELLOW}  The next launch builds llama.cpp locally first (one time, ~10-30 min).${NC}"
+            ;;
+        q4)
+            write_pref "$SETTINGS_FILE" kv_mode q4
+            echo -e "${ICON_OK} KV cache set to ${GREEN}q4_0/q4_0${NC} — applied on next engine start."
+            ;;
+        "")
+            printf "%s  KV cache unchanged (%s)%s\n" "$DIM" "$_cur_kv" "$NC"
+            ;;
+        *)
+            printf "%s⚠ Unknown option '%s' — keeping %s%s\n" "$YELLOW" "$_kv_input" "$_cur_kv" "$NC"
+            ;;
+    esac
 }
 
 # SGLang counterpart of setup_step_kv (called from the --model flow):
@@ -480,7 +503,7 @@ setup_step_git_identity() {
 # ------------------------------------------------------------------------------
 # cmd_setup — first-time and re-configuration wizard
 #
-# Model-affecting choices (context level, low-VRAM KV cache) are deliberately
+# Model-affecting choices (context level, KV cache type) are deliberately
 # not steps here: they change which model tier fits, so the --model flow
 # re-prompts them instead.
 # ------------------------------------------------------------------------------

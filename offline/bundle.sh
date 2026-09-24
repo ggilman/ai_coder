@@ -259,6 +259,11 @@ ensure_image_saved() {
 echo -e "\n${ICON_GEAR} Bundling infrastructure images..."
 ensure_image_saved "$LLAMA_IMAGE"      "llama-cpp-server"
 ensure_image_saved "$LLAMA_IMAGE_FULL" "llama-cpp-full"
+# The locally built asymmetric-KV llama.cpp image can't be pulled, only
+# carried over — include it when this machine has built it.
+if docker image inspect "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1; then
+    ensure_image_saved "$LLAMA_ASYM_IMAGE" "llama-cpp-server-asym"
+fi
 ensure_image_saved "$LITELLM_IMAGE"    "litellm-proxy"
 ensure_image_saved "$BASE_IMAGE"    "node-base"
 

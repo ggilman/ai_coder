@@ -16,7 +16,7 @@
 # when the stored shape changes. migrate_user_prefs carries files forward from
 # their stored version to the current one.
 # ------------------------------------------------------------------------------
-SETTINGS_SCHEMA_VERSION=1
+SETTINGS_SCHEMA_VERSION=2
 STATE_SCHEMA_VERSION=1
 
 # ------------------------------------------------------------------------------
@@ -39,7 +39,7 @@ pref_default() {
         isolated)         echo "no" ;;
         gpu_mode)         echo "multi" ;;
         ctx_level)        echo "64k" ;;
-        kv_q4)            echo "no" ;;
+        kv_mode)          echo "default" ;;
         vram_overhead)    echo "1" ;;
         cpu_offload_pct) echo "90" ;;
         mcp_extras)       echo "no" ;;
@@ -138,5 +138,12 @@ pref_drop() {
     write_pref "$1" "$2" ""
 }
 
-# (No v1->v2 steps exist yet: this is the framework. Add e.g.
-# migrate_settings_v1_to_v2 / migrate_state_v1_to_v2 here in a future release.)
+# settings v1 -> v2: the low-VRAM KV cache yes/no toggle (kv_q4) became the
+# three-way kv_mode (default | asym | q4) once asymmetric K/V got a locally
+# built llama.cpp image with the matching Flash Attention kernel.
+migrate_settings_v1_to_v2() {
+    if [ "$(read_pref "$SETTINGS_FILE" kv_q4 "")" = "yes" ]; then
+        write_pref "$SETTINGS_FILE" kv_mode "q4"
+    fi
+    pref_drop "$SETTINGS_FILE" kv_q4
+}

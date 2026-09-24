@@ -94,14 +94,25 @@ _estimate_kv_reserve_gb() {
 # unrounded figure behind _estimate_kv_reserve_gb, also recorded at engine
 # start (engine_kv_bytes) for the --status dashboard.
 _estimate_kv_bytes() {
-    local _q8_bpt="${MODEL_KV_BYTES_PER_TOKEN:-98304}" _bpt
-    # SGLang types: "auto" is the model's own (16-bit) dtype; fp8 is q8-sized.
-    case "${MODEL_KV_TYPE:-q8_0}" in
-        f16|bf16|bfloat16|auto) _bpt=$(( _q8_bpt * 2 )) ;;
-        q4_0|q4_1)              _bpt=$(( _q8_bpt / 2 )) ;;
-        *)         _bpt="$_q8_bpt" ;;
-    esac
+    local _q8_bpt="${MODEL_KV_BYTES_PER_TOKEN:-98304}"
+    local _k="${MODEL_KV_TYPE:-q8_0}"
+    local _v="${MODEL_KV_TYPE_V:-$_k}"
+    # K and V are each half the q8 figure, scaled by their own type, so the
+    # asymmetric q8_0/q4_0 cache comes out at 3/4 of q8_0/q8_0.
+    local _bpt=$(( $(_kv_side_bytes "$_k" "$_q8_bpt") + $(_kv_side_bytes "$_v" "$_q8_bpt") ))
     echo $(( ${MODEL_CTX_SIZE:-65536} * _bpt ))
+}
+
+# Usage: _kv_side_bytes <type> <q8_bytes_per_token> — bytes per token for
+# one side (K or V) of the cache at <type>.
+# SGLang types: "auto" is the model's own (16-bit) dtype; fp8 is q8-sized.
+_kv_side_bytes() {
+    local _half=$(( $2 / 2 ))
+    case "$1" in
+        f16|bf16|bfloat16|auto) echo $(( _half * 2 )) ;;
+        q4_0|q4_1)              echo $(( _half / 2 )) ;;
+        *)                      echo "$_half" ;;
+    esac
 }
 
 # Single source of truth for the tier-fit test: a candidate fits when its
@@ -540,7 +551,7 @@ detect_model() {
     engine_is_sglang && overhead_reserve=0
     EFFECTIVE_VRAM_GB=$(( budget_gb - kv_reserve - draft_reserve - overhead_reserve ))
     [ "$EFFECTIVE_VRAM_GB" -lt 0 ] && EFFECTIVE_VRAM_GB=0
-    echo -e "${ICON_GEAR} VRAM Reserve: ${BOLD}~${kv_reserve}GB KV${NC} ${DIM}(${MODEL_CTX_LEVEL:-64k} ctx, ${MODEL_KV_TYPE:-q8_0})${_draft_note} + ${overhead_reserve}GB overhead (${gpus_used} GPU)${NC} → ${BOLD}${EFFECTIVE_VRAM_GB}GB${NC} usable for model"
+    echo -e "${ICON_GEAR} VRAM Reserve: ${BOLD}~${kv_reserve}GB KV${NC} ${DIM}(${MODEL_CTX_LEVEL:-64k} ctx, $(kv_type_label))${_draft_note} + ${overhead_reserve}GB overhead (${gpus_used} GPU)${NC} → ${BOLD}${EFFECTIVE_VRAM_GB}GB${NC} usable for model"
 
     select_model_for_vram "$EFFECTIVE_VRAM_GB"
     echo -e "${ICON_GEAR} Model: ${BOLD}${MODEL_TIER}${NC}"

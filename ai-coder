@@ -138,7 +138,8 @@ fi
 # Handle --model flag: clears the family, tool, and Open WebUI preferences so
 # all the selection questions are shown again on the next step of this run,
 # and re-prompts the two settings that change which model gets selected
-# (context level and the KV cache type — q4 for llama.cpp, FP8 for SGLang)
+# (context level and the KV cache type — q8/asymmetric/q4 for llama.cpp,
+# FP8 for SGLang)
 # directly — both always have defaults, so they have no "empty means show"
 # gate to piggyback on like the other three.
 _prev_family=""; _prev_tool=""; _prev_webui=""
@@ -237,6 +238,10 @@ cleanup() {
     if $_hub_lock_held; then
         release_lock "$_hub_lock_dir"
     fi
+    # Same for the llama.cpp asym-image build lock (Ctrl-C mid-build).
+    if [ "${LLAMA_BUILD_LOCK_HELD:-false}" = "true" ]; then
+        release_lock "$USER_DIR/.llama-build.lock"
+    fi
     # Only stop the workbench container if this process started it.
     # Guarding here prevents --build-only (or any early-exit path) from stopping
     # a workbench that belongs to a concurrently running session in the same project.
@@ -323,6 +328,9 @@ if spec_decode_enabled; then
 fi
 ensure_git_identity
 build_image || { echo -e "${RED}✘ Image build failed${NC}"; exit 1; }
+# Asymmetric KV cache only: one-time local llama.cpp build, kept out of the
+# hub lock below (it takes far longer than that lock's wait).
+ensure_llama_asym_image
 
 if [ "${BUILD_ONLY:-false}" = "true" ]; then
     echo -e "${ICON_OK} Build complete — skipping Hub and workbench launch."

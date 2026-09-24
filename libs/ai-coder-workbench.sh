@@ -422,14 +422,97 @@ _run_llamacpp_engine() {
     docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$_hub_net" --gpus "$_gpus_flag" --restart no \
         "${_port_args[@]}" "${_cuda_env[@]}" \
         -v "${_models_src}:/models" \
-        "$LLAMA_IMAGE" \
+        "$ENGINE_IMAGE" \
         -m "/models/$MODEL_FILE" --host 0.0.0.0 --port "$ENGINE_PORT" \
         --parallel "$MODEL_MAX_SLOTS" -ngl "${MODEL_NGL:-99}" -c "$MODEL_CTX_SIZE" --flash-attn on \
-        -ctk "${MODEL_KV_TYPE:-q8_0}" -ctv "${MODEL_KV_TYPE:-q8_0}" \
+        -ctk "${MODEL_KV_TYPE:-q8_0}" -ctv "${MODEL_KV_TYPE_V:-${MODEL_KV_TYPE:-q8_0}}" \
         --batch-size "${MODEL_BATCH_SIZE:-1024}" --ubatch-size "${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}" --defrag-thold 0.1 \
         --cache-reuse "${MODEL_CACHE_REUSE:-256}" \
         ${LLAMA_SPEC_FLAGS} \
         "${_draft_args[@]}" "${_think_args[@]}" "${_rp_args[@]}" "${_jinja_args[@]}" "${_ts_args[@]}" > /dev/null
+}
+
+# Builds LLAMA_ASYM_IMAGE (the llama.cpp server with a CUDA Flash Attention
+# kernel for the q8_0 K / q4_0 V cache pair) when the asym KV mode selected
+# it as ENGINE_IMAGE and it doesn't exist yet. No-op otherwise. Called from
+# ai-coder BEFORE the hub lock: the build takes 10-30 minutes, far longer
+# than the hub lock's wait, so it gets its own lock instead. Exits (it
+# doesn't fall back to the stock image) on failure, since the stock image
+# would run the mismatched pair on its much slower fallback path.
+ensure_llama_asym_image() {
+    [ "$ENGINE_IMAGE" = "$LLAMA_ASYM_IMAGE" ] || return 0
+    docker image inspect "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1 && return 0
+
+    # Reads the setting directly: this runs before ensure_network_config sets
+    # NETWORK_INTERNAL (so --build-only builds the image too).
+    if [ "$(read_setting isolated)" = "yes" ]; then
+        echo -e "${RED}✘ The asymmetric KV cache needs a locally built llama.cpp image (${LLAMA_ASYM_IMAGE}),${NC}"
+        echo -e "${RED}  and network isolation blocks the download it needs.${NC}"
+        echo -e "${YELLOW}  Pick another KV cache option with: ${CYAN}ai --model${NC}${YELLOW}, or load the image from an offline bundle.${NC}"
+        exit 1
+    fi
+
+    # A concurrent session may be building it already: wait (up to ~1 hour)
+    # and re-check before starting a second build. LLAMA_BUILD_LOCK_HELD
+    # lets ai-coder's cleanup trap release the lock after a Ctrl-C mid-build.
+    local _lock_dir="$USER_DIR/.llama-build.lock"
+    acquire_lock "$_lock_dir" 2 1800
+    LLAMA_BUILD_LOCK_HELD=true
+    if docker image inspect "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1; then
+        release_lock "$_lock_dir"; LLAMA_BUILD_LOCK_HELD=false
+        return 0
+    fi
+
+    local _http_proxy=""
+    [ -n "${DOWNLOAD_PROXY:-}" ] && _http_proxy=$(resolve_proxy_to_ip "$(echo "$DOWNLOAD_PROXY" | sed "s|^https://|http://|")")
+
+    # llama.cpp ref: pinned via LLAMA_BUILD_REF, else the latest release tag.
+    local _ref="$LLAMA_BUILD_REF"
+    if [ -z "$_ref" ]; then
+        local _curl_args=(-fsSL --connect-timeout 10)
+        [ -n "$_http_proxy" ] && _curl_args+=(--proxy "$_http_proxy")
+        _ref=$(curl "${_curl_args[@]}" https://api.github.com/repos/ggml-org/llama.cpp/releases/latest 2>/dev/null \
+            | "${JQ_CMD:-jq}" -r '.tag_name // empty' 2>/dev/null | tr -d '\r') || _ref=""
+        [ -n "$_ref" ] || _ref=master
+    fi
+
+    # Compile for the detected GPUs only (e.g. compute_cap 8.9 -> 89): an
+    # all-architectures build takes several times longer.
+    local _archs
+    _archs=$($SMI --query-gpu=compute_cap --format=csv,noheader 2>/dev/null \
+        | tr -d '\r .' | grep -E '^[0-9]+$' | sort -u | paste -sd';' -) || _archs=""
+    if [ -z "$_archs" ]; then
+        _archs=default
+        echo -e "${YELLOW}⚠ Couldn't detect the GPU architecture — building for all of them (much slower).${NC}"
+    fi
+
+    # FA kernel pairs: llama.cpp's default set plus q8_0-q4_0. The upstream
+    # Dockerfile's only CMake hook is CUDA_DOCKER_ARCH, which it expands
+    # unquoted into the cmake command line, so the extra -D flag rides along
+    # after the architecture list.
+    local _fa_quants="q4_0-q4_0;q8_0-q8_0;q8_0-q4_0;f16-f16;bf16-bf16"
+    local _proxy_args=()
+    [ -n "$_http_proxy" ] && _proxy_args=(
+        --build-arg "http_proxy=$_http_proxy" --build-arg "https_proxy=$_http_proxy"
+        --build-arg "HTTP_PROXY=$_http_proxy" --build-arg "HTTPS_PROXY=$_http_proxy")
+
+    echo -e "${ICON_GEAR} Building llama.cpp ${CYAN}${_ref}${NC} with the asymmetric KV cache kernel (GPU arch ${_archs})..."
+    echo -e "${YELLOW}  One-time build, typically 10-30 minutes. If it runs out of memory, give Docker Desktop more RAM.${NC}"
+    if ! docker build \
+        -f .devops/cuda.Dockerfile --target server \
+        --build-arg "CUDA_DOCKER_ARCH=${_archs} -DGGML_CUDA_FA_QUANTS=${_fa_quants}" \
+        --build-arg "APP_VERSION=${_ref}" \
+        --label "ai-coder.llama-ref=${_ref}" \
+        "${_proxy_args[@]}" \
+        -t "$LLAMA_ASYM_IMAGE" \
+        "https://github.com/ggml-org/llama.cpp.git#${_ref}"; then
+        release_lock "$_lock_dir"; LLAMA_BUILD_LOCK_HELD=false
+        echo -e "${RED}✘ llama.cpp build failed${NC}"
+        echo -e "${YELLOW}  Pick the full (q8_0/q8_0) or q4_0 KV cache with: ${CYAN}ai --model${NC}"
+        exit 1
+    fi
+    release_lock "$_lock_dir"; LLAMA_BUILD_LOCK_HELD=false
+    echo -e "${ICON_OK} Built ${LLAMA_ASYM_IMAGE} (llama.cpp ${_ref})."
 }
 
 start_hub_engine() {
@@ -442,7 +525,14 @@ start_hub_engine() {
         docker rm   "$GLOBAL_PROXY_NAME" 2>/dev/null || true
     fi
 
-    pull_image_if_missing "$ENGINE_IMAGE" || return 1
+    # The asymmetric-KV image is built locally at launch (before the hub
+    # lock, see ensure_llama_asym_image) — there's no registry to pull it from.
+    if [ "$ENGINE_IMAGE" = "$LLAMA_ASYM_IMAGE" ]; then
+        docker image inspect "$ENGINE_IMAGE" >/dev/null 2>&1 || {
+            echo -e "${RED}✘ Engine image ${ENGINE_IMAGE} is missing${NC}"; return 1; }
+    else
+        pull_image_if_missing "$ENGINE_IMAGE" || return 1
+    fi
     if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
         pull_image_if_missing "$LITELLM_IMAGE" || return 1
     fi
@@ -508,7 +598,7 @@ start_hub_engine() {
     # which the engine_model comparison already catches.
     write_pref "$STATE_FILE" engine_ngl "${MODEL_NGL:-99}"
     write_pref "$STATE_FILE" engine_ctx "${MODEL_CTX_SIZE:-}"
-    write_pref "$STATE_FILE" engine_kv "${MODEL_KV_TYPE:-q8_0}"
+    write_pref "$STATE_FILE" engine_kv "$(kv_type_label)"
     write_pref "$STATE_FILE" engine_batch "${MODEL_BATCH_SIZE:-1024}/${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}"
     write_pref "$STATE_FILE" engine_expose "$(read_setting expose_host_port)"
     write_pref "$STATE_FILE" engine_net "${NETWORK_INTERNAL:-false}"
@@ -629,6 +719,16 @@ rebuild_workbench_images() {
     [ "$_removed" -eq 0 ] && \
         echo -e "${DIM}  No workbench images found — nothing to remove.${NC}" || \
         echo -e "${ICON_OK} Workbench images cleared. They will be rebuilt on next run."
+    # The locally built asymmetric-KV llama.cpp image: removing it is how a
+    # newer llama.cpp gets picked up (rebuilt on the next asym-mode launch).
+    # Skipped while the engine is running on it.
+    if docker image inspect "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1; then
+        if [ -n "$(docker ps -q --filter "ancestor=$LLAMA_ASYM_IMAGE" 2>/dev/null)" ]; then
+            echo -e "${YELLOW}  Keeping [$LLAMA_ASYM_IMAGE] — the engine is running on it (stop it with ai --clean first).${NC}"
+        elif docker rmi "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1; then
+            echo -e "${ICON_OK} Removed [$LLAMA_ASYM_IMAGE] — llama.cpp is rebuilt on the next asymmetric-KV launch."
+        fi
+    fi
     rm -f "$USER_DIR/.rebuild-needed"
 }
 
@@ -657,7 +757,7 @@ ensure_engine_currently_running() {
             "GPU mode|$(read_pref "$STATE_FILE" engine_gpu_mode "")|${GPU_MODE:-multi}"
             "Model|$(read_pref "$STATE_FILE" engine_model "")|${MODEL_FILE:-}"
             "Context size|$(read_pref "$STATE_FILE" engine_ctx "")|${MODEL_CTX_SIZE:-}"
-            "KV cache type|$(read_pref "$STATE_FILE" engine_kv "")|${MODEL_KV_TYPE:-q8_0}"
+            "KV cache type|$(read_pref "$STATE_FILE" engine_kv "")|$(kv_type_label)"
             "Batch size|$(read_pref "$STATE_FILE" engine_batch "")|${MODEL_BATCH_SIZE:-1024}/${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}"
             "Host port exposure|$(read_pref "$STATE_FILE" engine_expose "")|$(read_setting expose_host_port)"
             "Network isolation|$(read_pref "$STATE_FILE" engine_net "")|${NETWORK_INTERNAL:-false}"
