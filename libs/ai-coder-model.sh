@@ -77,13 +77,13 @@ check_docker() {
     fi
 }
 
-# KV cache sizing. A tier's MODEL_N_KV / MODEL_N_KV_SWA (cache elements per
-# token, measured from its GGUF metadata by --kv-probe) give the exact
-# geometry; KV size depends on the base model's architecture, not its quant,
-# and one family often mixes several base models. Tiers without them (and
-# SGLang tiers) fall back to the family's MODEL_KV_BYTES_PER_TOKEN, else a
-# 96 KiB/token middle estimate for 8B-35B GQA models — always a q8_0 figure,
-# scaled here for the KV type actually in effect.
+# KV cache sizing. A tier's MODEL_N_KV / MODEL_N_KV_SWA (MODEL_SGL_N_* for
+# SGLang: cache elements per token, measured by --kv-probe from its GGUF
+# header or its repo's config.json) give the exact geometry; KV size depends
+# on the base model's architecture, not its quant, and one family often
+# mixes several base models. Tiers without them fall back to the family's
+# MODEL_KV_BYTES_PER_TOKEN, else a 96 KiB/token middle estimate for 8B-35B
+# GQA models — always a q8_0 figure, scaled here for the KV type in effect.
 
 # Usage: _estimate_kv_reserve_gb [candidate-index] — the KV-cache VRAM
 # reserve in GB (rounded up) for the active context size and KV type.
@@ -95,13 +95,19 @@ _estimate_kv_reserve_gb() {
 # MODEL_CTX_SIZE at MODEL_KV_TYPE/MODEL_KV_TYPE_V, for the given candidate
 # (default: the selected one, MODEL_SEL_INDEX). Also recorded at engine
 # start (engine_kv_bytes) for the --status dashboard.
+# SGLang: the context is capped at the model's maximum (MODEL_SGL_N_MAX_CTX,
+# as _run_sglang_engine clamps it), and the figure is the pool that holds
+# one full-length context — SGLang then fills whatever VRAM its memory
+# fraction leaves, so this only steers the tier choice.
 _estimate_kv_bytes() {
-    local _i="${1:-${MODEL_SEL_INDEX:-}}" _geo="" _swa=""
+    local _i="${1:-${MODEL_SEL_INDEX:-}}" _geo="" _swa="" _max=""
+    local _ctx="${MODEL_CTX_SIZE:-65536}" _k="${MODEL_KV_TYPE:-q8_0}"
     if [ -n "$_i" ]; then
         _geo=$(_cand_field "$_i" KV)
         _swa=$(_cand_field "$_i" KV_SWA)
+        engine_is_sglang && _max=$(_cand_field "$_i" MAX_CTX)
     fi
-    local _ctx="${MODEL_CTX_SIZE:-65536}" _k="${MODEL_KV_TYPE:-q8_0}"
+    if [ -n "$_max" ] && [ "$_max" -lt "$_ctx" ] 2>/dev/null; then _ctx=$_max; fi
     local _bk _bv
     _bk=$(_kv_type_b32 "$_k")
     _bv=$(_kv_type_b32 "${MODEL_KV_TYPE_V:-$_k}")
@@ -113,12 +119,19 @@ _estimate_kv_bytes() {
     fi
     local _total=$(( _ctx * (${_geo%%/*} * _bk + ${_geo#*/} * _bv) ))
     if [ -n "$_swa" ]; then
-        # Sliding-window layers: llama.cpp sizes their cache at the window
-        # per slot plus one ubatch, capped at the context size.
-        local _win="${_swa##*@}" _sk="${_swa%%/*}" _sv="${_swa#*/}"
+        local _win="${_swa##*@}" _sk="${_swa%%/*}" _sv="${_swa#*/}" _cells
         _sv="${_sv%@*}"
-        local _cells=$(( _win * ${MODEL_MAX_SLOTS:-1} + ${MODEL_UBATCH_SIZE:-1024} ))
-        [ "$_cells" -gt "$_ctx" ] && _cells=$_ctx
+        if engine_is_sglang; then
+            # SGLang's hybrid pool gives sliding-window layers a fixed share of
+            # the full layers' tokens (--swa-full-tokens-ratio, default 0.8),
+            # not a window-sized cache.
+            _cells=$(( _ctx * 8 / 10 ))
+        else
+            # llama.cpp sizes their cache at the window per slot plus one
+            # ubatch, capped at the context size.
+            _cells=$(( _win * ${MODEL_MAX_SLOTS:-1} + ${MODEL_UBATCH_SIZE:-1024} ))
+            [ "$_cells" -gt "$_ctx" ] && _cells=$_ctx
+        fi
         _total=$(( _total + _cells * (_sk * _bk + _sv * _bv) ))
     fi
     echo $(( _total / 32 ))
@@ -600,6 +613,9 @@ detect_model() {
             MODEL_WONT_FIT=true
             echo -e "${RED}⚠ Even this family's smallest SGLang model (~${_sgl_size}GB) is larger than SGLang's ${budget_gb}GB GPU budget — it will fail to load.${NC}"
             echo -e "${YELLOW}  Use llama.cpp for this family on this GPU (--setup), or pick another family (--model).${NC}"
+        elif [ -n "$_sgl_size" ] && [ $(( _sgl_size + $(_estimate_kv_reserve_gb) )) -gt "$budget_gb" ] 2>/dev/null; then
+            # It loads, but SGLang fills only the VRAM left over with KV cache.
+            echo -e "${YELLOW}⚠ SGLang's KV pool won't hold a full ${MODEL_CTX_LEVEL:-64k} context with this model (~$(_estimate_kv_reserve_gb)GB KV needed) — lower the context level (--model), or use llama.cpp for this family (--setup).${NC}"
         fi
     else
         echo -e "${ICON_GEAR} File:  ${CYAN}${MODEL_FILE}${NC}"

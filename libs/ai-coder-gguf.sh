@@ -1,15 +1,17 @@
 #!/bin/bash
 # ==============================================================================
-# AI-CODER-GGUF.SH | GGUF metadata reader and per-tier KV cache geometry
+# AI-CODER-GGUF.SH | Per-tier KV cache geometry from model metadata
 # ==============================================================================
 # Sourced by ai-coder-core.sh after ai-coder-model.sh — not run standalone.
 #
 # KV cache size is fixed by a model's architecture (layers x KV heads x head
 # dim, sliding-window layout, MLA), not by its weight quant, and a family's
-# tiers usually mix several base models. The GGUF metadata header records
-# all of it and sits at the start of the file, so a ranged HTTP request reads
-# it without downloading the model. --kv-probe uses this to fill each tier's
-# MODEL_N_KV / MODEL_N_KV_SWA fields (see config/ai-coder-model.conf).
+# tiers usually mix several base models. For llama.cpp the GGUF metadata
+# header records all of it and sits at the start of the file, so a ranged
+# HTTP request reads it without downloading the model; for SGLang it is the
+# Hugging Face repo's small config.json. --kv-probe uses these to fill each
+# tier's MODEL_N_KV / MODEL_N_KV_SWA (and MODEL_SGL_N_*) fields — see
+# config/ai-coder-model.conf.
 
 # Usage: gguf_read_header <url|path> <out_file> <bytes> — the first <bytes> of
 # a local GGUF (read in place) or a remote one (Range request, proxy-aware).
@@ -189,16 +191,89 @@ gguf_probe() {
     echo "$_res"
 }
 
+# jq program for hf_kv_probe: a Hugging Face config.json →
+#   <arch> <layers> <K> <V> <K_swa> <V_swa> <window> <max_ctx>
+# in cache elements per token, laid out the way SGLang v0.5.20 sizes its KV
+# pool (configs/model_config.py, model_executor/pool_configurator.py and
+# utils/hf_transformers/config.py): only the architectures SGLang gives a
+# separate sliding-window pool report _swa columns — any other model's
+# sliding layers are cached at full length, so they count as full layers.
+# Linear-attention (hybrid) layers hold fixed-size state, not per-token KV.
+_HF_KV_JQ=$(cat <<'JQ'
+# Mirrors SGLang v0.5.20's KV pool layout (configs/model_config.py,
+# model_executor/pool_configurator.py, utils/hf_transformers/config.py).
+((.architectures // [])[0] // "") as $arch
+| (.text_config // .) as $t
+| ($t.num_hidden_layers // 0) as $L
+| ($t.num_attention_heads // 0) as $nh
+# Gemma 4 names the sliding-layer geometry as the base fields and the full
+# layers as global_*; SGLang swaps them.
+| (($t.model_type // .model_type // "") | startswith("gemma4")) as $g4
+| (if $g4 then ($t.num_global_key_value_heads // $t.num_key_value_heads) else ($t.num_key_value_heads // $nh) end) as $kvh
+| (if $g4 then ($t.global_head_dim // $t.head_dim) else ($t.head_dim // (if $nh > 0 then (($t.hidden_size // 0) / $nh | floor) else 0 end)) end) as $hd
+| ($t.v_head_dim // $hd) as $vhd
+| ($t.swa_num_key_value_heads // (if $g4 then $t.num_key_value_heads else $kvh end)) as $skvh
+| ($t.swa_head_dim // (if $g4 then $t.head_dim else $hd end)) as $shd
+| ($t.swa_v_head_dim // $shd) as $svhd
+# Architectures SGLang gives a separate sliding-window pool; everything else
+# caches its sliding layers at full length.
+| ($arch | IN("Gemma4ForCausalLM", "Gemma4ForConditionalGeneration",
+    "Gemma4UnifiedForConditionalGeneration", "GptOssForCausalLM",
+    "Llama4ForConditionalGeneration")) as $hswa
+| ($t.layer_types
+    // (if $arch == "Llama4ForConditionalGeneration" then
+          [range($L) | if (. + 1) % 4 == 0 then "full_attention" else "sliding_attention" end]
+        elif ($t.full_attention_interval // 0) > 0 then
+          [range($L) | if (. + 1) % $t.full_attention_interval == 0 then "full_attention" else "linear_attention" end]
+        else [range($L) | "full_attention"] end)) as $types
+| ([$types[] | select(. == "full_attention" or (. == "sliding_attention" and ($hswa | not)))] | length) as $nf
+| ([$types[] | select(. == "sliding_attention" and $hswa)] | length) as $ns
+| if $L == 0 then "ERROR no num_hidden_layers in config.json"
+  elif ($t.kv_lora_rank // 0) > 0 then
+    "\($arch) \($L) \($nf * ($t.kv_lora_rank + ($t.qk_rope_head_dim // 0))) 0 0 0 0 -"
+  elif $hd == 0 then "ERROR no head size in config.json"
+  else
+    "\($arch) \($L) \($nf * $kvh * $hd) \($nf * $kvh * $vhd) \($ns * $skvh * $shd) \($ns * $skvh * $svhd) \(if $ns > 0 then ($t.sliding_window // 0) else 0 end) \($t.max_position_embeddings // "-")"
+  end
+JQ
+)
+
+# Usage: hf_kv_probe <repo> <revision> [snapshot-dir] — _HF_KV_JQ's result
+# line for a Hugging Face repo's config.json: the downloaded snapshot's when
+# present, else fetched at <revision> (a few KB). Prints "ERROR <reason>"
+# and returns 1 when it can't be read.
+hf_kv_probe() {
+    local _repo="$1" _rev="${2:-main}" _dir="${3:-}" _tmp _res=""
+    _tmp="$(mktemp "${TMPDIR:-/tmp}/ai-coder-hfcfg.XXXXXX")"
+    if [ -n "$_dir" ] && [ -f "$_dir/config.json" ]; then
+        cat "$_dir/config.json" > "$_tmp"
+    elif ! _asset_curl -sfL --max-time 30 "https://huggingface.co/${_repo}/resolve/${_rev}/config.json" > "$_tmp"; then
+        rm -f "$_tmp"; echo "ERROR fetch failed"; return 1
+    fi
+    # Via stdin: under MSYS_NO_PATHCONV a native jq.exe can't open /tmp paths.
+    _res=$("$JQ_CMD" -r "$_HF_KV_JQ" < "$_tmp" 2>/dev/null | tr -d '\r') || _res=""
+    rm -f "$_tmp"
+    [ -n "$_res" ] || { echo "ERROR unreadable config.json"; return 1; }
+    echo "$_res"
+}
+
 # Usage: _kv_conf_set <conf> <tier> <field> <value> — set MODEL_<tier>_<field>
-# in a family conf, in the ${VAR:-value} form: the line is replaced if
-# present, else inserted after the tier's LAYERS line (WEIGHTS_GB when it has
-# none; the KV line for KV_SWA). An empty value removes the line. The rewrite
-# is syntax-checked before it replaces the conf.
+# (<tier> is N, or SGL_N for the SGLang list) in a family conf, in the
+# ${VAR:-value} form: the line is replaced if present, else inserted after
+# the first of the tier's lines listed for <field> below that exists (so KV
+# lands after LAYERS or WEIGHTS_GB, and KV_SWA / MAX_CTX follow it). An
+# empty value removes the line. The rewrite is syntax-checked before it
+# replaces the conf.
 _kv_conf_set() {
-    local _conf="$1" _var="MODEL_${2}_${3}" _val="$4" _tmp
-    local _after="MODEL_${2}_LAYERS"
-    [ "$3" = "KV_SWA" ] && _after="MODEL_${2}_KV"
-    grep -q "^${_after}=" "$_conf" || _after="MODEL_${2}_WEIGHTS_GB"
+    local _conf="$1" _var="MODEL_${2}_${3}" _val="$4" _tmp _after="" _f
+    local _order="LAYERS WEIGHTS_GB"
+    case "$3" in
+        KV_SWA)  _order="KV $_order" ;;
+        MAX_CTX) _order="KV_SWA KV $_order" ;;
+    esac
+    for _f in $_order; do
+        if grep -q "^MODEL_${2}_${_f}=" "$_conf"; then _after="MODEL_${2}_${_f}"; break; fi
+    done
     _tmp="$(mktemp "${TMPDIR:-/tmp}/ai-coder-conf.XXXXXX")"
     awk -v var="$_var" -v val="$_val" -v after="$_after" '
         { lines[NR] = $0 }
@@ -220,53 +295,98 @@ _kv_conf_set() {
     rm -f "$_tmp"
 }
 
+# Usage: _kv_probe_row <#> <desc> <arch> <kv> <swa> <old-bytes> <new-bytes>
+# — one --kv-probe table row.
+_kv_probe_row() {
+    local _diff
+    _diff=$(awk -v o="$6" -v n="$7" 'BEGIN{g=1073741824; printf "%5.1f → %5.1f", o/g, n/g; if (n > 0 && (o/n > 1.02 || o/n < 0.98)) printf "  (was %+d%%)", (o-n)*100/n}')
+    printf '  %2s | %-50.50s | %-15.15s | %-15s | %-18s | %s\n' "$1" "$2" "$3" "$4" "${5:--}" "$_diff"
+}
+
 # Usage: _kv_probe_family <conf> <write:true|false> — probe and print (and
-# optionally write) one family's tiers. Run in a subshell: it sources the conf.
+# optionally write) one family's tiers: the GGUF list from each file's
+# header, then the SGLang list (if any) from each repo's config.json.
+# Run in a subshell: it sources the conf and switches ENGINE_BACKEND.
 _kv_probe_family() {
     local _conf="$1" _write="$2"
-    # Always the GGUF list, whichever engine is configured.
+    local i _count _file _src _res _desc _repo _rev
+    local _arch _l _k _v _ks _vs _win _extra _kv _swa _max _old _new _changed=0
+    local _head="   # | DESC                                               | arch            | K/V elems/token | SWA K/V@window     | KV GB now → new"
     ENGINE_BACKEND=llamacpp
     source "$_conf"
     ensure_ctx_config
     ensure_kv_config
-    echo -e "\n${BOLD}${MODEL_FAMILY:-$(basename "$_conf" .conf)}${NC} ${DIM}($(basename "$_conf"); KV GB at ${MODEL_CTX_LEVEL:-64k} ctx, $(kv_type_label))${NC}"
-    echo -e "${DIM}   # | DESC                                               | arch        | K/V elems/token | SWA K/V@window     | KV GB now → new${NC}"
-    local i _count="${MODEL_COUNT:-0}" _file _url _src _res _desc
-    local _arch _l _k _v _ks _vs _win _note _kv _swa _old _new _diff _changed=0
+    echo -e "\n${BOLD}${MODEL_FAMILY:-$(basename "$_conf" .conf)}${NC} ${DIM}($(basename "$_conf"); KV GB at ${MODEL_CTX_LEVEL:-64k} ctx)${NC}"
+    echo -e "${DIM}  llama.cpp GGUF tiers ($(kv_type_label)):${NC}"
+    echo -e "${DIM}${_head}${NC}"
+    _count="${MODEL_COUNT:-0}"
     for (( i=1; i<=_count; i++ )); do
         _file=$(_cand_field "$i" FILE); [ -n "$_file" ] || break
-        _url=$(_cand_field "$i" URL)
         _desc=$(_cand_field "$i" DESC)
         _src="$MODEL_STORAGE_DIR/$_file"
-        [ -f "$_src" ] || _src="$_url"
+        [ -f "$_src" ] || _src=$(_cand_field "$i" URL)
         _res=$(gguf_probe "$_src") || true
         if [ "${_res%% *}" = "ERROR" ]; then
             printf '  %2d | %-50.50s | %b\n' "$i" "$_desc" "${RED}${_res#ERROR }${NC}"
             continue
         fi
-        read -r _arch _l _k _v _ks _vs _win _note <<< "$_res"
+        read -r _arch _l _k _v _ks _vs _win _extra <<< "$_res"
         _kv="$_k/$_v"; _swa=""
         [ "$_win" -gt 0 ] && _swa="$_ks/$_vs@$_win"
         _old=$(_estimate_kv_bytes "$i")
         printf -v "MODEL_${i}_KV" '%s' "$_kv"
         printf -v "MODEL_${i}_KV_SWA" '%s' "$_swa"
         _new=$(_estimate_kv_bytes "$i")
-        _diff=$(awk -v o="$_old" -v n="$_new" 'BEGIN{g=1073741824; printf "%5.1f → %5.1f", o/g, n/g; if (n > 0 && (o/n > 1.02 || o/n < 0.98)) printf "  (was %+d%%)", (o-n)*100/n}')
-        printf '  %2d | %-50.50s | %-11s | %-15s | %-18s | %s\n' "$i" "$_desc" "$_arch" "$_kv" "${_swa:--}" "$_diff"
-        [ "$_note" = "-" ] || echo -e "       ${YELLOW}⚠ ${_note}: SWA layers counted as full-context (overestimate)${NC}"
+        _kv_probe_row "$i" "$_desc" "$_arch" "$_kv" "$_swa" "$_old" "$_new"
+        [ "$_extra" = "-" ] || echo -e "       ${YELLOW}⚠ ${_extra}: SWA layers counted as full-context (overestimate)${NC}"
         if $_write; then
             _kv_conf_set "$_conf" "$i" KV "$_kv" && _kv_conf_set "$_conf" "$i" KV_SWA "$_swa" || return 1
             _changed=1
         fi
     done
-    [ "$_changed" -eq 1 ] && echo -e "  ${GREEN}✔ Wrote MODEL_N_KV/MODEL_N_KV_SWA to $(basename "$_conf")${NC}"
+
+    _count="${MODEL_SGL_COUNT:-0}"
+    if [ "$_count" -gt 0 ] 2>/dev/null; then
+        ENGINE_BACKEND=sglang
+        ensure_kv_config
+        echo -e "${DIM}  SGLang tiers (KV ${MODEL_KV_TYPE}; context capped at each model's maximum):${NC}"
+        echo -e "${DIM}${_head}${NC}"
+        for (( i=1; i<=_count; i++ )); do
+            _repo=$(_cand_field "$i" URL); [ -n "$_repo" ] || break
+            _rev=$(_cand_field "$i" REVISION)
+            _desc=$(_cand_field "$i" DESC)
+            _res=$(hf_kv_probe "$_repo" "${_rev:-main}" "$MODEL_STORAGE_DIR/$(_cand_field "$i" FILE)") || true
+            if [ "${_res%% *}" = "ERROR" ]; then
+                printf '  %2d | %-50.50s | %b\n' "$i" "$_desc" "${RED}${_res#ERROR }${NC}"
+                continue
+            fi
+            read -r _arch _l _k _v _ks _vs _win _max <<< "$_res"
+            _kv="$_k/$_v"; _swa=""
+            [ "$_ks" -gt 0 ] && _swa="$_ks/$_vs@$_win"
+            case "$_max" in ''|*[!0-9]*) _max="" ;; esac
+            _old=$(_estimate_kv_bytes "$i")
+            printf -v "MODEL_SGL_${i}_KV" '%s' "$_kv"
+            printf -v "MODEL_SGL_${i}_KV_SWA" '%s' "$_swa"
+            printf -v "MODEL_SGL_${i}_MAX_CTX" '%s' "$_max"
+            _new=$(_estimate_kv_bytes "$i")
+            _kv_probe_row "$i" "$_desc" "$_arch" "$_kv" "$_swa" "$_old" "$_new"
+            if $_write; then
+                _kv_conf_set "$_conf" "SGL_$i" KV "$_kv" && _kv_conf_set "$_conf" "SGL_$i" KV_SWA "$_swa" \
+                    && _kv_conf_set "$_conf" "SGL_$i" MAX_CTX "$_max" || return 1
+                _changed=1
+            fi
+        done
+    fi
+    [ "$_changed" -eq 1 ] && echo -e "  ${GREEN}✔ Wrote KV geometry to $(basename "$_conf")${NC}"
     return 0
 }
 
-# Read each tier's KV cache geometry from its GGUF header (local file if
-# downloaded, else a ranged HTTP request — no model download) and compare
-# the resulting KV estimate with the one the conf gives today. --write
-# records the geometry in the conf as MODEL_N_KV / MODEL_N_KV_SWA.
+# Read each tier's KV cache geometry — from its GGUF header for llama.cpp
+# (local file if downloaded, else a ranged HTTP request — no model download),
+# from its repo's config.json for SGLang — and compare the resulting KV
+# estimate with the one the conf gives today. --write records the geometry
+# in the conf as MODEL_N_KV / MODEL_N_KV_SWA and MODEL_SGL_N_KV /
+# MODEL_SGL_N_KV_SWA / MODEL_SGL_N_MAX_CTX.
 # Usage: cmd_kv_probe [family-key|all] [--write]
 # Without a key, uses the saved family_pref (user/state.json).
 cmd_kv_probe() {

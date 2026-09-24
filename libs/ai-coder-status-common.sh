@@ -101,19 +101,25 @@ get_engine_footprint() {
     local _state_file="$1/user/state.json" _jq="" _vals
     resolve_jq_cmd &>/dev/null && _jq="$JQ_CMD"
     [ -n "$_jq" ] && [ -f "$_state_file" ] || return 0
-    _vals=$("$_jq" -r '[.engine_weights_bytes, .engine_kv_bytes, .engine_vram_bytes, .engine_ctx, .engine_kv, .engine_kv_measured_bytes]
-        | map(. // "") | join(" ")' "$_state_file" 2>/dev/null | tr -d '\r') || return 0
-    local _w _kv _vram _ctx _kvt _kvm
-    read -r _w _kv _vram _ctx _kvt _kvm <<< "$_vals"
+    # "-" for missing values keeps the fields positional for read.
+    _vals=$("$_jq" -r '[.engine_weights_bytes, .engine_kv_bytes, .engine_vram_bytes, .engine_ctx, .engine_kv, .engine_kv_measured_bytes, .engine_kv_pool_tokens]
+        | map(if . == null or . == "" then "-" else . end) | join(" ")' "$_state_file" 2>/dev/null | tr -d '\r') || return 0
+    local _w _kv _vram _ctx _kvt _kvm _pool
+    read -r _w _kv _vram _ctx _kvt _kvm _pool <<< "$_vals"
     case "${_w:-}${_kv:-}${_vram:-}" in ''|*[!0-9]*) return 0 ;; esac
+    case "${_ctx:-}" in ''|*[!0-9]*) _ctx=0 ;; esac
+    [ "${_kvt:--}" = "-" ] && _kvt="?"
     # Prefer the size llama.cpp reported allocating over the estimate.
     case "${_kvm:-}" in
         ''|*[!0-9]*) ;;
         *) _vram=$(( _vram - _kv + _kvm )); _kv=$_kvm ;;
     esac
-    awk -v w="$_w" -v k="$_kv" -v v="$_vram" -v c="${_ctx:-0}" -v t="${_kvt:-?}" 'BEGIN{
+    # SGLang: how many tokens its KV pool actually holds.
+    case "${_pool:-}" in ''|*[!0-9]*) _pool=0 ;; esac
+    awk -v w="$_w" -v k="$_kv" -v v="$_vram" -v c="$_ctx" -v t="$_kvt" -v p="$_pool" 'BEGIN{
         g=1073741824
         printf "%.1fGB model, %.1fGB KV (%dk %s), ~%.1fGB VRAM", w/g, k/g, c/1024, t, v/g
+        if (p > 0) printf ", KV pool %dk tokens", p/1024
     }'
 }
 
