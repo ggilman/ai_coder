@@ -87,6 +87,13 @@ check_docker() {
 # scaled here for the KV type actually in effect, so a family override stays
 # accurate whether or not the low-VRAM KV cache toggle is on.
 _estimate_kv_reserve_gb() {
+    echo $(( ($(_estimate_kv_bytes) + 1073741823) / 1073741824 ))
+}
+
+# Estimated KV cache size in bytes for MODEL_CTX_SIZE at MODEL_KV_TYPE — the
+# unrounded figure behind _estimate_kv_reserve_gb, also recorded at engine
+# start (engine_kv_bytes) for the --status dashboard.
+_estimate_kv_bytes() {
     local _q8_bpt="${MODEL_KV_BYTES_PER_TOKEN:-98304}" _bpt
     # SGLang types: "auto" is the model's own (16-bit) dtype; fp8 is q8-sized.
     case "${MODEL_KV_TYPE:-q8_0}" in
@@ -94,7 +101,7 @@ _estimate_kv_reserve_gb() {
         q4_0|q4_1)              _bpt=$(( _q8_bpt / 2 )) ;;
         *)         _bpt="$_q8_bpt" ;;
     esac
-    echo $(( (${MODEL_CTX_SIZE:-65536} * _bpt + 1073741823) / 1073741824 ))
+    echo $(( ${MODEL_CTX_SIZE:-65536} * _bpt ))
 }
 
 # Single source of truth for the tier-fit test: a candidate fits when its

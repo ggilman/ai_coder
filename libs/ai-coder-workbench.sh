@@ -519,6 +519,23 @@ start_hub_engine() {
     [ "${#_draft_args[@]}" -gt 0 ] && _spec_state="external-draft"
     write_pref "$STATE_FILE" engine_spec "$_spec_state"
 
+    # Informational, for the --status dashboard's size line: on-disk weights
+    # (main model + draft), the estimated KV cache, and their estimated VRAM
+    # total — weights scaled by the GPU share of layers under CPU offload.
+    eval "$_MODEL_SZ_FN"
+    local _f _w_bytes=0 _kv_bytes _vram_bytes
+    for _f in "${_vol_files[@]}"; do
+        _w_bytes=$(( _w_bytes + $(_msz "$MODEL_STORAGE_DIR/$_f") ))
+    done
+    _kv_bytes=$(_estimate_kv_bytes)
+    _vram_bytes=$_w_bytes
+    if [ "${MODEL_NGL:-99}" -lt 99 ] && [ "${MODEL_LAYERS:-0}" -gt 0 ] 2>/dev/null; then
+        _vram_bytes=$(( _w_bytes * MODEL_NGL / MODEL_LAYERS ))
+    fi
+    write_pref "$STATE_FILE" engine_weights_bytes "$_w_bytes"
+    write_pref "$STATE_FILE" engine_kv_bytes "$_kv_bytes"
+    write_pref "$STATE_FILE" engine_vram_bytes "$(( _vram_bytes + _kv_bytes ))"
+
     start_gpu_guard
 
     if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then

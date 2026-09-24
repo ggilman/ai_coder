@@ -143,6 +143,10 @@ main() {
             [ "$ENGINE_KIND" = "sglang" ] && _engine_label="SGLang"
 
             model_name=$(get_model_name)
+            local _footprint _footprint_line=""
+            _footprint=$(get_engine_footprint "$SCRIPT_DIR")
+            [ -n "$_footprint" ] && _footprint_line="
+💾  \e[1mSize:\e[0m         $_footprint"
 
             # Status word is padded to a fixed width so the E_PAD cursor-skip
             # (see comment at its definition) always lands on the same column
@@ -152,7 +156,7 @@ main() {
             printf -v _status_word "%-22s" "ONLINE"
             engine_status_text="⚙️  \e[1mENGINE HUB:\e[0m   \e[32m🟢  ${_status_word}\e[0m${E_PAD}
 🧠  \e[1mEngine:\e[0m       $_engine_label
-📦  \e[1mActive Model:\e[0m \e[36m$model_name\e[0m
+📦  \e[1mActive Model:\e[0m \e[36m$model_name\e[0m${_footprint_line}
 🔄  \e[1mCapacity:\e[0m     $slot_info"
             
             _iso_val=$(get_network_isolation_status "$SCRIPT_DIR")

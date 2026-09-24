@@ -89,3 +89,23 @@ get_network_isolation_status() {
     _val=$(printf '%s' "$_val" | tr -d '\r' | xargs)
     [ "$_val" = "yes" ] && echo "yes" || echo "no"
 }
+
+# Usage: get_engine_footprint <script_dir> — echoes the running model's size
+# line, e.g. "7.3GB model, 4.0GB KV (128k q8_0), ~11.3GB VRAM", from the
+# figures start_hub_engine records in user/state.json (estimates: compute
+# buffers aren't included). Echoes nothing when they're unavailable (no jq,
+# or an engine started before these were recorded).
+get_engine_footprint() {
+    local _state_file="$1/user/state.json" _jq="" _vals
+    resolve_jq_cmd &>/dev/null && _jq="$JQ_CMD"
+    [ -n "$_jq" ] && [ -f "$_state_file" ] || return 0
+    _vals=$("$_jq" -r '[.engine_weights_bytes, .engine_kv_bytes, .engine_vram_bytes, .engine_ctx, .engine_kv]
+        | map(. // "") | join(" ")' "$_state_file" 2>/dev/null | tr -d '\r') || return 0
+    local _w _kv _vram _ctx _kvt
+    read -r _w _kv _vram _ctx _kvt <<< "$_vals"
+    case "${_w:-}${_kv:-}${_vram:-}" in ''|*[!0-9]*) return 0 ;; esac
+    awk -v w="$_w" -v k="$_kv" -v v="$_vram" -v c="${_ctx:-0}" -v t="${_kvt:-?}" 'BEGIN{
+        g=1073741824
+        printf "%.1fGB model, %.1fGB KV (%dk %s), ~%.1fGB VRAM", w/g, k/g, c/1024, t, v/g
+    }'
+}

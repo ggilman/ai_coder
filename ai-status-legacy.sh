@@ -188,6 +188,15 @@ main() {
                 printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$model_text" "$model_pad" "" "$CYAN" "$NC"
             fi
 
+            size_text=$(get_engine_footprint "$SCRIPT_DIR")
+            if [ -n "$size_text" ]; then
+                size_text="💾  Size: ${size_text}"
+                size_len=$(get_visible_length "$size_text")
+                size_pad=$((70 - size_len))
+                [ "$size_pad" -lt 0 ] && size_pad=0
+                printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$size_text" "$size_pad" "" "$CYAN" "$NC"
+            fi
+
             # Network isolation status
             _iso_val=$(get_network_isolation_status "$SCRIPT_DIR")
             if [ "$_iso_val" = "yes" ]; then
