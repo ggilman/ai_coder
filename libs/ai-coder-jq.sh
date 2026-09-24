@@ -40,16 +40,12 @@ _download_jq_binary() {
     # flat grep of user/settings.conf (removable next release), else env.
     local _cur_proxy=""
     # Resolve a jq to read the stored proxy with: system binary first, then a
-    # previously-downloaded .assets copy (this runs before resolve_jq_cmd, so
-    # JQ_CMD isn't set yet). Bare `jq` alone would miss the .assets-only case.
+    # previously-downloaded .assets copy for the CURRENT platform (the one
+    # being downloaded may be the other platform's, for offline/bundle.sh —
+    # Git Bash can't run the Linux ELF). Bare `jq` alone would miss the
+    # .assets-only case.
     local _jq_bin=""
-    if command -v jq &>/dev/null; then
-        _jq_bin="jq"
-    elif [ -f "$_jq_dir/jq" ]; then
-        _jq_bin="$_jq_dir/jq"
-    elif [ -f "$_jq_dir/jq.exe" ]; then
-        _jq_bin="$_jq_dir/jq.exe"
-    fi
+    resolve_jq_cmd &>/dev/null && _jq_bin="$JQ_CMD"
     if [ -n "$_jq_bin" ]; then
         _cur_proxy=$("$_jq_bin" -r '(.proxy // empty)' "$(dirname "${BASH_SOURCE[0]}")/../user/settings.json" 2>/dev/null || true)
     fi

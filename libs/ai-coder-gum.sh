@@ -40,13 +40,14 @@ _download_gum_binary() {
     local _rel_assets="$(dirname "${BASH_SOURCE[0]}")/../.assets"
     local _settings_json="$(dirname "${BASH_SOURCE[0]}")/../user/settings.json"
     local _settings_conf="$(dirname "${BASH_SOURCE[0]}")/../user/settings.conf"
-    local _jq_probe=""
+    # Only the current platform's .assets build (both may be present): Git
+    # Bash can't run the Linux ELF, and WSL/Linux shouldn't use jq.exe.
+    local _jq_probe="" _jq_asset="jq"
+    [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && _jq_asset="jq.exe"
     if command -v jq &>/dev/null; then
         _jq_probe="jq"
-    elif [ -f "$_rel_assets/jq" ]; then
-        _jq_probe="$_rel_assets/jq"
-    elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && [ -f "$_rel_assets/jq.exe" ]; then
-        _jq_probe="$_rel_assets/jq.exe"
+    elif [ -f "$_rel_assets/$_jq_asset" ]; then
+        _jq_probe="$_rel_assets/$_jq_asset"
     fi
     if [ -n "$_jq_probe" ]; then
         _cur_proxy=$("$_jq_probe" -r '(.proxy // empty)' "$_settings_json" 2>/dev/null || true)
