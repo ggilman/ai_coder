@@ -134,6 +134,7 @@ source "$SCRIPT_DIR/ai-coder-jq.sh"        # jq binary bootstrap & resolution
 source "$SCRIPT_DIR/ai-coder-migrate.sh"   # settings JSON schema versioning + one-time migration
 source "$SCRIPT_DIR/ai-coder-settings.sh"   # git identity + launch-time preference resolution
 source "$SCRIPT_DIR/ai-coder-model.sh"      # docker preflight, VRAM budgeting, model select/download
+source "$SCRIPT_DIR/ai-coder-gguf.sh"       # GGUF metadata reader, per-tier KV geometry, --kv-probe
 source "$SCRIPT_DIR/ai-coder-workbench.sh"  # workbench + hub engine container lifecycle
 source "$SCRIPT_DIR/ai-coder-sglang.sh"     # SGLang engine: HF snapshot download, launch args
 

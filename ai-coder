@@ -43,6 +43,7 @@ Commands:
   --rebuild          Remove all workbench images to force a full rebuild on next run
   --model            Reset model family, tool, Open WebUI, context level and KV cache type preferences, show selection menus
    --models [family]   Dry-run model tier selection: hardware audit, VRAM reserves and which tier a launch would pick (no Docker, no launch)
+   --kv-probe [family|all] [--write]  Read each tier's KV cache size from its GGUF header (no download); --write records it in the family conf
    --speed [family]   Generation-speed benchmark: run llama-bench on your model on a clean GPU and print t/s (llama.cpp engine only)
   --build-only       Build the workbench image then exit (no Hub or agent launch)
   --continue         Resume the previous agent session (passes the tool's native continue flag)
@@ -64,6 +65,9 @@ HELP
     exec bash "$ROOT_DIR/ai-status.sh" ;;
         --models)
             cmd_models "${2:-}"
+            exit $? ;;
+        --kv-probe)
+            cmd_kv_probe "${@:2}"
             exit $? ;;
         --speed)
             cmd_speed "${2:-}"
@@ -90,7 +94,7 @@ fi
 
 # Reject unknown commands before touching Docker/Hub state. Every recognized
 # command either already exited above (--help, --version, --doctor, --update,
-# --status, --logs, --models, --clean, --fix-project, --setup, --rebuild) or is handled further down
+# --status, --logs, --models, --kv-probe, --speed, --clean, --fix-project, --setup, --rebuild) or is handled further down
 # (--model, --build-only, --continue) — anything else here is a typo and should
 # fail fast instead of running the full family/tool/Hub flow and tripping the
 # cleanup trap.

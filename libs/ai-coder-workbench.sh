@@ -738,6 +738,9 @@ start_hub_engine() {
     write_pref "$STATE_FILE" engine_weights_bytes "$_w_bytes"
     write_pref "$STATE_FILE" engine_kv_bytes "$_kv_bytes"
     write_pref "$STATE_FILE" engine_vram_bytes "$(( _vram_bytes + _kv_bytes ))"
+    # Filled in by record_engine_kv_measurement once the engine is up.
+    write_pref "$STATE_FILE" engine_kv_measured_bytes ""
+    ENGINE_STARTED_THIS_RUN=true
 
     start_gpu_guard
 
@@ -978,6 +981,7 @@ wait_for_engine_ready() {
         # The engine can report ready while a GPU is silently oversubscribed
         # (WDDM pages the overflow to system RAM) — check and warn before use.
         warn_if_vram_oversubscribed
+        record_engine_kv_measurement
     else
         echo -e " ${RED}TIMEOUT${NC}"
         echo -e "${RED}✘ Engine/Proxy failed to initialize after ~${retry_count} seconds${NC}"
@@ -987,5 +991,38 @@ wait_for_engine_ready() {
             docker logs "$GLOBAL_ENGINE_NAME" 2>&1 | tail -20 | sed 's/^/    /'
         fi
         exit 1
+    fi
+}
+
+# After a fresh llama.cpp engine start, read the KV cache size llama.cpp
+# actually allocated from its startup log and record it for the --status
+# dashboard (engine_kv_measured_bytes). Sums every KV and recurrent-state
+# cache line (a sliding-window model logs one per cache), stopping at the
+# draft model's. Warns when it exceeds the estimate the tier was picked with
+# by more than 10%: that tier's MODEL_N_KV is missing or wrong, so the tier
+# choice may overfill VRAM — --kv-probe fixes it.
+record_engine_kv_measurement() {
+    [ "${ENGINE_STARTED_THIS_RUN:-false}" = "true" ] || return 0
+    engine_is_sglang && return 0
+    # Via a temp file, not a pipe: awk exiting early would fail docker logs
+    # under pipefail.
+    local _tmp="${TMPDIR:-/tmp}/.ai-coder-kvlog.$$" _bytes _est
+    docker logs "$GLOBAL_ENGINE_NAME" > "$_tmp" 2>&1 || true
+    _bytes=$(awk '
+        /loading draft model/ { exit }
+        /llama_(kv_cache[a-z_]*|memory_recurrent): +size = +[0-9.]+ MiB/ {
+            if (match($0, /size = +[0-9.]+/)) {
+                s = substr($0, RSTART, RLENGTH); sub(/size = +/, "", s); t += s
+            }
+        }
+        END { if (t > 0) printf "%.0f", t * 1048576 }' "$_tmp" 2>/dev/null | tr -d '\r') || true
+    rm -f "$_tmp"
+    [ -n "$_bytes" ] || return 0
+    write_pref "$STATE_FILE" engine_kv_measured_bytes "$_bytes"
+    _est=$(read_pref "$STATE_FILE" engine_kv_bytes "0")
+    case "$_est" in ''|*[!0-9]*) return 0 ;; esac
+    if [ "$_bytes" -gt $(( _est + _est / 10 )) ]; then
+        echo -e "${YELLOW}⚠ KV cache: llama.cpp allocated $(_human_size "$_bytes"), but the tier was picked assuming $(_human_size "$_est") — it may not fit VRAM.${NC}"
+        echo -e "${DIM}  Record this family's real KV sizes: $(basename "$0") --kv-probe ${FAMILY_PREF:-<family>} --write${NC}"
     fi
 }

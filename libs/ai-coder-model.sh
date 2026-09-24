@@ -77,51 +77,78 @@ check_docker() {
     fi
 }
 
-# Estimate the KV-cache VRAM reserve in GB (rounded up) for the active
-# context size and KV quantization type.
-# Exact KV size is model-specific (layers x KV-heads x head-dim), which the
-# launcher can't know before a model is chosen. Across this project's model
-# range (8B-35B GQA models) q8_0 KV costs ~64-140 KB per token; 96 KiB/token
-# is used as a middle estimate. MODEL_KV_BYTES_PER_TOKEN (settable in a family
-# conf for models far from that band) is always a q8_0-equivalent figure —
-# scaled here for the KV type actually in effect, so a family override stays
-# accurate whether or not the low-VRAM KV cache toggle is on.
+# KV cache sizing. A tier's MODEL_N_KV / MODEL_N_KV_SWA (cache elements per
+# token, measured from its GGUF metadata by --kv-probe) give the exact
+# geometry; KV size depends on the base model's architecture, not its quant,
+# and one family often mixes several base models. Tiers without them (and
+# SGLang tiers) fall back to the family's MODEL_KV_BYTES_PER_TOKEN, else a
+# 96 KiB/token middle estimate for 8B-35B GQA models — always a q8_0 figure,
+# scaled here for the KV type actually in effect.
+
+# Usage: _estimate_kv_reserve_gb [candidate-index] — the KV-cache VRAM
+# reserve in GB (rounded up) for the active context size and KV type.
 _estimate_kv_reserve_gb() {
-    echo $(( ($(_estimate_kv_bytes) + 1073741823) / 1073741824 ))
+    echo $(( ($(_estimate_kv_bytes "$@") + 1073741823) / 1073741824 ))
 }
 
-# Estimated KV cache size in bytes for MODEL_CTX_SIZE at MODEL_KV_TYPE — the
-# unrounded figure behind _estimate_kv_reserve_gb, also recorded at engine
+# Usage: _estimate_kv_bytes [candidate-index] — estimated KV cache bytes for
+# MODEL_CTX_SIZE at MODEL_KV_TYPE/MODEL_KV_TYPE_V, for the given candidate
+# (default: the selected one, MODEL_SEL_INDEX). Also recorded at engine
 # start (engine_kv_bytes) for the --status dashboard.
 _estimate_kv_bytes() {
-    local _q8_bpt="${MODEL_KV_BYTES_PER_TOKEN:-98304}"
-    local _k="${MODEL_KV_TYPE:-q8_0}"
-    local _v="${MODEL_KV_TYPE_V:-$_k}"
-    # K and V are each half the q8 figure, scaled by their own type, so the
-    # asymmetric q8_0/q4_0 cache comes out at 3/4 of q8_0/q8_0.
-    local _bpt=$(( $(_kv_side_bytes "$_k" "$_q8_bpt") + $(_kv_side_bytes "$_v" "$_q8_bpt") ))
-    echo $(( ${MODEL_CTX_SIZE:-65536} * _bpt ))
+    local _i="${1:-${MODEL_SEL_INDEX:-}}" _geo="" _swa=""
+    if [ -n "$_i" ]; then
+        _geo=$(_cand_field "$_i" KV)
+        _swa=$(_cand_field "$_i" KV_SWA)
+    fi
+    local _ctx="${MODEL_CTX_SIZE:-65536}" _k="${MODEL_KV_TYPE:-q8_0}"
+    local _bk _bv
+    _bk=$(_kv_type_b32 "$_k")
+    _bv=$(_kv_type_b32 "${MODEL_KV_TYPE_V:-$_k}")
+    if [ -z "$_geo" ]; then
+        # q8_0 bytes/token, half K and half V; q8_0 is 34 bytes per 32 elements.
+        local _q8="${MODEL_KV_BYTES_PER_TOKEN:-98304}"
+        echo $(( _ctx * (_q8 / 2) * (_bk + _bv) / 34 ))
+        return
+    fi
+    local _total=$(( _ctx * (${_geo%%/*} * _bk + ${_geo#*/} * _bv) ))
+    if [ -n "$_swa" ]; then
+        # Sliding-window layers: llama.cpp sizes their cache at the window
+        # per slot plus one ubatch, capped at the context size.
+        local _win="${_swa##*@}" _sk="${_swa%%/*}" _sv="${_swa#*/}"
+        _sv="${_sv%@*}"
+        local _cells=$(( _win * ${MODEL_MAX_SLOTS:-1} + ${MODEL_UBATCH_SIZE:-1024} ))
+        [ "$_cells" -gt "$_ctx" ] && _cells=$_ctx
+        _total=$(( _total + _cells * (_sk * _bk + _sv * _bv) ))
+    fi
+    echo $(( _total / 32 ))
 }
 
-# Usage: _kv_side_bytes <type> <q8_bytes_per_token> — bytes per token for
-# one side (K or V) of the cache at <type>.
-# SGLang types: "auto" is the model's own (16-bit) dtype; fp8 is q8-sized.
-_kv_side_bytes() {
-    local _half=$(( $2 / 2 ))
+# Usage: _kv_type_b32 <type> — cache bytes per 32 elements at <type> (the
+# ggml block sizes). SGLang: "auto" is the model's own 16-bit dtype, and the
+# fp8 types are one byte per element.
+_kv_type_b32() {
     case "$1" in
-        f16|bf16|bfloat16|auto) echo $(( _half * 2 )) ;;
-        q4_0|q4_1)              echo $(( _half / 2 )) ;;
-        *)                      echo "$_half" ;;
+        f32)                    echo 128 ;;
+        f16|bf16|bfloat16|auto) echo 64 ;;
+        q8_0)                   echo 34 ;;
+        q5_1)                   echo 24 ;;
+        q5_0)                   echo 22 ;;
+        q4_1)                   echo 20 ;;
+        q4_0|iq4_nl)            echo 18 ;;
+        *)                      echo 32 ;;
     esac
 }
 
 # Single source of truth for the tier-fit test: a candidate fits when its
-# WEIGHTS_GB is <= the usable VRAM. WEIGHTS_GB=0 marks the unconditional
-# fallback tier, which always fits. Both select_model_for_vram (pass 1) and
-# print_model_candidates' Fit column call this, so the dry-run table and the
-# real pick can't drift when the fit metric changes.
+# WEIGHTS_GB plus its own KV cache reserve is <= the VRAM budget.
+# WEIGHTS_GB=0 marks the unconditional fallback tier, which always fits.
+# Both select_model_for_vram (pass 1) and print_model_candidates' Fit column
+# call this, so the dry-run table and the real pick can't drift when the fit
+# metric changes.
+# Usage: _tier_fits <weights_gb> <budget_gb> <candidate-index>
 _tier_fits() {
-    [ "$1" -eq 0 ] || [ "$2" -ge "$1" ]
+    [ "$1" -eq 0 ] || [ "$2" -ge $(( $1 + $(_estimate_kv_reserve_gb "$3") )) ]
 }
 
 # Candidate-list accessor shared by select_model_for_vram and
@@ -168,14 +195,15 @@ model_present() {
 
 # Walks the MODEL_1..MODEL_N candidate list defined by the active family conf,
 # in priority order (best quality first), and selects the first entry whose
-# MODEL_N_WEIGHTS_GB fits within the supplied VRAM headroom (already KV-cache
-# and draft reserve subtracted). Sets MODEL_FILE, MODEL_URL, MODEL_SHA256,
-# MODEL_TIER, MODEL_LAYERS, and MODEL_NGL in the caller's environment.
+# MODEL_N_WEIGHTS_GB plus its own KV cache reserve fits within the supplied
+# VRAM budget (draft and per-GPU overhead already subtracted). Sets
+# MODEL_FILE, MODEL_URL, MODEL_SHA256, MODEL_TIER, MODEL_LAYERS, MODEL_NGL
+# and MODEL_SEL_INDEX in the caller's environment.
 #
 # Partial CPU offload: when MODEL_CPU_OFFLOAD_PCT > 0, an entry ranked above
 # the full-fit choice may be selected with some layers left on CPU, provided
-# at least that percentage of its weights fits in VRAM. The shortfall
-# fraction equals the fraction of layers pushed to CPU, and a CPU layer is
+# at least that percentage of its weights fits in the VRAM its KV cache
+# leaves. The shortfall fraction equals the fraction of layers pushed to CPU, and a CPU layer is
 # roughly 10x slower than a GPU layer, so slowdown ≈ 1 + 9 × fraction
 # offloaded — the default 90% caps the worst case around half speed. Only
 # entries whose MODEL_N_LAYERS differs from the full-fit choice qualify:
@@ -186,7 +214,7 @@ model_present() {
 # The last candidate should have MODEL_N_WEIGHTS_GB=0 — it is always selected
 # unconditionally as the fallback when nothing larger fits.
 select_model_for_vram() {
-    local vram="${1:-0}" i _w _l
+    local vram="${1:-0}" i _w _l _room
     local _count; _count=$(_cand_field COUNT)
     MODEL_NGL=99
 
@@ -197,7 +225,7 @@ select_model_for_vram() {
     for (( i=1; i<=_count; i++ )); do
         [ -z "$(_cand_field "$i" FILE)" ] && break
         _w=$(_cand_field "$i" WEIGHTS_GB)
-        if _tier_fits "${_w:-0}" "$vram"; then _full=$i; break; fi
+        if _tier_fits "${_w:-0}" "$vram" "$i"; then _full=$i; break; fi
     done
     [ "$_full" -eq 0 ] && _full=$(( _count > 0 ? _count : 1 ))
     local _sel=$_full
@@ -216,12 +244,16 @@ select_model_for_vram() {
             [ "$_w" -gt 0 ] || continue
             [ -n "$_l" ] || continue
             [ "$_l" -ne "$_full_layers" ] || continue
-            if [ $(( vram * 100 / _w )) -ge "$_pct" ]; then
+            # The whole KV cache is reserved on GPU (conservative: the
+            # offloaded layers' share of it actually lives in system RAM).
+            _room=$(( vram - $(_estimate_kv_reserve_gb "$i") ))
+            [ "$_room" -gt 0 ] || continue
+            if [ $(( _room * 100 / _w )) -ge "$_pct" ]; then
                 _sel=$i
                 # Floor division is deliberately conservative: WEIGHTS_GB also
                 # covers tensors that never offload per-layer (embeddings,
                 # output head), so the true per-layer cost is slightly lower.
-                MODEL_NGL=$(( _l * vram / _w ))
+                MODEL_NGL=$(( _l * _room / _w ))
                 break
             fi
         done
@@ -532,29 +564,30 @@ detect_model() {
         echo -e "${ICON_GEAR} Hardware Audit: Detected ${BOLD}${VRAM_GB}GB Total VRAM${NC} ${DIM}(engine loaded — budgeting from capacity)${NC}"
     fi
 
-    # Reserve estimated KV-cache VRAM before picking a tier — a model that
-    # fills the card leaves no room for the KV cache at the chosen context
-    # size, causing OOM or RAM spill (which makes inference crawl).
-    # The speculative-decoding draft model occupies VRAM too when enabled,
-    # and each GPU loses a fixed overhead to CUDA context, compute buffers,
-    # and desktop/display usage (see MODEL_VRAM_OVERHEAD_GB).
-    local kv_reserve; kv_reserve=$(_estimate_kv_reserve_gb)
+    # Reserve VRAM before picking a tier — a model that fills the card leaves
+    # no room for the KV cache at the chosen context size, causing OOM or RAM
+    # spill (which makes inference crawl). Each tier's KV cache is sized for
+    # that tier inside select_model_for_vram (see _tier_fits), since tiers of
+    # one family can differ several-fold. The speculative-decoding draft model
+    # occupies VRAM too when enabled, and each GPU loses a fixed overhead to
+    # CUDA context, compute buffers, and desktop/display usage (see
+    # MODEL_VRAM_OVERHEAD_GB).
     local draft_reserve=0 _draft_note=""
     if spec_decode_enabled; then
         draft_reserve="${MODEL_DRAFT_VRAM_GB:-1}"
-        _draft_note=" + ${draft_reserve}GB draft"
+        _draft_note="${draft_reserve}GB draft + "
     fi
     # Under SGLang the budget is already capped at the mem-fraction share of
     # each GPU; the (1 - fraction) SGLang leaves unallocated is its overhead
     # allowance, so the llama.cpp overhead reserve would double-count it.
     local overhead_reserve=$(( ${MODEL_VRAM_OVERHEAD_GB:-1} * gpus_used ))
     engine_is_sglang && overhead_reserve=0
-    EFFECTIVE_VRAM_GB=$(( budget_gb - kv_reserve - draft_reserve - overhead_reserve ))
+    EFFECTIVE_VRAM_GB=$(( budget_gb - draft_reserve - overhead_reserve ))
     [ "$EFFECTIVE_VRAM_GB" -lt 0 ] && EFFECTIVE_VRAM_GB=0
-    echo -e "${ICON_GEAR} VRAM Reserve: ${BOLD}~${kv_reserve}GB KV${NC} ${DIM}(${MODEL_CTX_LEVEL:-64k} ctx, $(kv_type_label))${_draft_note} + ${overhead_reserve}GB overhead (${gpus_used} GPU)${NC} → ${BOLD}${EFFECTIVE_VRAM_GB}GB${NC} usable for model"
+    echo -e "${ICON_GEAR} VRAM Reserve: ${DIM}${_draft_note}${overhead_reserve}GB overhead (${gpus_used} GPU)${NC} → ${BOLD}${EFFECTIVE_VRAM_GB}GB${NC} for model + KV cache"
 
     select_model_for_vram "$EFFECTIVE_VRAM_GB"
-    echo -e "${ICON_GEAR} Model: ${BOLD}${MODEL_TIER}${NC}"
+    echo -e "${ICON_GEAR} Model: ${BOLD}${MODEL_TIER}${NC} ${DIM}(+ ~$(_estimate_kv_reserve_gb)GB KV: ${MODEL_CTX_LEVEL:-64k} ctx, $(kv_type_label))${NC}"
     if engine_is_sglang; then
         echo -e "${ICON_GEAR} Repo:  ${CYAN}${MODEL_URL}${NC}"
         # SGLang has no CPU offload, so a fallback tier (WEIGHTS_GB=0) larger
@@ -589,25 +622,27 @@ detect_model() {
 }
 
 # Print every tier defined by the active family conf as a dry-run table:
-# each candidate's weights vs the just-computed EFFECTIVE_VRAM_GB (Fit),
+# each candidate's weights and KV cache vs the just-computed
+# EFFECTIVE_VRAM_GB (Fit),
 # the tier a launch would select (matching MODEL_FILE), and a note when
 # that selection runs with partial CPU offload.
 print_model_candidates() {
     local _count; _count=$(_cand_field COUNT)
     local _eff="${EFFECTIVE_VRAM_GB:-0}"
-    local i _file _desc _w _l _fit _mark
-    echo -e "\n${BOLD}Model candidates${NC} ${DIM}($(engine_display_name), ${_eff}GB usable after reserves)${NC}"
-    echo -e "${DIM}  # | DESC | WeightsGB | Layers | Fit${NC}"
+    local i _file _desc _w _l _kv _fit _mark
+    echo -e "\n${BOLD}Model candidates${NC} ${DIM}($(engine_display_name), ${_eff}GB for model + KV after reserves)${NC}"
+    echo -e "${DIM}  # | DESC | WeightsGB | KV GB | Layers | Fit${NC}"
     for (( i=1; i<=_count; i++ )); do
         _file=$(_cand_field "$i" FILE)
         [ -n "$_file" ] || break
         _desc=$(_cand_field "$i" DESC)
         _w=$(_cand_field "$i" WEIGHTS_GB); _w="${_w:-0}"
         _l=$(_cand_field "$i" LAYERS)
-        if _tier_fits "$_w" "$_eff"; then _fit="yes"; else _fit="no"; fi
+        _kv=$(_estimate_kv_reserve_gb "$i")
+        if _tier_fits "$_w" "$_eff" "$i"; then _fit="yes"; else _fit="no"; fi
         _mark=""
         [ "$_file" = "${MODEL_FILE:-}" ] && _mark="  ${GREEN}◀ selected${NC}"
-        printf '  %2d | %-58s | %9s | %6s | %s%s\n' "$i" "$_desc" "$_w" "$_l" "$_fit" "$_mark"
+        printf '  %2d | %-58s | %9s | %5s | %6s | %s%s\n' "$i" "$_desc" "$_w" "$_kv" "$_l" "$_fit" "$_mark"
     done
     if [ "${MODEL_NGL:-99}" -lt 99 ]; then
         echo -e "  ${YELLOW}⚠ Selected tier runs with partial CPU offload: ${MODEL_NGL}/${MODEL_LAYERS} layers on GPU${NC}"
