@@ -604,6 +604,7 @@ start_hub_engine() {
     write_pref "$STATE_FILE" engine_net "${NETWORK_INTERNAL:-false}"
     write_pref "$STATE_FILE" engine_mvol "$(read_setting model_volume)"
     write_pref "$STATE_FILE" engine_memfrac "$(_current_sgl_memfrac)"
+    write_pref "$STATE_FILE" engine_thinking "$(_current_thinking)"
     local _spec_state="${MODEL_SPEC_STRATEGY:-none}"
     engine_is_sglang && _spec_state="none"
     [ "${#_draft_args[@]}" -gt 0 ] && _spec_state="external-draft"
@@ -637,6 +638,12 @@ start_hub_engine() {
 # llama.cpp, which has no such setting, so it never triggers a restart there.
 _current_sgl_memfrac() {
     engine_is_sglang && echo "${SGL_MEM_FRACTION:-0.85}" || echo "-"
+}
+
+# Thinking mode for the engine_thinking restart check — "-" under SGLang,
+# where it's a per-request option rather than an engine flag.
+_current_thinking() {
+    engine_is_sglang && echo "-" || echo "${MODEL_THINKING:-true}"
 }
 
 # Sets WORKBENCH_STARTED_BY_US so the caller's cleanup only stops containers
@@ -763,6 +770,7 @@ ensure_engine_currently_running() {
             "Network isolation|$(read_pref "$STATE_FILE" engine_net "")|${NETWORK_INTERNAL:-false}"
             "Model storage mode|$(read_pref "$STATE_FILE" engine_mvol "")|$(read_setting model_volume)"
             "Speculative decoding|$(read_pref "$STATE_FILE" engine_spec "")|$_cur_spec"
+            "Thinking mode|$(read_pref "$STATE_FILE" engine_thinking "")|$(_current_thinking)"
         )
         for _check in "${_restart_checks[@]}"; do
             IFS='|' read -r _label _old _new <<< "$_check"

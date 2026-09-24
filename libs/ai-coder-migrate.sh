@@ -40,6 +40,7 @@ pref_default() {
         gpu_mode)         echo "multi" ;;
         ctx_level)        echo "64k" ;;
         kv_mode)          echo "default" ;;
+        thinking)         echo "default" ;;
         vram_overhead)    echo "1" ;;
         cpu_offload_pct) echo "90" ;;
         mcp_extras)       echo "no" ;;

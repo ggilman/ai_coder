@@ -85,7 +85,7 @@ The launcher normally picks the first (best) entry whose `WEIGHTS_GB` fits in ef
 - `MODEL_FAMILY`: Display name in the selection menu.
 - `MODEL_KV_TYPE`: KV cache quantization (e.g., `q8_0`, `q4_0`). Applied to both K and V unless the `--model` KV cache choice overrides it (`MODEL_KV_TYPE_V` overrides the V side alone).
 - `MODEL_JINJA`: Enable model's built-in Jinja template.
-- `MODEL_THINKING`: Toggle reasoning tokens (e.g., for Qwen3 family).
+- `MODEL_THINKING`: Family default for reasoning tokens (`true`/`false`; e.g., for the Qwen3 family). The *Thinking mode* question in `--model` overrides it.
 
 ## Available Tools
 
@@ -118,7 +118,7 @@ A single launcher for Claude Code, OpenCode, Aider, Gemini CLI, Qwen Code, and G
 | --- | --- |
 | (no argument) | Launch the AI tool inside the active workbench container |
 | `--continue` | Resume the previous agent session — passes the tool's native continue flag (`--continue` for Claude/OpenCode/Aider, `--resume` for Gemini/Qwen Code/Goose) |
-| `--model` | Reset model family, tool, Open WebUI, and the model-sizing preferences (context level, KV cache, VRAM overhead, CPU offload threshold / SGLang memory fraction); show the selection menus again |
+| `--model` | Reset model family, tool, Open WebUI, the model-sizing preferences (context level, KV cache, VRAM overhead, CPU offload threshold / SGLang memory fraction) and thinking mode; show the selection menus again |
 | `--models [family]` | Dry-run model tier selection: hardware audit, VRAM reserves, and which tier a launch would pick — no Docker, no launch |
 | `--speed [family]` | Generation-speed benchmark: run `llama-bench` on your model on a clean GPU and print tokens/s (requires the *generation speed tracking* setup option; llama.cpp engine only) |
 | `--status` | Show the real-time GPU and engine status dashboard |
@@ -242,7 +242,7 @@ A rebuild (`./ai-coder --rebuild` followed by `./ai-coder`) is only needed when 
 | Toggle speculative decoding (`--setup`) | No | Engine restarts with/without the draft model on next launch |
 | Change the KV cache type (`--model`) | No | Engine restarts with the new KV cache type on next launch; the first switch to asymmetric builds llama.cpp locally (one time) |
 | Switch inference engine (`--setup`) | No | Engine restarts on the new server on next launch; the workbench images are engine-independent |
-| Change SGLang memory fraction or FP8 KV cache (`--model`) | No | Engine restarts with the new value on next launch |
+| Change SGLang memory fraction, FP8 KV cache or thinking mode (`--model`) | No | Engine restarts with the new value on next launch |
 | Change proxy or network isolation (`--setup`) | No | Applied at container start time |
 | Change git identity (`--setup`) | **Yes** | Requires an `--rebuild` to bake into the image |
 | Upgrade `BASE_IMAGE` in `ai-coder-core.sh` | **Yes** | The base layer must be pulled and rebuilt |
@@ -495,6 +495,10 @@ Settings that change which model tier fits in VRAM are deliberately not wizard s
 - **VRAM overhead reserve** *(llama.cpp)* — GB of VRAM held back for CUDA context, compute buffers and other apps on the GPU when sizing the model tier (default 1 GB). Raise it if the engine logs `failed to fit` or slows down from memory spilling to system RAM.
 - **CPU offload threshold** *(llama.cpp)* — run a bigger model with a few layers on CPU when at least this percentage of it fits in VRAM (default 90, range 50–99, `0` disables). At 90% the worst case is roughly half generation speed; only fires for a genuinely bigger model, never for a higher quant of the same one. See [Family Configuration Format](#family-configuration-format).
 - **SGLang memory fraction** *(SGLang)* — share of each GPU's VRAM SGLang pre-allocates for model + KV cache (default 0.85, range 0.50–0.95). Lower it if the GPU also drives your display.
+
+`--model` also asks one question that doesn't affect sizing but is worth revisiting per model:
+
+- **Thinking mode** *(llama.cpp)* — family default, on, or off. Reasoning models write a block of reasoning before every reply and tool call: better planning on hard tasks, but each agent turn produces many more tokens and takes longer. Off passes `--reasoning-budget 0`. The family default is on for the Qwen families and gpt-oss, off for GLM-4.7-Flash. (Under SGLang thinking is a per-request option, so there's no engine-level switch.)
 
 In gum mode, pressing **Esc** or **Cancel** on any step keeps that setting unchanged and moves to the next question — nothing is lost mid-wizard. To force the plain-text prompts even where gum is installed, set `AI_CODER_NO_GUM=1`.
 

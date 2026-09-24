@@ -118,6 +118,18 @@ ensure_kv_config() {
     esac
 }
 
+# Sets MODEL_THINKING from the thinking setting (chosen in ai-coder --model):
+# "on"/"off" override the family conf's default, "default" keeps it. Must run
+# after the family conf is sourced. llama.cpp only — SGLang has no
+# server-side switch (thinking is a per-request chat-template option there).
+ensure_thinking_config() {
+    engine_is_sglang && return 0
+    case "$(read_setting thinking)" in
+        on)  MODEL_THINKING=true ;;
+        off) MODEL_THINKING=false ;;
+    esac
+}
+
 # The KV cache type as one token for display and the engine_kv restart
 # check: "q8_0" when K and V match, "q8_0/q4_0" (K/V) when they don't.
 kv_type_label() {

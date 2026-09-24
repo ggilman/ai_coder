@@ -269,6 +269,36 @@ launch builds llama.cpp locally (one time, ~10-30 min)." \
     esac
 }
 
+# llama.cpp only (called from the --model flow): thinking/reasoning mode,
+# resolved by ensure_thinking_config. Asked before the family is picked, so
+# "default" defers to whichever family conf is chosen.
+setup_step_thinking() {
+    local _cur_think; _cur_think=$(read_setting thinking)
+    local _think_input; _think_input=$(ui_menu "Thinking mode" \
+        "Thinking mode — let reasoning models think before answering?" \
+        "Thinking writes a block of reasoning before every reply and tool call:
+better planning on hard tasks, but each agent turn produces many more tokens,
+so turns take noticeably longer. Only affects reasoning models; others
+ignore it." \
+        "Thinking [${_cur_think}]:" \
+        "$_cur_think" \
+        "default" "Family default (on for Qwen and gpt-oss, off for GLM-4.7-Flash)" \
+        "on"      "On — better planning, slower turns" \
+        "off"     "Off — faster agent turns, weaker planning")
+    case "$_think_input" in
+        default|on|off)
+            write_pref "$SETTINGS_FILE" thinking "$_think_input"
+            echo -e "${ICON_OK} Thinking mode set to ${GREEN}${_think_input}${NC} — applied on next engine start."
+            ;;
+        "")
+            printf "%s  Thinking mode unchanged (%s)%s\n" "$DIM" "$_cur_think" "$NC"
+            ;;
+        *)
+            printf "%s⚠ Unknown option '%s' — keeping %s%s\n" "$YELLOW" "$_think_input" "$_cur_think" "$NC"
+            ;;
+    esac
+}
+
 # SGLang counterpart of setup_step_kv (called from the --model flow):
 # SGLang has no q4 KV cache, but can store it as FP8 instead of the model's
 # 16-bit dtype, halving the KV pool per token.

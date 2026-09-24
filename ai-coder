@@ -140,7 +140,7 @@ fi
 # and re-prompts the settings that change which model gets selected
 # (context level, the KV cache type — q8/asymmetric/q4 for llama.cpp, FP8
 # for SGLang — plus llama.cpp's VRAM overhead reserve and CPU offload
-# threshold, or SGLang's memory fraction) directly — they all have
+# threshold and thinking mode, or SGLang's memory fraction) directly — they all have
 # defaults, so they have no "empty means show" gate to piggyback on like
 # the other three.
 _prev_family=""; _prev_tool=""; _prev_webui=""
@@ -161,6 +161,7 @@ if [[ "${1:-}" == "--model" ]]; then
         setup_step_kv
         setup_step_vram_overhead
         setup_step_cpu_offload
+        setup_step_thinking
     fi
 fi
 
@@ -299,6 +300,7 @@ ensure_ctx_config
 ensure_kv_config
 ensure_overhead_config
 ensure_offload_config
+ensure_thinking_config
 detect_model || true
 # SGLang only: even the family's smallest model can't fit (detect_model has
 # already said why) — stop before downloading it.
