@@ -77,6 +77,8 @@ The launcher normally picks the first (best) entry whose `WEIGHTS_GB` fits in ef
 - `MODEL_SGL_N_DESC`: Human-readable label shown in logs and menus.
 - `MODEL_SGL_N_WEIGHTS_GB`: Ceiling of the repo's weight size in GB; `0` = unconditional fallback.
 - `MODEL_SGL_N_QUANT`: Optional `--quantization` override (normally auto-detected from the repo's `config.json`).
+- `MODEL_SGL_N_OVERRIDE_ARGS`: Optional JSON passed as `--json-model-override-args`, patching the repo's `config.json` at load time (nested objects merge into sub-configs) — for checkpoints SGLang misreads.
+- `MODEL_SGL_N_PATCH`: Optional name of a bash snippet in `config/sglang-patches/` (without `.sh`), run inside the engine container before `launch_server` to work around an SGLang bug for this model. Snippets should do nothing once upstream fixes the bug.
 - `MODEL_SGL_N_SIZE_GB`: Optional, for the `WEIGHTS_GB=0` fallback entry: its real size. SGLang can't offload to CPU, so the launcher warns up front when even the fallback won't fit.
 
 **Family Defaults:**

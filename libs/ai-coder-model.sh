@@ -218,6 +218,8 @@ select_model_for_vram() {
     # SGLang-only per-candidate extras (always empty under llama.cpp).
     MODEL_REVISION=$(_cand_field "$_sel" REVISION)
     MODEL_QUANT=$(_cand_field "$_sel" QUANT)
+    MODEL_OVERRIDE_ARGS=$(_cand_field "$_sel" OVERRIDE_ARGS)
+    MODEL_PATCH=$(_cand_field "$_sel" PATCH)
 }
 
 # Download a URL to a local path. Selects the best available tool and handles proxy.

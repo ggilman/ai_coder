@@ -91,7 +91,8 @@ cmd_update() {
     echo -e "${ICON_GEAR} Installing..."
 
     # Wipe dirs that are entirely release-owned so deleted/renamed files don't linger
-    rm -rf "$install_dir/agents" "$install_dir/libs" "$install_dir/packages" "$install_dir/offline"
+    rm -rf "$install_dir/agents" "$install_dir/libs" "$install_dir/packages" "$install_dir/offline" \
+           "$install_dir/config/sglang-patches"
 
     # Wipe release-owned top-level files
     rm -f "$install_dir/ai-coder" "$install_dir/ai-status.sh" \

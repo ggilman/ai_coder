@@ -159,6 +159,11 @@ snapshot_download(repo_id=repo, revision=rev, local_dir=dest,
 # --served-model-name matches the model id every agent derives from
 # MODEL_FILE's basename. SGL_EXTRA_ARGS (env, word-split) is an escape
 # hatch for any other launch_server flag.
+#
+# MODEL_PATCH (a candidate's MODEL_SGL_N_PATCH) names a bash snippet in
+# config/sglang-patches/ that works around an SGLang bug for that model. It
+# runs inside the container ahead of launch_server; since the container is
+# recreated on every engine start, the edit never outlives the run.
 _run_sglang_engine() {
     local _model_name="${MODEL_FILE##*/}"
     local _parser_args=()
@@ -166,9 +171,20 @@ _run_sglang_engine() {
     [ -n "${MODEL_SGL_REASONING_PARSER:-}" ] && _parser_args+=(--reasoning-parser "$MODEL_SGL_REASONING_PARSER")
     local _quant_args=()
     [ -n "${MODEL_QUANT:-}" ] && _quant_args=(--quantization "$MODEL_QUANT")
+    [ -n "${MODEL_OVERRIDE_ARGS:-}" ] && _quant_args+=(--json-model-override-args "$MODEL_OVERRIDE_ARGS")
     local _extra_args=()
     # shellcheck disable=SC2206
     [ -n "${SGL_EXTRA_ARGS:-}" ] && _extra_args=(${SGL_EXTRA_ARGS})
+    local _launch=(--entrypoint python3 "$SGLANG_IMAGE" -m sglang.launch_server)
+    if [ -n "${MODEL_PATCH:-}" ]; then
+        local _patch_file="$CONFIG_DIR/sglang-patches/${MODEL_PATCH}.sh"
+        if [ ! -f "$_patch_file" ]; then
+            echo -e "${RED}✘ SGLang patch not found: ${_patch_file}${NC}" >&2
+            return 1
+        fi
+        _launch=(--entrypoint bash "$SGLANG_IMAGE" -c
+            "$(tr -d '\r' < "$_patch_file")"$'\n''exec python3 -m sglang.launch_server "$@"' sglang)
+    fi
 
     # Unlike llama.cpp, SGLang refuses to start when --context-length exceeds
     # the model's trained maximum (e.g. 40960 for Qwen3), so clamp to the
@@ -184,15 +200,13 @@ _run_sglang_engine() {
         fi ;;
     esac
 
-    echo -e "${ICON_GEAR} Engine: ${GREEN}SGLang${NC} ${DIM}(mem-fraction ${SGL_MEM_FRACTION:-0.85}, KV ${MODEL_KV_TYPE:-auto}${MODEL_SGL_TOOL_PARSER:+, tool parser ${MODEL_SGL_TOOL_PARSER}})${NC}"
+    echo -e "${ICON_GEAR} Engine: ${GREEN}SGLang${NC} ${DIM}(mem-fraction ${SGL_MEM_FRACTION:-0.85}, KV ${MODEL_KV_TYPE:-auto}${MODEL_SGL_TOOL_PARSER:+, tool parser ${MODEL_SGL_TOOL_PARSER}}${MODEL_PATCH:+, patch ${MODEL_PATCH}})${NC}"
 
     docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$_hub_net" --gpus "$_gpus_flag" --restart no \
         --ipc=host -e HF_HUB_OFFLINE=1 \
         "${_port_args[@]}" "${_cuda_env[@]}" \
         -v "${_models_src}:/models" \
-        --entrypoint python3 \
-        "$SGLANG_IMAGE" \
-        -m sglang.launch_server \
+        "${_launch[@]}" \
         --model-path "/models/$MODEL_FILE" --served-model-name "$_model_name" \
         --host 0.0.0.0 --port "$ENGINE_PORT" \
         --context-length "$_ctx" \
