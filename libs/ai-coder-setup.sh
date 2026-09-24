@@ -2,10 +2,11 @@
 # ==============================================================================
 # AI-CODER | Setup Wizard
 # The --setup wizard: setup_toggle_pref plus one setup_step_* per question,
-# called in sequence from cmd_setup. setup_step_ctx and setup_step_kv /
-# setup_step_sgl_kv are also called from the --model flow in ai-coder
-# (model-affecting choices are re-prompted there instead of living in the
-# wizard). Steps that only apply to one inference engine are skipped by
+# called in sequence from cmd_setup. The model-sizing steps — setup_step_ctx,
+# setup_step_kv / setup_step_sgl_kv, setup_step_vram_overhead,
+# setup_step_cpu_offload and setup_step_sgl_mem_fraction — are called from
+# the --model flow in ai-coder instead (model-affecting choices are
+# re-prompted there rather than living in the wizard). Steps that only apply to one inference engine are skipped by
 # cmd_setup for the other (see setup_step_engine).
 # ==============================================================================
 
@@ -155,8 +156,10 @@ its Docker image is ~15GB (pulled on first launch)." \
     ensure_engine_config
 }
 
-# SGLang only: share of each GPU's VRAM SGLang pre-allocates up front for
-# the model weights plus its KV-cache pool.
+# SGLang only (asked in --model): share of each GPU's VRAM SGLang
+# pre-allocates up front for the model weights plus its KV-cache pool — its
+# counterpart of llama.cpp's VRAM overhead reserve (the share it leaves
+# unallocated is its overhead allowance).
 setup_step_sgl_mem_fraction() {
     local _cur_frac; _cur_frac=$(read_setting sgl_mem_fraction)
     local _frac_input; _frac_input=$(ui_input "SGLang memory fraction" \
@@ -503,7 +506,8 @@ setup_step_git_identity() {
 # ------------------------------------------------------------------------------
 # cmd_setup — first-time and re-configuration wizard
 #
-# Model-affecting choices (context level, KV cache type) are deliberately
+# Model-affecting choices (context level, KV cache type, VRAM overhead
+# reserve, CPU offload threshold, SGLang memory fraction) are deliberately
 # not steps here: they change which model tier fits, so the --model flow
 # re-prompts them instead.
 # ------------------------------------------------------------------------------
@@ -523,19 +527,11 @@ cmd_setup() {
     setup_step_network
     setup_step_engine
     setup_step_gpu
-    # Engine-specific steps: only the questions the chosen engine uses.
-    # (setup_step_engine has already updated ENGINE_BACKEND.) SGLang's memory
-    # fraction replaces the VRAM overhead reserve — the share it leaves
-    # unallocated is its overhead allowance.
-    if engine_is_sglang; then
-        setup_step_sgl_mem_fraction
-    else
-        setup_step_vram_overhead
-        setup_step_cpu_offload
-    fi
     setup_step_mcp_extras
     setup_step_keep_hub
     setup_step_model_volume
+    # llama.cpp-only steps (setup_step_engine has already updated
+    # ENGINE_BACKEND, so these follow the engine just chosen).
     if ! engine_is_sglang; then
         setup_step_spec_decode
         setup_step_speed_tracking

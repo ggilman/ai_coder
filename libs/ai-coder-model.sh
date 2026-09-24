@@ -572,7 +572,7 @@ detect_model() {
         echo -e "${ICON_GEAR} File:  ${CYAN}${MODEL_FILE}${NC}"
     fi
     if [ "${MODEL_NGL:-99}" -lt 99 ]; then
-        echo -e "${YELLOW}⚠ CPU offload: ${MODEL_NGL}/${MODEL_LAYERS} layers on GPU — running a bigger model at reduced speed (threshold ${MODEL_CPU_OFFLOAD_PCT:-90}%, disable via --setup)${NC}"
+        echo -e "${YELLOW}⚠ CPU offload: ${MODEL_NGL}/${MODEL_LAYERS} layers on GPU — running a bigger model at reduced speed (threshold ${MODEL_CPU_OFFLOAD_PCT:-90}%, disable via --model)${NC}"
     fi
 
     if [ -z "${MODEL_FILE:-}" ]; then

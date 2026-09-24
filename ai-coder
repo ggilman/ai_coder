@@ -137,11 +137,12 @@ fi
 
 # Handle --model flag: clears the family, tool, and Open WebUI preferences so
 # all the selection questions are shown again on the next step of this run,
-# and re-prompts the two settings that change which model gets selected
-# (context level and the KV cache type — q8/asymmetric/q4 for llama.cpp,
-# FP8 for SGLang)
-# directly — both always have defaults, so they have no "empty means show"
-# gate to piggyback on like the other three.
+# and re-prompts the settings that change which model gets selected
+# (context level, the KV cache type — q8/asymmetric/q4 for llama.cpp, FP8
+# for SGLang — plus llama.cpp's VRAM overhead reserve and CPU offload
+# threshold, or SGLang's memory fraction) directly — they all have
+# defaults, so they have no "empty means show" gate to piggyback on like
+# the other three.
 _prev_family=""; _prev_tool=""; _prev_webui=""
 if [[ "${1:-}" == "--model" ]]; then
     _prev_family=$(read_pref "$STATE_FILE" family_pref "")
@@ -155,8 +156,11 @@ if [[ "${1:-}" == "--model" ]]; then
     setup_step_ctx
     if engine_is_sglang; then
         setup_step_sgl_kv
+        setup_step_sgl_mem_fraction
     else
         setup_step_kv
+        setup_step_vram_overhead
+        setup_step_cpu_offload
     fi
 fi
 
