@@ -640,11 +640,9 @@ ensure_llama_asym_image() {
 start_hub_engine() {
     echo -e "${ICON_GEAR} Initializing Global GPU Hub ($(engine_display_name))..."
 
-    docker stop "$GLOBAL_ENGINE_NAME" 2>/dev/null || true
-    docker rm   "$GLOBAL_ENGINE_NAME" 2>/dev/null || true
+    remove_containers "$GLOBAL_ENGINE_NAME"
     if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
-        docker stop "$GLOBAL_PROXY_NAME" 2>/dev/null || true
-        docker rm   "$GLOBAL_PROXY_NAME" 2>/dev/null || true
+        remove_containers "$GLOBAL_PROXY_NAME"
     fi
 
     # The asymmetric-KV image is built locally at launch (before the hub
@@ -842,8 +840,7 @@ rebuild_workbench_images() {
                 [ -z "$_cid" ] && continue
                 _cname=$(docker inspect --format '{{.Name}}' "$_cid" 2>/dev/null | tr -d '/')
                 echo -e "${YELLOW}  Stopping container [${_cname:-$_cid}]...${NC}"
-                docker stop "$_cid" 2>/dev/null || true
-                docker rm   "$_cid" 2>/dev/null || true
+                remove_containers "$_cid"
             done < <(docker ps -aq --filter "ancestor=$_img" 2>/dev/null)
             if docker rmi "$_img" 2>/dev/null; then
                 echo -e "${GREEN}✔ Removed${NC}"

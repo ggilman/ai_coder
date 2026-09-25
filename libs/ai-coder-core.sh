@@ -193,17 +193,10 @@ model_id() {
 schedule_hub_idle_stop() {
     local idle_min="$1"
     local stamp; stamp=$(date +%s)
-    local jq_cmd="${JQ_CMD:-jq}"
     write_pref "$STATE_FILE" hub_idle_since "$stamp"
-    nohup bash -c "
-        sleep $(( idle_min * 60 ))
-        cur=\$('$jq_cmd' -r '(.hub_idle_since // empty)' '$STATE_FILE' 2>/dev/null)
-        [ \"\$cur\" = '$stamp' ] || exit 0
-        [ -n \"\$(docker ps -q --filter 'name=^/${WORKBENCH_PREFIX}-' 2>/dev/null)\" ] && exit 0
-        docker stop '$GLOBAL_ENGINE_NAME' '$GLOBAL_PROXY_NAME' '$GLOBAL_WEBUI_NAME' >/dev/null 2>&1
-        docker rm   '$GLOBAL_ENGINE_NAME' '$GLOBAL_PROXY_NAME' '$GLOBAL_WEBUI_NAME' >/dev/null 2>&1
-        '$jq_cmd' 'del(.hub_idle_since)' '$STATE_FILE' > '$STATE_FILE.tmp.\$\$' 2>/dev/null && mv '$STATE_FILE.tmp.\$\$' '$STATE_FILE' || true
-    " >/dev/null 2>&1 &
+    nohup bash "$SCRIPT_DIR/ai-coder-watch.sh" idle "$idle_min" "$stamp" "$STATE_FILE" \
+        "$WORKBENCH_PREFIX" "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME" \
+        >/dev/null 2>&1 &
     disown 2>/dev/null || true
 }
 
@@ -217,24 +210,8 @@ start_gpu_guard() {
     local max_c="${MODEL_GPU_MAX_TEMP_C:-90}"
     case "$max_c" in ''|*[!0-9]*|0) return 0 ;; esac
     command -v "$SMI" >/dev/null 2>&1 || return 0
-    local jq_cmd="${JQ_CMD:-jq}"
-    nohup bash -c "
-        strikes=0
-        while docker ps -q -f name=^/${GLOBAL_ENGINE_NAME}\$ 2>/dev/null | grep -q .; do
-            hot=''
-            for t in \$($SMI --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | tr -d '\r'); do
-                case \"\$t\" in ''|*[!0-9]*) ;; *) [ \"\$t\" -ge $max_c ] && hot=\$t ;; esac
-            done
-            if [ -n \"\$hot\" ]; then strikes=\$((strikes+1)); else strikes=0; fi
-            if [ \"\$strikes\" -ge 3 ]; then
-                docker stop '$GLOBAL_ENGINE_NAME' >/dev/null 2>&1
-                trip_val=\"\$(date '+%Y-%m-%d %H:%M') GPU held \${hot}C (limit ${max_c}C)\"
-                '$jq_cmd' --arg v \"\$trip_val\" '.engine_guard_trip = \$v' '$STATE_FILE' > '$STATE_FILE.tmp.\$\$' 2>/dev/null && mv '$STATE_FILE.tmp.\$\$' '$STATE_FILE' || true
-                exit 0
-            fi
-            sleep 10
-        done
-    " >/dev/null 2>&1 &
+    nohup bash "$SCRIPT_DIR/ai-coder-watch.sh" gpu-guard "$max_c" "$SMI" "$STATE_FILE" \
+        "$GLOBAL_ENGINE_NAME" >/dev/null 2>&1 &
     disown 2>/dev/null || true
 }
 
@@ -346,26 +323,31 @@ start_webui_sidecar() {
     return 0
 }
 
+# Usage: remove_containers [-t <secs>] <name|id>... — stop (gracefully, with
+# docker's default or the given timeout) then remove; missing ones are fine.
+remove_containers() {
+    local _stop_args=()
+    if [ "${1:-}" = "-t" ]; then _stop_args=(-t "$2"); shift 2; fi
+    [ "$#" -gt 0 ] || return 0
+    docker stop "${_stop_args[@]}" "$@" >/dev/null 2>&1 || true
+    docker rm "$@" >/dev/null 2>&1 || true
+}
+
 stop_webui_sidecar() {
-    docker stop "$GLOBAL_WEBUI_NAME" 2>/dev/null || true
-    docker rm   "$GLOBAL_WEBUI_NAME" 2>/dev/null || true
+    remove_containers "$GLOBAL_WEBUI_NAME"
 }
 
 stop_hub() {
     echo -e "${CYAN}◈ Shutting down Hub...${NC}"
-    docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME" 2>/dev/null || true
-    docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME" 2>/dev/null || true
+    remove_containers "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME"
     echo -e "${ICON_OK} Hub stopped."
 }
 
 teardown() {
     echo -e "${CYAN}Tearing down Hub & Project Spokes...${NC}"
-    local _running; _running=$(docker ps -q  --filter "name=^/${WORKBENCH_PREFIX}-" 2>/dev/null || true)
-    local _all;     _all=$(docker ps -aq --filter "name=^/${WORKBENCH_PREFIX}-" 2>/dev/null || true)
-    # shellcheck disable=SC2086
-    docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME" $( [ -n "$_running" ] && echo "$_running") 2>/dev/null || true
-    # shellcheck disable=SC2086
-    docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME" $( [ -n "$_all" ]     && echo "$_all")     2>/dev/null || true
+    local _spokes
+    mapfile -t _spokes < <(docker ps -aq --filter "name=^/${WORKBENCH_PREFIX}-" 2>/dev/null || true)
+    remove_containers "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME" "${_spokes[@]}"
     docker network rm "$HUB_NETWORK" "$HUB_ISOLATED_NET" 2>/dev/null || true
 }
 
