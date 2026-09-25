@@ -559,15 +559,8 @@ ensure_llama_asym_image() {
     local _http_proxy=""
     [ -n "${DOWNLOAD_PROXY:-}" ] && _http_proxy=$(resolve_proxy_to_ip "$(echo "$DOWNLOAD_PROXY" | sed "s|^https://|http://|")")
 
-    # llama.cpp ref: pinned via LLAMA_BUILD_REF, else the latest release tag.
-    local _ref="$LLAMA_BUILD_REF"
-    if [ -z "$_ref" ]; then
-        local _curl_args=(-fsSL --connect-timeout 10)
-        [ -n "$_http_proxy" ] && _curl_args+=(--proxy "$_http_proxy")
-        _ref=$(curl "${_curl_args[@]}" https://api.github.com/repos/ggml-org/llama.cpp/releases/latest 2>/dev/null \
-            | "${JQ_CMD:-jq}" -r '.tag_name // empty' 2>/dev/null | tr -d '\r') || _ref=""
-        [ -n "$_ref" ] || _ref=master
-    fi
+    # Same llama.cpp release as the stock images (LLAMA_CPP_VERSION).
+    local _ref="$LLAMA_CPP_VERSION"
 
     # Compile for the detected GPUs only (e.g. compute_cap 8.9 -> 89): an
     # all-architectures build takes several times longer.
@@ -708,6 +701,7 @@ start_hub_engine() {
     }
 
     write_pref "$STATE_FILE" engine_backend "$ENGINE_BACKEND"
+    write_pref "$STATE_FILE" engine_image "$ENGINE_IMAGE"
     write_pref "$STATE_FILE" engine_gpu_mode "${GPU_MODE:-multi}"
     write_pref "$STATE_FILE" engine_model "${MODEL_FILE:-}"
     # Informational only — deliberately NOT part of the restart-detection
@@ -853,16 +847,18 @@ rebuild_workbench_images() {
     [ "$_removed" -eq 0 ] && \
         echo -e "${DIM}  No workbench images found — nothing to remove.${NC}" || \
         echo -e "${ICON_OK} Workbench images cleared. They will be rebuilt on next run."
-    # The locally built asymmetric-KV llama.cpp image: removing it is how a
-    # newer llama.cpp gets picked up (rebuilt on the next asym-mode launch).
-    # Skipped while the engine is running on it.
-    if docker image inspect "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1; then
-        if [ -n "$(docker ps -q --filter "ancestor=$LLAMA_ASYM_IMAGE" 2>/dev/null)" ]; then
-            echo -e "${YELLOW}  Keeping [$LLAMA_ASYM_IMAGE] — the engine is running on it (stop it with ai --clean first).${NC}"
-        elif docker rmi "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1; then
-            echo -e "${ICON_OK} Removed [$LLAMA_ASYM_IMAGE] — llama.cpp is rebuilt on the next asymmetric-KV launch."
+    # The locally built asymmetric-KV llama.cpp images — every version's tag,
+    # so ones left behind by a LLAMA_CPP_VERSION bump go too. Rebuilt on the
+    # next asym-mode launch. Skipped while the engine is running on one.
+    local _asym
+    while IFS= read -r _asym; do
+        [ -n "$_asym" ] || continue
+        if [ -n "$(docker ps -q --filter "ancestor=$_asym" 2>/dev/null)" ]; then
+            echo -e "${YELLOW}  Keeping [$_asym] — the engine is running on it (stop it with ai --clean first).${NC}"
+        elif docker rmi "$_asym" >/dev/null 2>&1; then
+            echo -e "${ICON_OK} Removed [$_asym] — llama.cpp is rebuilt on the next asymmetric-KV launch."
         fi
-    fi
+    done < <(docker images --format '{{.Repository}}:{{.Tag}}' "${LLAMA_ASYM_IMAGE%:*}" 2>/dev/null)
     rm -f "$USER_DIR/.rebuild-needed"
 }
 
@@ -887,6 +883,7 @@ ensure_engine_currently_running() {
         spec_decode_enabled && [ -f "$MODEL_STORAGE_DIR/${MODEL_DRAFT_FILE:-}" ] && _cur_spec=yes
         _restart_checks=(
             "Engine|$(read_pref "$STATE_FILE" engine_backend "")|${ENGINE_BACKEND:-llamacpp}"
+            "Engine image|$(read_pref "$STATE_FILE" engine_image "")|${ENGINE_IMAGE}"
             "SGLang memory fraction|$(read_pref "$STATE_FILE" engine_memfrac "")|$(_current_sgl_memfrac)"
             "GPU mode|$(read_pref "$STATE_FILE" engine_gpu_mode "")|${GPU_MODE:-multi}"
             "Model|$(read_pref "$STATE_FILE" engine_model "")|${MODEL_FILE:-}"

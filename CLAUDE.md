@@ -11,7 +11,7 @@ Everything targets **Windows** via **WSL2 or Git Bash**, with a secondary path f
 ## Architecture: Hub & Spoke
 
 - **Hub** — shared infrastructure, one instance for the whole machine:
-  - `ai-hub-engine`: the inference server running the selected model — llama.cpp with a GGUF (`ghcr.io/ggml-org/llama.cpp:server-cuda`), or SGLang with a Hugging Face snapshot (`lmsysorg/sglang`). Both listen on port 8080 and serve `/v1` and `/v1/messages`, so agents are engine-agnostic
+  - `ai-hub-engine`: the inference server running the selected model — llama.cpp with a GGUF (`ghcr.io/ggml-org/llama.cpp:server-cuda-<LLAMA_CPP_VERSION>`, pinned in `ai-coder-core.sh`), or SGLang with a Hugging Face snapshot (`lmsysorg/sglang`). Both listen on port 8080 and serve `/v1` and `/v1/messages`, so agents are engine-agnostic
   - `ai-hub-proxy`: LiteLLM container providing an OpenAI-compatible endpoint, started only when the selected tool needs format translation (`NEEDS_LITELLM_PROXY`) — Claude Code talks directly to the engine's native `/v1/messages` instead, to avoid conversion errors
   - `ai-hub-webui`: optional Open WebUI sidecar for chatting with the same local model
 - **Spoke** — one workbench container per project+tool, named `coder-<tool>-<project-id>`, torn down on exit. If it was the last spoke, the Hub shuts down too (unless "keep hub warm" is enabled in `--setup`).

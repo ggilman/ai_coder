@@ -147,7 +147,7 @@ The Hub engine can run on either of two inference servers, chosen in `--setup` (
 | --- | --- | --- |
 | Model format | GGUF files | Hugging Face repos (AWQ / GPTQ / FP8 / MXFP4 safetensors) |
 | Families | All | Only families that define `MODEL_SGL_*` candidates — currently **Gemma 4**, **Qwen3.8**, **Qwen3**, **Qwen 2.5 Coder**, and **gpt-oss-20b** (Qwen3.8's smallest SGLang build is ~19.5 GB, so it needs a ~24 GB+ GPU) |
-| Image | `ghcr.io/ggml-org/llama.cpp:server-cuda` | `lmsysorg/sglang:v0.5.20-runtime` (~15 GB; CUDA 13, so Blackwell / RTX 50-series works) |
+| Image | `ghcr.io/ggml-org/llama.cpp:server-cuda-<LLAMA_CPP_VERSION>` (pinned) | `lmsysorg/sglang:v0.5.20-runtime` (~15 GB; CUDA 13, so Blackwell / RTX 50-series works) |
 | Multi-GPU | Uneven `--tensor-split` by free VRAM | Even tensor parallel (`--tp`), power-of-two GPU count |
 | CPU offload, speculative decoding, `--speed` | Yes | No — hidden in `--setup`/`--model` and skipped |
 | VRAM sizing | Overhead reserve (`--model`) | Memory fraction (`--model`, default 0.85) — SGLang pre-allocates that share of each GPU for weights + KV pool |
@@ -166,11 +166,11 @@ Notes:
 
 The *asymmetric* KV cache option in `--model` keeps keys at `q8_0` and stores values at `q4_0`, which uses about 25% less KV VRAM than `q8_0`/`q8_0` for much less quality loss than `q4_0`/`q4_0` (keys are the quantization-sensitive side).
 
-llama.cpp only compiles CUDA Flash Attention kernels for the K/V pairs listed in its `GGML_CUDA_FA_QUANTS` build option. The default list is `q4_0-q4_0;q8_0-q8_0;f16-f16;bf16-bf16`, so on the stock `server-cuda` image a mismatched pair falls back to a much slower path. Choosing asymmetric therefore builds a local image, `ai-coder/llama.cpp:server-cuda-asym`, the first time it's needed:
+llama.cpp only compiles CUDA Flash Attention kernels for the K/V pairs listed in its `GGML_CUDA_FA_QUANTS` build option. The default list is `q4_0-q4_0;q8_0-q8_0;f16-f16;bf16-bf16`, so on the stock `server-cuda` image a mismatched pair falls back to a much slower path. Choosing asymmetric therefore builds a local image, `ai-coder/llama.cpp:server-cuda-asym-<version>`, the first time it's needed:
 
 - It runs llama.cpp's own `.devops/cuda.Dockerfile` straight from GitHub (no local checkout), adds `q8_0-q4_0` to the kernel list, and compiles only for the GPU architectures `nvidia-smi` reports.
 - The build is one-time and usually takes 10–30 minutes. It runs before the Hub starts; a second session launched meanwhile waits for it. nvcc needs a lot of memory, so if the build is killed for running out of memory, give Docker Desktop more RAM.
-- It builds the latest llama.cpp release; export `LLAMA_BUILD_REF=<tag>` to pin one. `--rebuild` removes the image so the next asymmetric launch builds a newer llama.cpp. `--doctor` shows which llama.cpp release the image was built from.
+- It builds the same pinned llama.cpp release the stock images use (`LLAMA_CPP_VERSION` in `libs/ai-coder-core.sh`, overridable by exporting it), so every KV mode runs identical llama.cpp. Bumping the version pulls new stock images and builds a new asym image on the next launch; `--rebuild` removes the asym image (every version's tag) to force a rebuild. `--doctor` shows which llama.cpp release the image was built from.
 - It needs internet access, so it won't build with network isolation on. An image built earlier (or loaded from an offline bundle, which includes it when present) still works.
 - The q8_0/q8_0 and q4_0/q4_0 options keep using the stock image.
 
