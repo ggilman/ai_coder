@@ -23,7 +23,9 @@ launch_legacy_fallback() {
     if [ -f "$legacy_script" ]; then
         echo "🔄 Launching legacy text-based dashboard..."
         sleep 2
-        exec "$legacy_script"
+        # Via bash: releases ship scripts without the exec bit, and the
+        # installer only chmods the two entry points.
+        exec bash "$legacy_script"
     else
         echo "❌ Error: Legacy fallback script not found at: $legacy_script"
         exit 1
