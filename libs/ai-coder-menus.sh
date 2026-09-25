@@ -50,6 +50,7 @@ _run_selection_menu() {
             exit 1
         fi
         if [ -z "$choice" ]; then
+            UI_ABORTED=true
             exit 0
         fi
 
@@ -80,7 +81,7 @@ _run_selection_menu() {
         [ -n "$default_choice" ] && echo -n "Selection [$default_choice]: " || echo -n "Selection: "
         read -r choice
         [ -z "$choice" ] && choice="${default_choice}"
-        if [[ "$choice" == "q" ]]; then exit 0; fi
+        if [[ "$choice" == "q" ]]; then UI_ABORTED=true; exit 0; fi
         if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#pairs[@]} )); then
             local key="${pairs[$((choice-1))]#*:}"
             local name="${pairs[$((choice-1))]%%:*}"
@@ -154,6 +155,9 @@ show_webui_prompt() {
         "Chat with the same local model at http://localhost:${OPEN_WEBUI_HOST_PORT} while you code." \
         "Start Open WebUI? $hint:" \
         "" "$def")
+    if [ "$UI_ABORTED" = "true" ]; then
+        return
+    fi
     [ -z "$_webui_input" ] && _webui_input="$def"
     case "${_webui_input,,}" in
         y|yes)

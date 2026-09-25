@@ -145,21 +145,30 @@ if [[ "${1:-}" == "--model" ]]; then
     shift
     _menu_ui_init
     show_family_menu "$_prev_family"
+    _ui_abort_if_cancelled
     show_menu "$_prev_tool"
+    _ui_abort_if_cancelled
     if [ "$(read_pref "$STATE_FILE" tool_pref "")" != "webui" ] && \
        [ "$(read_setting expose_host_port)" = "yes" ]; then
         show_webui_prompt "$_prev_webui"
     fi
+    _ui_abort_if_cancelled
     setup_step_ctx
+    _ui_abort_if_cancelled
     if engine_is_sglang; then
         setup_step_sgl_kv
+        _ui_abort_if_cancelled
         setup_step_sgl_mem_fraction
     else
         setup_step_kv
+        _ui_abort_if_cancelled
         setup_step_vram_overhead
+        _ui_abort_if_cancelled
         setup_step_cpu_offload
+        _ui_abort_if_cancelled
         setup_step_thinking
     fi
+    _ui_abort_if_cancelled
     write_pref "$SETTINGS_FILE" model_config_complete "yes"
     echo -e "${ICON_OK} Model configuration updated."
     echo -e "${DIM}  Start the tool with:${NC} $(basename "$0")"

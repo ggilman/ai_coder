@@ -17,6 +17,21 @@ source "$(dirname "${BASH_SOURCE[0]}")/ai-coder-gum.sh"
 UI_GUM=false
 # GUM_CMD — resolved gum binary path, set by resolve_gum_cmd in ui_init
 GUM_CMD=""
+# Set to "true" by the ui_* helpers when the user cancels a prompt (gum
+# Escape / Ctrl-C, or a plain-read EOF).  Wizards check this via
+# _ui_abort_if_cancelled to stop the remaining steps without overwriting
+# saved state.  Never read before the first ui_* call.
+UI_ABORTED=false
+
+# Exit the process if the user cancelled a prompt.  Called by wizards
+# (cmd_setup, --model flow) after each question to stop without touching
+# saved state.  Does nothing if the user has not cancelled yet.
+_ui_abort_if_cancelled() {
+    if [ "$UI_ABORTED" = "true" ]; then
+        echo -e "\n${DIM}  Interrupted — no further questions; previously saved settings kept.${NC}"
+        exit 0
+    fi
+}
 
 # Beautiful CLI Theme Colors (256-color compatible)
 COLOR_ACCENT='\033[38;5;81m'     # Cyan
@@ -134,7 +149,7 @@ _gum_choose() {
 ui_yesno() {
     local _title="$1" _header="$2" _help="$3" _prompt="$4" _current="$5" _default="$6"
     local _input
-    
+
     if [ "$UI_GUM" = "true" ]; then
         local _gum_rc
         _gum_confirm "$_header" "$_help" "$_current" "$_default"
@@ -148,6 +163,7 @@ ui_yesno() {
         elif [ "$_gum_rc" -eq 0 ]; then
             echo "yes"
         else
+            UI_ABORTED=true
             echo "no"
         fi
     else
@@ -156,7 +172,7 @@ ui_yesno() {
         case "${_input,,}" in
             y|yes) echo "yes" ;;
             n|no)  echo "no" ;;
-            *)     echo "$_input" ;;
+            *)    UI_ABORTED=true; echo "$_input" ;;
         esac
     fi
     return 0
@@ -165,13 +181,15 @@ ui_yesno() {
 ui_input() {
     local _title="$1" _header="$2" _help="$3" _prompt="$4" _current="$5" _prefill="$6"
     local _input
-    
+
     if [ "$UI_GUM" = "true" ]; then
         _input=$(_gum_input "$_header" "$_help" "$_current" "$_prefill" "$_prompt")
+        [ -z "$_input" ] && UI_ABORTED=true
         echo "$_input"
     else
         _ui_plain_header "$_header" "$_help" "$_current" "$_prompt"
         read -r _input || _input=""
+        [ -z "$_input" ] && UI_ABORTED=true
         echo "$_input"
     fi
     return 0
@@ -203,13 +221,14 @@ ui_menu() {
                     break
                 fi
             done
-            
+
             if [ "$_found" = false ] && [ -n "$_current" ]; then
                 _current=""
             fi
 
             _input=$(_gum_choose "$_header" "$_help" "$_current" "$_current" "${_items[@]}")
         fi
+        [ -z "$_input" ] && UI_ABORTED=true
         echo "$_input"
     else
         echo -e "\n${COLOR_ACCENT}${COLOR_BOLD}${_header}${COLOR_RESET}" >&2
@@ -225,6 +244,7 @@ ui_menu() {
         done
         echo -n "${_prompt} " >&2
         read -r _input || _input=""
+        [ -z "$_input" ] && UI_ABORTED=true
         echo "$_input"
     fi
     return 0

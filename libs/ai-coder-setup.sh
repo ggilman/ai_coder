@@ -554,20 +554,31 @@ cmd_setup() {
     echo -e "${DIM}Configure your local agent environment and preferences.${NC}"
 
     setup_step_alias
+    _ui_abort_if_cancelled
     setup_step_proxy
+    _ui_abort_if_cancelled
     setup_step_network
+    _ui_abort_if_cancelled
     setup_step_engine
+    _ui_abort_if_cancelled
     setup_step_gpu
+    _ui_abort_if_cancelled
     setup_step_mcp_extras
+    _ui_abort_if_cancelled
     setup_step_keep_hub
+    _ui_abort_if_cancelled
     setup_step_model_volume
+    _ui_abort_if_cancelled
     # llama.cpp-only steps (setup_step_engine has already updated
     # ENGINE_BACKEND, so these follow the engine just chosen).
     if ! engine_is_sglang; then
         setup_step_spec_decode
+        _ui_abort_if_cancelled
         setup_step_speed_tracking
     fi
+    _ui_abort_if_cancelled
     setup_step_expose_port
+    _ui_abort_if_cancelled
     setup_step_git_identity
 
     # Guarantee settings.json exists before arming the first-run gate: the

@@ -46,7 +46,7 @@ Both are Docker containers on a shared network (`ai-engineering-net`, or `ai-eng
 - **`libs/ai-coder-gum.sh`** — gum binary bootstrap/resolution (`ensure_gum`, `resolve_gum_cmd`, `_download_gum_binary`). Deliberately self-contained (BASH_SOURCE-relative paths only) since it's sourced standalone by `ai-status.sh` and `offline/bundle.sh` in addition to the full launch chain.
 - **`libs/ai-coder-asset.sh`** — helpers shared by the gum and jq bootstraps: `.assets` location and exact-name presence check (`_asset_dir`, `_asset_present` — plain `[ -f gum ]` also matches `gum.exe` on Git Bash), PATH-then-`.assets` resolution (`_asset_resolve`), proxy-aware curl (`_asset_curl`), GitHub latest-release asset lookup with a pinned fallback (`_asset_release_url`) and download-via-`.part` (`_asset_fetch`). Sourced by both, so it is self-contained under the same rules.
 - **`libs/ai-coder-menus.sh`** — interactive family/tool/Open WebUI selection menus.
-- **`libs/ai-coder-ui.sh`** — gum-based prompt helpers with a plain-text fallback (`AI_CODER_NO_GUM=1` forces plain text). Sources `ai-coder-gum.sh` itself for binary resolution, which keeps its standalone sourcing by `offline/unbundle.sh` working.
+- **`libs/ai-coder-ui.sh`** — gum-based prompt helpers with a plain-text fallback (`AI_CODER_NO_GUM=1` forces plain text). Sources `ai-coder-gum.sh` itself for binary resolution, which keeps its standalone sourcing by `offline/unbundle.sh` working. The `UI_ABORTED` global and `_ui_abort_if_cancelled()` let wizards (cmd_setup, --model) stop after the question the user cancelled, without overwriting saved state.
 - **`libs/fixpath.sh`** — WSL path resolver for Docker Desktop bind mounts.
 
 ## Adding a new AI tool
