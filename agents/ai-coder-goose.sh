@@ -51,9 +51,8 @@ configure_workbench() {
     # Docker runs as root so mounted dir files can become root-owned on the WSL host.
     ensure_host_dir_writable "$config_dir"
 
-    local mcp_files=("$PACKAGES_DIR/mcp-common.txt")
-    [ "$(read_setting mcp_extras)" = "yes" ] && mcp_files+=("$PACKAGES_DIR/mcp-extra.txt")
-    mcp_files+=("$PACKAGES_DIR/mcp-goose.txt")
+    local mcp_files=()
+    mapfile -t mcp_files < <(mcp_manifest_files mcp-goose.txt)
 
     # Always rewrite config.yaml so the endpoint/extensions reflect the current
     # project and infra. GOOSE_DISABLE_KEYRING sidesteps a DBus secret-service
