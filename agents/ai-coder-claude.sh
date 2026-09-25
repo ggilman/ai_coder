@@ -38,6 +38,8 @@ EOF
         rm -f "$HOME/.claude-config/CLAUDE.md"
         return 0
     fi
+    report_mcp_registration "/$WORKSPACE_DIR" standard "mcp-claude.txt"
+    report_mcp_registration "/$WORKSPACE_DIR" standard "mcp-claude.txt"
     cat > "$HOME/.claude-config/CLAUDE.md" <<'EOF'
 # File Editing Instructions
 

@@ -50,6 +50,7 @@ $(make_agent_mcp_json "/$WORKSPACE_DIR" opencode mcp-opencode.txt)
   }
 }
 EOF
+    report_mcp_registration "/$WORKSPACE_DIR" opencode "mcp-opencode.txt"
 }
 
 start_workbench() {

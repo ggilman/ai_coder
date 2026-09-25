@@ -59,6 +59,29 @@ _download_file() {
     fi
 }
 
+# Retry wrapper around _download_file for transient network failures.
+# Backoff: 5s, 15s, 45s (exponential, base 5). AI_CODER_DOWNLOAD_RETRIES
+# overrides the total attempt count (default 3). A checksum mismatch is NOT
+# retried — it's a corrupt/tamper signal, not a network blip (see _verify_sha256).
+_download_file_with_retry() {
+    local url="$1" dest="$2"
+    local max_attempts="${AI_CODER_DOWNLOAD_RETRIES:-3}"
+    local attempt=1
+    while true; do
+        if _download_file "$url" "$dest"; then
+            return 0
+        fi
+        rm -f "$dest"
+        if [ "$attempt" -ge "$max_attempts" ]; then
+            return 1
+        fi
+        local delay=$(( 5 * (3 ** (attempt - 1)) ))
+        echo -e "${YELLOW}⚠ Download failed — retrying (${attempt}/${max_attempts}) in ${delay}s…${NC}"
+        sleep "$delay"
+        attempt=$((attempt + 1))
+    done
+}
+
 # Pre-ed117a6 installs stored every model flat under $MODEL_STORAGE_DIR (no
 # per-family subfolder). If the family's expected per-family path is missing
 # but the old flat-named file is still on disk, move it into place instead of
@@ -83,7 +106,7 @@ download_draft_model() {
     local part="${dest}.part"
     rm -f "$part"
     echo -e "${ICON_GEAR} Downloading draft model ${CYAN}${MODEL_DRAFT_FILE}${NC} ${DIM}(speculative decoding)...${NC}"
-    if _download_file "$MODEL_DRAFT_URL" "$part"; then
+    if _download_file_with_retry "$MODEL_DRAFT_URL" "$part"; then
         _verify_sha256 "$part" "${MODEL_DRAFT_SHA256:-}" || return 1
         mv "$part" "$dest"
     else
@@ -151,7 +174,7 @@ download_model() {
 
     # Download to a .part file so an interrupted transfer never leaves a file
     # that looks like a complete model.
-    if _download_file "$model_url" "$part_path"; then
+    if _download_file_with_retry "$model_url" "$part_path"; then
         # Verify checksum when the family conf provides one (MODEL_<tier>_SHA256).
         _verify_sha256 "$part_path" "${model_sha:-}" || return 1
         mv "$part_path" "$model_path"

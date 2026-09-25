@@ -32,6 +32,7 @@ $(make_agent_mcp_json "/$WORKSPACE_DIR" standard mcp-qwencode.txt)
   }
 }
 EOF
+    report_mcp_registration "/$WORKSPACE_DIR" standard "mcp-qwencode.txt"
 }
 
 start_workbench() {

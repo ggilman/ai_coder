@@ -30,6 +30,23 @@ _resolve_docker_bin() {
     DOCKER_BIN="C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"
 }
 
+# Poll the Docker daemon until it answers `docker info` (or timeout).
+# Probes every 2s — the daemon can take a while to come up after a cold
+# Docker Desktop start, and a slow Linux daemon can also lag behind the CLI.
+# Returns 0 on the first successful probe, 1 on timeout.
+docker_ready() {
+    local timeout="${1:-90}"
+    local waited=0
+    while ! docker info >/dev/null 2>&1; do
+        if [ "$waited" -ge "$timeout" ]; then
+            return 1
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+    return 0
+}
+
 check_docker() {
     # Verify the docker binary is reachable from this shell before anything else.
     # On some machines Docker is installed but its CLI is not on the PATH when
@@ -44,31 +61,36 @@ check_docker() {
         return 1
     fi
 
+    # Daemon already up (the common path): the first probe succeeds and this
+    # is a no-op. The poller also covers the transient "Desktop is up but the
+    # daemon is still initializing" case on Windows and the slow-daemon-start
+    # case on Linux, which previously fell through to the start-Docker branch.
     if ! docker info >/dev/null 2>&1; then
         if [ "$IS_WSL" != "true" ] && [ "$IS_GITBASH" != "true" ]; then
-            echo -e "${RED}✘ Docker daemon is not running — start it and retry.${NC}"; return 1
-        fi
-        echo -e "${ICON_GEAR} Starting Docker Desktop..."
-        _resolve_docker_bin
-        # powershell.exe Start-Process rather than Git Bash's `start` shim: the
-        # shim invokes cmd.exe, which hijacks the console and detaches Git Bash
-        # from its own terminal window. Git Bash paths need cygpath -w first.
-        local _start_bin="$DOCKER_BIN"
-        [ "$IS_GITBASH" = "true" ] && _start_bin=$(cygpath -w "$DOCKER_BIN")
-        powershell.exe -Command "Start-Process '$_start_bin'" >/dev/null 2>&1 || {
-            echo -e "${RED}✘ Failed to start Docker${NC}"; return 1
-        }
-
-        local wait_count=0
-        echo -ne "${CYAN}◈ Waiting for Daemon...${NC} "
-        until docker info >/dev/null 2>&1; do
-            wait_count=$((wait_count + 1))
-            if [ "$wait_count" -gt 60 ]; then
-                echo -e " ${RED}TIMEOUT${NC}"; return 1
+            # Plain Linux: no Docker Desktop to start — wait briefly in case the
+            # daemon is mid-start, then fail with a distinct message.
+            if ! docker_ready 15; then
+                echo -e "${RED}✘ Docker daemon is not running — start it and retry.${NC}"; return 1
             fi
-            echo -ne "◈"; sleep 5
-        done
-        echo -e " ${GREEN}ONLINE${NC}"
+        else
+            echo -e "${ICON_GEAR} Starting Docker Desktop..."
+            _resolve_docker_bin
+            # powershell.exe Start-Process rather than Git Bash's `start` shim: the
+            # shim invokes cmd.exe, which hijacks the console and detaches Git Bash
+            # from its own terminal window. Git Bash paths need cygpath -w first.
+            local _start_bin="$DOCKER_BIN"
+            [ "$IS_GITBASH" = "true" ] && _start_bin=$(cygpath -w "$DOCKER_BIN")
+            powershell.exe -Command "Start-Process '$_start_bin'" >/dev/null 2>&1 || {
+                echo -e "${RED}✘ Failed to start Docker${NC}"; return 1
+            }
+            echo -ne "${CYAN}◈ Waiting for Daemon...${NC} "
+            if ! docker_ready 90; then
+                echo -e " ${RED}TIMEOUT${NC}"
+                echo -e "${RED}✘ Docker daemon not ready after 90s — is Docker Desktop fully started?${NC}"
+                return 1
+            fi
+            echo -e " ${GREEN}ONLINE${NC}"
+        fi
     fi
 
     # Daemon is up — run a basic command to confirm the CLI actually works in

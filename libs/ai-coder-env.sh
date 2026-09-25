@@ -222,6 +222,15 @@ _mcp_json_entry() {
     fi
 }
 
+# _mcp_each_server callback collecting registered server keys for the
+# registration report (report_mcp_registration in ai-coder-core.sh). Prints
+# each key on its own line — no JSON emission, so it can't change what gets
+# written, only surface what was registered.
+_mcp_report_entry() {
+    local key="$1"
+    printf '%s\n' "$key"
+}
+
 # Emit indented, comma-separated mcpServers JSON entries from one or more
 # server manifests (file format: see _mcp_each_server).
 # Usage: make_mcp_servers_json <workspace-path> <mode> <file1> [file2 ...]

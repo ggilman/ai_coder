@@ -35,6 +35,7 @@ EOF
     # env var, the file is not needed — delete it before each run so the CLI never
     # hits the corrupted-file error and always uses the env var cleanly.
     rm -f "$HOME/.gemini-config/gemini-credentials.json"
+    report_mcp_registration "/$WORKSPACE_DIR" standard "mcp-gemini.txt"
 }
 
 start_workbench() {

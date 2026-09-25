@@ -67,6 +67,7 @@ OPENAI_BASE_PATH: v1/chat/completions
 extensions:
 $(_mcp_each_server _goose_mcp_extension_yaml "/$WORKSPACE_DIR" "${mcp_files[@]}")
 EOF
+    report_mcp_registration "/$WORKSPACE_DIR" standard "mcp-goose.txt"
 }
 
 start_workbench() {
