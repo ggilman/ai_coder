@@ -7,6 +7,30 @@
 # image pull helpers used while preparing the workbench build.
 # ==============================================================================
 
+# Resolve DOCKER_BIN (unless preset) to the Docker Desktop launcher, only
+# needed when check_docker has to start the daemon. Docker Desktop may be a
+# machine-wide install (Program Files) or a per-user install (AppData\Local).
+# Candidates are probed in mount-path form; under WSL the match is converted
+# to the Windows backslash form powershell.exe Start-Process expects (the Git
+# Bash launch path converts with cygpath instead).
+_resolve_docker_bin() {
+    [ -n "$DOCKER_BIN" ] && return 0
+    local _c_root="/c" _cand
+    [ "$IS_WSL" = "true" ] && _c_root="/mnt/c"
+    for _cand in \
+        "$_c_root/Program Files/Docker/Docker/Docker Desktop.exe" \
+        "$WIN_HOME/AppData/Local/Programs/DockerDesktop/frontend/Docker Desktop.exe"; do
+        if [ -f "$_cand" ]; then
+            DOCKER_BIN="$_cand"
+            [ "$IS_WSL" = "true" ] && DOCKER_BIN=$(wslpath -w "$DOCKER_BIN")
+            return 0
+        fi
+    done
+    # No install found — keep the historical Program Files default so the
+    # failure mode (Start-Process error + manual-start hint) is unchanged.
+    DOCKER_BIN="C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"
+}
+
 check_docker() {
     # Verify the docker binary is reachable from this shell before anything else.
     # On some machines Docker is installed but its CLI is not on the PATH when
@@ -22,33 +46,19 @@ check_docker() {
     fi
 
     if ! docker info >/dev/null 2>&1; then
-        echo -e "${ICON_GEAR} Starting Docker Desktop..."
-        if [ "$IS_WSL" == "true" ]; then
-            if [ -n "$DOCKER_BIN" ]; then
-                powershell.exe -Command "Start-Process '$DOCKER_BIN'" >/dev/null 2>&1 || {
-                    echo -e "${RED}✘ Failed to start Docker${NC}"; return 1
-                }
-            else
-                powershell.exe -Command "Start-Process 'Docker Desktop'" >/dev/null 2>&1 || {
-                    echo -e "${RED}✘ Failed to start Docker${NC}"; return 1
-                }
-            fi
-        else
-            if [ -n "$DOCKER_BIN" ]; then
-                # Use powershell.exe Start-Process rather than Git Bash's `start` shim.
-                # The `start` shim invokes cmd.exe which hijacks the console and detaches
-                # Git Bash from its own terminal window. PowerShell launches the process
-                # detached without touching the calling terminal.
-                # cygpath converts the MSYS path to a Windows path for PowerShell.
-                local _start_bin="$DOCKER_BIN"
-                [ "$IS_GITBASH" = "true" ] && _start_bin=$(cygpath -w "$DOCKER_BIN")
-                powershell.exe -Command "Start-Process '$_start_bin'" >/dev/null 2>&1 || {
-                    echo -e "${RED}✘ Failed to start Docker${NC}"; return 1
-                }
-            else
-                echo -e "${RED}✘ Docker Desktop not found — start it manually and retry.${NC}"; return 1
-            fi
+        if [ "$IS_WSL" != "true" ] && [ "$IS_GITBASH" != "true" ]; then
+            echo -e "${RED}✘ Docker daemon is not running — start it and retry.${NC}"; return 1
         fi
+        echo -e "${ICON_GEAR} Starting Docker Desktop..."
+        _resolve_docker_bin
+        # powershell.exe Start-Process rather than Git Bash's `start` shim: the
+        # shim invokes cmd.exe, which hijacks the console and detaches Git Bash
+        # from its own terminal window. Git Bash paths need cygpath -w first.
+        local _start_bin="$DOCKER_BIN"
+        [ "$IS_GITBASH" = "true" ] && _start_bin=$(cygpath -w "$DOCKER_BIN")
+        powershell.exe -Command "Start-Process '$_start_bin'" >/dev/null 2>&1 || {
+            echo -e "${RED}✘ Failed to start Docker${NC}"; return 1
+        }
 
         local wait_count=0
         echo -ne "${CYAN}◈ Waiting for Daemon...${NC} "

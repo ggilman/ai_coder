@@ -42,9 +42,9 @@ Commands:
   --clean            Stop and remove all containers
   --rebuild          Remove all workbench images to force a full rebuild on next run
   --model            Reset model family, tool, Open WebUI, context level and KV cache type preferences, show selection menus
-   --models [family]   Dry-run model tier selection: hardware audit, VRAM reserves and which tier a launch would pick (no Docker, no launch)
-   --kv-probe [family|all] [--write]  Read each tier's KV cache size from its GGUF header (no download); --write records it in the family conf
-   --speed [family]   Generation-speed benchmark: run llama-bench on your model on a clean GPU and print t/s (llama.cpp engine only)
+  --models [family]  Dry-run model tier selection: hardware audit, VRAM reserves and which tier a launch would pick (no Docker, no launch)
+  --kv-probe [family|all] [--write]  Read each tier's KV cache size from its GGUF header (no download); --write records it in the family conf
+  --speed [family]   Generation-speed benchmark: run llama-bench on your model on a clean GPU and print t/s (llama.cpp engine only)
   --build-only       Build the workbench image then exit (no Hub or agent launch)
   --continue         Resume the previous agent session (passes the tool's native continue flag)
   --version          Show the installed release, its checkin date, and git branch status
@@ -63,15 +63,15 @@ HELP
     exit $? ;;
 --status)
     exec bash "$ROOT_DIR/ai-status.sh" ;;
-        --models)
-            cmd_models "${2:-}"
-            exit $? ;;
-        --kv-probe)
-            cmd_kv_probe "${@:2}"
-            exit $? ;;
-        --speed)
-            cmd_speed "${2:-}"
-            exit $? ;;
+--models)
+    cmd_models "${2:-}"
+    exit $? ;;
+--kv-probe)
+    cmd_kv_probe "${@:2}"
+    exit $? ;;
+--speed)
+    cmd_speed "${2:-}"
+    exit $? ;;
 --logs)
     cmd_logs "${@:2}"
     exit $? ;;
@@ -85,25 +85,17 @@ HELP
 --setup)
     cmd_setup
     exit 0 ;;
-esac
-
-if [[ "${1:-}" == "--rebuild" ]]; then
+--rebuild)
     rebuild_workbench_images
-    exit 0
-fi
-
-# Reject unknown commands before touching Docker/Hub state. Every recognized
-# command either already exited above (--help, --version, --doctor, --update,
-# --status, --logs, --models, --kv-probe, --speed, --clean, --fix-project, --setup, --rebuild) or is handled further down
-# (--model, --build-only, --continue) — anything else here is a typo and should
-# fail fast instead of running the full family/tool/Hub flow and tripping the
-# cleanup trap.
-case "${1:-}" in
-    ""|--model|--build-only|--continue) ;;
-    *)
-        echo -e "${RED}Unknown command: ${1}${NC}"
-        echo "Run: $(basename "$0") --help"
-        exit 1 ;;
+    exit 0 ;;
+# Handled further down, in the launch flow.
+""|--model|--build-only|--continue) ;;
+# Anything else is a typo — fail fast, before touching Docker/Hub state or
+# arming the cleanup trap.
+*)
+    echo -e "${RED}Unknown command: ${1}${NC}"
+    echo "Run: $(basename "$0") --help"
+    exit 1 ;;
 esac
 
 # --- [ MAIN ENTRY ] -----------------------------------------------------------

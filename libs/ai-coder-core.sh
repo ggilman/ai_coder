@@ -11,7 +11,7 @@ USER_DIR="$INSTALL_DIR/user"
 SETTINGS_FILE="$USER_DIR/settings.json"
 STATE_FILE="$USER_DIR/state.json"
 PACKAGES_DIR="$INSTALL_DIR/packages"
-DOCKER_BIN="${DOCKER_BIN:-}"   # default resolved below, after WIN_HOME is known
+DOCKER_BIN="${DOCKER_BIN:-}"   # default resolved on demand by _resolve_docker_bin (ai-coder-model.sh)
 GLOBAL_ENGINE_NAME="ai-hub-engine"
 GLOBAL_PROXY_NAME="ai-hub-proxy"
 GLOBAL_WEBUI_NAME="ai-hub-webui"
@@ -98,31 +98,6 @@ if [ "$IS_GITBASH" = "true" ]; then
     SMI="nvidia-smi.exe"
 else
     SMI="nvidia-smi"
-fi
-
-# Resolve the default Docker Desktop launcher path. Docker Desktop may be a
-# machine-wide install (Program Files) or a per-user install (AppData\Local).
-# Candidates are probed in mount-path form; under WSL the match is converted
-# to the Windows backslash form powershell.exe Start-Process expects (the Git
-# Bash launch path converts with cygpath instead).
-if [ -z "$DOCKER_BIN" ]; then
-    _docker_c_root="/c"
-    [ "$IS_WSL" = "true" ] && _docker_c_root="/mnt/c"
-    for _docker_candidate in \
-        "$_docker_c_root/Program Files/Docker/Docker/Docker Desktop.exe" \
-        "$WIN_HOME/AppData/Local/Programs/DockerDesktop/frontend/Docker Desktop.exe"; do
-        if [ -f "$_docker_candidate" ]; then
-            DOCKER_BIN="$_docker_candidate"
-            break
-        fi
-    done
-    if [ -z "$DOCKER_BIN" ]; then
-        # No install found — keep the historical Program Files default so the
-        # failure mode (Start-Process error + manual-start hint) is unchanged.
-        DOCKER_BIN="C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"
-    elif [ "$IS_WSL" = "true" ]; then
-        DOCKER_BIN=$(wslpath -w "$DOCKER_BIN")
-    fi
 fi
 
 # --- [ SUB-LIBRARIES ] --------------------------------------------------------
