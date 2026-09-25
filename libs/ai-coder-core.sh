@@ -172,23 +172,24 @@ configure_workbench() {
 # Usage: report_mcp_registration <workspace-path> <mode> <agent-mcp-file>
 report_mcp_registration() {
     local workspace="$1" mode="$2" agent_file="$3"
-    local keys=()
-    mapfile -t keys < <(mcp_manifest_files "$agent_file" | while IFS= read -r _f; do
-        _mcp_each_server _mcp_report_entry "$workspace" "$_f"
-    done)
-    local n=${#keys[@]}
+    local files=() keys=() all=()
+    mapfile -t files < <(mcp_manifest_files "$agent_file")
+    mapfile -t keys < <(_mcp_each_server _mcp_report_entry "$workspace" "${files[@]}")
+    # Same walk with isolation off, to count what isolation actually skipped.
+    mapfile -t all < <(NETWORK_INTERNAL=false _mcp_each_server _mcp_report_entry "$workspace" "${files[@]}")
+    local n=${#keys[@]} skipped=$(( ${#all[@]} - ${#keys[@]} ))
     if [ "$n" -eq 0 ]; then
         echo -e "${DIM}MCP: no servers registered${NC}"
-        return 0
+    else
+        local joined="" k
+        for k in "${keys[@]}"; do
+            [ -n "$joined" ] && joined+=", "
+            joined+="$k"
+        done
+        echo -e "${GREEN}✔${NC} MCP: ${n} server(s) registered: ${DIM}${joined}${NC}"
     fi
-    local joined="" k
-    for k in "${keys[@]}"; do
-        [ -n "$joined" ] && joined+=", "
-        joined+="$k"
-    done
-    echo -e "${GREEN}✔${NC} MCP: ${n} server(s) registered: ${DIM}${joined}${NC}"
-    if [ "${NETWORK_INTERNAL:-false}" = "true" ]; then
-        echo -e "${YELLOW}⚠${NC} ${DIM}Online MCP servers skipped (network isolation active).${NC}"
+    if [ "$skipped" -gt 0 ]; then
+        echo -e "${YELLOW}⚠${NC} ${DIM}${skipped} online MCP server(s) skipped (network isolation active).${NC}"
     fi
 }
 

@@ -33,14 +33,16 @@ _resolve_docker_bin() {
 # Poll the Docker daemon until it answers `docker info` (or timeout).
 # Probes every 2s — the daemon can take a while to come up after a cold
 # Docker Desktop start, and a slow Linux daemon can also lag behind the CLI.
-# Returns 0 on the first successful probe, 1 on timeout.
+# Returns 0 on the first successful probe, 1 on timeout. With a second arg,
+# prints it after each failed probe as a progress tick.
 docker_ready() {
-    local timeout="${1:-90}"
+    local timeout="${1:-90}" tick="${2:-}"
     local waited=0
     while ! docker info >/dev/null 2>&1; do
         if [ "$waited" -ge "$timeout" ]; then
             return 1
         fi
+        [ -n "$tick" ] && echo -ne "$tick"
         sleep 2
         waited=$((waited + 2))
     done
@@ -84,9 +86,11 @@ check_docker() {
                 echo -e "${RED}✘ Failed to start Docker${NC}"; return 1
             }
             echo -ne "${CYAN}◈ Waiting for Daemon...${NC} "
-            if ! docker_ready 90; then
+            # A cold Docker Desktop start (WSL VM boot) can take several minutes,
+            # so keep the pre-poller ~5 min budget rather than failing early.
+            if ! docker_ready 300 "◈"; then
                 echo -e " ${RED}TIMEOUT${NC}"
-                echo -e "${RED}✘ Docker daemon not ready after 90s — is Docker Desktop fully started?${NC}"
+                echo -e "${RED}✘ Docker daemon not ready after 300s — is Docker Desktop fully started?${NC}"
                 return 1
             fi
             echo -e " ${GREEN}ONLINE${NC}"

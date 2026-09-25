@@ -40,16 +40,16 @@ _download_file() {
         _await_download $! "$dest"
     elif [ -n "$http_proxy" ] && [ -n "$win_curl" ]; then
         local win_path; win_path=$(wslpath -w "$dest")
-        "$win_curl" -L --proxy "$http_proxy" --ssl-no-revoke --no-progress-meter --show-error -o "$win_path" "$url" &
+        "$win_curl" -fL --proxy "$http_proxy" --ssl-no-revoke --no-progress-meter --show-error -o "$win_path" "$url" &
         _await_download $! "$dest"
     elif [ -n "$http_proxy" ] && command -v curl >/dev/null 2>&1; then
-        curl -L --proxy "$http_proxy" --progress-bar --show-error -o "$dest" "$url"
+        curl -fL --proxy "$http_proxy" --progress-bar --show-error -o "$dest" "$url"
     elif [ -n "$win_curl" ]; then
         local win_path; win_path=$(wslpath -w "$dest")
-        "$win_curl" -L --no-progress-meter --show-error -o "$win_path" "$url" &
+        "$win_curl" -fL --no-progress-meter --show-error -o "$win_path" "$url" &
         _await_download $! "$dest"
     elif command -v curl >/dev/null 2>&1; then
-        curl -L --progress-bar --show-error -o "$dest" "$url"
+        curl -fL --progress-bar --show-error -o "$dest" "$url"
     elif command -v wget >/dev/null 2>&1; then
         local wget_proxy_args=()
         [ -n "$http_proxy" ] && wget_proxy_args=(-e "use_proxy=yes" -e "http_proxy=$http_proxy" -e "https_proxy=$http_proxy")
@@ -66,6 +66,7 @@ _download_file() {
 _download_file_with_retry() {
     local url="$1" dest="$2"
     local max_attempts="${AI_CODER_DOWNLOAD_RETRIES:-3}"
+    [[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] || max_attempts=3
     local attempt=1
     while true; do
         if _download_file "$url" "$dest"; then
