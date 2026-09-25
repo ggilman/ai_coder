@@ -373,10 +373,11 @@ setup_step_mcp_extras() {
     local _cur_extras; _cur_extras=$(read_setting mcp_extras)
     setup_toggle_pref mcp_extras "MCP extras" \
         "MCP extras — register the optional MCP servers with each agent?" \
-        "Extras: memory, sequential-thinking, conan, context7, brave-search, github, fetch, time.
+        "Extras: filesystem, memory, sequential-thinking, conan, context7, brave-search,
+github, fetch, time.
 Every registered server adds tool definitions to the model's context on every
 request — small local models get slower and worse at tool selection as the
-list grows. Core servers (filesystem, git, shell) are always registered." \
+list grows. Core servers (git, shell) are always registered." \
         "Enable MCP extras? [y/N]:" \
         "$_cur_extras" "$_cur_extras" \
         "${ICON_OK} MCP extras ${GREEN}enabled${NC} — applied on next launch (no rebuild needed)." \

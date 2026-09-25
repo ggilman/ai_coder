@@ -288,7 +288,7 @@ MCP (Model Context Protocol) servers extend what the AI agent can do — web sea
 | `packages/mcp-qwencode.txt` | Qwen Code image only |
 | `packages/mcp-goose.txt` | Goose image only — rendered into goose's YAML `extensions:` format instead of the JSON `mcpServers` the other agents use (see note below) |
 
-> **Why the core/extra split?** Every registered server's tool schemas are injected into the model's context on **every request**. A long tool list slows prompt processing and makes small local models measurably worse at choosing the right tool. Core covers day-to-day coding (filesystem, git, shell); enable the extras only if you use them. Toggling extras takes effect on the next launch — no rebuild needed, because extra servers are always pre-installed in the images.
+> **Why the core/extra split?** Every registered server's tool schemas are injected into the model's context on **every request**. A long tool list slows prompt processing and makes small local models measurably worse at choosing the right tool. Core covers day-to-day coding (git, shell — every agent brings its own file tools); enable the extras only if you use them. Toggling extras takes effect on the next launch — no rebuild needed, because extra servers are always pre-installed in the images.
 
 #### File format
 
@@ -314,13 +314,13 @@ Lines starting with `#` and blank lines are ignored.
 | Server | Key | What it does |
 | --- | --- | --- |
 | `mcp-server-git` | `git` | Git operations (status, diff, add, commit) within the workspace |
-| `@modelcontextprotocol/server-filesystem` | `filesystem` | Reliable whole-file read/write across the workspace |
 | `cli-mcp-server` | `shell` | Execute shell commands (cmake, make, ctest, bash scripts) scoped to the workspace |
 
 #### Optional servers (`mcp-extra.txt`) — enable via `--setup` → MCP extras
 
 | Server | Key | What it does |
 | --- | --- | --- |
+| `@modelcontextprotocol/server-filesystem` | `filesystem` | Whole-file read/write and multi-block edits — off by default because it duplicates each agent's own file tools, and small models confuse the two schemas |
 | `@modelcontextprotocol/server-memory` | `memory` | Persistent knowledge graph — survives across sessions within the container lifetime |
 | `@modelcontextprotocol/server-sequential-thinking` | `thinking` | Structured multi-step problem decomposition |
 | `conan-mcp` | `conan` | Manage C++ Conan dependencies, search Conan Center, check CVEs |

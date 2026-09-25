@@ -32,6 +32,12 @@ EOF
     # Write global instructions so Claude uses MCP tools for file I/O.
     # This avoids the str_replace exact-match failures that occur when editing
     # files with whitespace variance or after merge conflicts add marker lines.
+    # The filesystem server is an MCP extra, so without it the file is removed
+    # rather than left pointing at tools that aren't registered.
+    if [ "$(read_setting mcp_extras)" != "yes" ]; then
+        rm -f "$HOME/.claude-config/CLAUDE.md"
+        return 0
+    fi
     cat > "$HOME/.claude-config/CLAUDE.md" <<'EOF'
 # File Editing Instructions
 
