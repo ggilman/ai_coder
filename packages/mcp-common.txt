@@ -25,9 +25,6 @@
 # Git tools: status, diff, add, commit — used to navigate merge conflicts
 pip:mcp-server-git                          | git        | mcp-server-git                   | --repository {workspace}
 
-# Filesystem tools: reliable whole-file read/write bypassing str_replace fragility
-@modelcontextprotocol/server-filesystem       | filesystem | mcp-server-filesystem            | {workspace}
-
 # Shell command execution — run cmake, make, ctest, bash scripts directly from the agent.
 # Configured via env vars. ALLOWED_COMMANDS=all and ALLOWED_FLAGS=all permit any command/flag.
 # ALLOW_SHELL_OPERATORS=true enables &&, ||, |, > etc.

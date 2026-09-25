@@ -57,11 +57,12 @@ Each family configuration file in `config/families/` defines an ordered candidat
 - `MODEL_N_SHA256`: Expected sha256 (blank = skip verification).
 - `MODEL_N_WEIGHTS_GB`: Ceiling of model file size in GB; `0` = unconditional fallback.
 - `MODEL_N_LAYERS`: Total transformer layer count (HF `config.json` `num_hidden_layers`). Optional; required for the entry to be reachable via partial CPU offload (see below).
+- `MODEL_N_KV` / `MODEL_N_KV_SWA`: The model's KV cache geometry — cache elements per token as `<K>/<V>` over full-context layers, and `<K>/<V>@<window>` over sliding-window layers (which only ever cache the last `<window>` tokens). Optional, and never hand-written: `./ai-coder --kv-probe <family|all> --write` reads them from each tier's GGUF metadata header with a ranged HTTP request (no model download). KV size depends on the base model's architecture, not its quant, and one family's tiers often mix base models with KV costs several times apart, so each tier gets its own. Tiers without them fall back to the family's `MODEL_KV_BYTES_PER_TOKEN` (a q8_0 bytes-per-token estimate, default 96 KiB). SGLang candidates get the same fields (`MODEL_SGL_N_KV`/`MODEL_SGL_N_KV_SWA`, plus `MODEL_SGL_N_MAX_CTX`), read from the repo's `config.json` and laid out the way SGLang sizes its KV pool — see the field reference in `config/ai-coder-model.conf`.
 
-The launcher normally picks the first (best) entry whose `WEIGHTS_GB` fits in effective VRAM with all layers on GPU. With partial CPU offload enabled (default), an entry ranked higher can win instead when at least the configured percentage of it fits (default 90%) — llama.cpp then runs the shortfall's worth of layers on the CPU (`-ngl` below the full count). This only happens between genuinely different models (detected by differing `MODEL_N_LAYERS`), never to reach a higher quant of the same model — each percent of layers on CPU costs roughly 9% generation speed, which is a bad trade for a quant bump.
+The launcher normally picks the first (best) entry whose `WEIGHTS_GB` plus its own KV cache (at the chosen context size and KV cache type) fits in effective VRAM with all layers on GPU. After a fresh engine start, the launcher compares the KV cache size llama.cpp logs against that estimate and warns if it's more than 10% larger; `--status` shows the measured size. Under SGLang, which fills whatever VRAM is left with KV cache, it instead warns when that pool can't hold one full-length context. With partial CPU offload enabled (default), an entry ranked higher can win instead when at least the configured percentage of it fits (default 90%) — llama.cpp then runs the shortfall's worth of layers on the CPU (`-ngl` below the full count). This only happens between genuinely different models (detected by differing `MODEL_N_LAYERS`), never to reach a higher quant of the same model — each percent of layers on CPU costs roughly 9% generation speed, which is a bad trade for a quant bump.
 
 **Speculative Decoding (Optional):**
-- `MODEL_SPEC_STRATEGY`: `none` (external draft file via `--model-draft`, no `--spec-type` flag), `ngram` (hash-based, no draft file needed), or `mtp` (`--spec-type draft-mtp`, forces `--parallel 1`). Usually paired with draft heads baked into the main GGUF (no `MODEL_DRAFT_FILE`, e.g. Gemma 4/Qwen3.6 MTP); Qwen3.8 is the one exception pairing `mtp` with a real external `MODEL_DRAFT_FILE`.
+- `MODEL_SPEC_STRATEGY`: `none` (external draft file via `--model-draft`, no `--spec-type` flag), `ngram` (hash-based, no draft file needed), or `mtp` (`--spec-type draft-mtp`, forces `--parallel 1`). Usually paired with draft heads baked into the main GGUF (no `MODEL_DRAFT_FILE`, e.g. Qwen3.6 MTP) — skipped automatically when the GGUF has no MTP layers; Qwen3.8 is the one exception pairing `mtp` with a real external `MODEL_DRAFT_FILE`.
 - `MODEL_SPEC_DRAFT_N_MAX`: `--spec-draft-n-max` value for `MODEL_SPEC_STRATEGY=mtp` families (default 3) — verify against the specific model's docs rather than assuming the default fits.
 - `MODEL_DRAFT_FILE`: Draft GGUF filename. With `MODEL_SPEC_STRATEGY=mtp` and this set (Qwen3.8), the `spec_decode` setting also gates whether the mtp flags are passed at all — see `libs/ai-coder-workbench.sh`.
 - `MODEL_DRAFT_URL`: Direct download URL.
@@ -110,7 +111,7 @@ A single launcher for Claude Code, OpenCode, Aider, Gemini CLI, Qwen Code, and G
 - **Open WebUI sidecar**: If host port exposure is enabled in `--setup`, a third question asks whether to also start Open WebUI (`http://localhost:3000`) alongside your coding agent, so you can chat with the same local model while you code. The answer is saved like the other preferences and re-asked via `--model`. It shuts down together with the Hub.
 - **Workspace mount**: Your project folder is mounted into the container as `/<foldername>` (e.g. `/my-project`), so the AI tool starts directly in your project directory.
 - **Auto-cleanup**: When you exit the tool, the workbench container is stopped. If it was the last active spoke, the Hub (engine + proxy) is also shut down automatically — unless the *keep hub warm* setting is enabled (`--setup`), which leaves the engine loaded so the next session starts in seconds. A warm hub auto-stops after a configurable idle timeout (default 60 min, `0` = never) to release GPU VRAM; stop it immediately with `--clean`.
-- **Agent-free commands**: `--help`, `--status`, `--clean`, `--rebuild`, `--model`, `--models`, `--speed`, and `--setup` run immediately without requiring a tool to be selected.
+- **Agent-free commands**: `--help`, `--status`, `--clean`, `--rebuild`, `--model`, `--models`, `--kv-probe`, `--speed`, and `--setup` run immediately without requiring a tool to be selected.
 - **Setup required**: `--setup` must be run at least once before launching. This ensures all preferences are configured intentionally.
 
 **Commands:**
@@ -120,6 +121,7 @@ A single launcher for Claude Code, OpenCode, Aider, Gemini CLI, Qwen Code, and G
 | `--continue` | Resume the previous agent session — passes the tool's native continue flag (`--continue` for Claude/OpenCode/Aider, `--resume` for Gemini/Qwen Code/Goose) |
 | `--model` | Reset model family, tool, Open WebUI, the model-sizing preferences (context level, KV cache, VRAM overhead, CPU offload threshold / SGLang memory fraction) and thinking mode; show the selection menus again |
 | `--models [family]` | Dry-run model tier selection: hardware audit, VRAM reserves, and which tier a launch would pick — no Docker, no launch |
+| `--kv-probe [family\|all] [--write]` | Read each tier's KV cache geometry — from its GGUF metadata header for llama.cpp (local file or a ranged download — never the whole model), from its repo's `config.json` for SGLang — and compare the resulting KV size with the conf's current estimate; `--write` records it in the family conf (`MODEL_N_KV`/`MODEL_N_KV_SWA`, `MODEL_SGL_N_*`) |
 | `--speed [family]` | Generation-speed benchmark: run `llama-bench` on your model on a clean GPU and print tokens/s (requires the *generation speed tracking* setup option; llama.cpp engine only) |
 | `--status` | Show the real-time GPU and engine status dashboard |
 | `--setup` | First-time and re-configuration wizard: alias, proxy, network isolation, inference engine, GPU mode, git identity |
@@ -145,7 +147,7 @@ The Hub engine can run on either of two inference servers, chosen in `--setup` (
 | --- | --- | --- |
 | Model format | GGUF files | Hugging Face repos (AWQ / GPTQ / FP8 / MXFP4 safetensors) |
 | Families | All | Only families that define `MODEL_SGL_*` candidates — currently **Gemma 4**, **Qwen3.8**, **Qwen3**, **Qwen 2.5 Coder**, and **gpt-oss-20b** (Qwen3.8's smallest SGLang build is ~19.5 GB, so it needs a ~24 GB+ GPU) |
-| Image | `ghcr.io/ggml-org/llama.cpp:server-cuda` | `lmsysorg/sglang:v0.5.20-runtime` (~15 GB; CUDA 13, so Blackwell / RTX 50-series works) |
+| Image | `ghcr.io/ggml-org/llama.cpp:server-cuda-<LLAMA_CPP_VERSION>` (pinned) | `lmsysorg/sglang:v0.5.20-runtime` (~15 GB; CUDA 13, so Blackwell / RTX 50-series works) |
 | Multi-GPU | Uneven `--tensor-split` by free VRAM | Even tensor parallel (`--tp`), power-of-two GPU count |
 | CPU offload, speculative decoding, `--speed` | Yes | No — hidden in `--setup`/`--model` and skipped |
 | VRAM sizing | Overhead reserve (`--model`) | Memory fraction (`--model`, default 0.85) — SGLang pre-allocates that share of each GPU for weights + KV pool |
@@ -164,11 +166,11 @@ Notes:
 
 The *asymmetric* KV cache option in `--model` keeps keys at `q8_0` and stores values at `q4_0`, which uses about 25% less KV VRAM than `q8_0`/`q8_0` for much less quality loss than `q4_0`/`q4_0` (keys are the quantization-sensitive side).
 
-llama.cpp only compiles CUDA Flash Attention kernels for the K/V pairs listed in its `GGML_CUDA_FA_QUANTS` build option. The default list is `q4_0-q4_0;q8_0-q8_0;f16-f16;bf16-bf16`, so on the stock `server-cuda` image a mismatched pair falls back to a much slower path. Choosing asymmetric therefore builds a local image, `ai-coder/llama.cpp:server-cuda-asym`, the first time it's needed:
+llama.cpp only compiles CUDA Flash Attention kernels for the K/V pairs listed in its `GGML_CUDA_FA_QUANTS` build option. The default list is `q4_0-q4_0;q8_0-q8_0;f16-f16;bf16-bf16`, so on the stock `server-cuda` image a mismatched pair falls back to a much slower path. Choosing asymmetric therefore builds a local image, `ai-coder/llama.cpp:server-cuda-asym-<version>`, the first time it's needed:
 
 - It runs llama.cpp's own `.devops/cuda.Dockerfile` straight from GitHub (no local checkout), adds `q8_0-q4_0` to the kernel list, and compiles only for the GPU architectures `nvidia-smi` reports.
 - The build is one-time and usually takes 10–30 minutes. It runs before the Hub starts; a second session launched meanwhile waits for it. nvcc needs a lot of memory, so if the build is killed for running out of memory, give Docker Desktop more RAM.
-- It builds the latest llama.cpp release; export `LLAMA_BUILD_REF=<tag>` to pin one. `--rebuild` removes the image so the next asymmetric launch builds a newer llama.cpp. `--doctor` shows which llama.cpp release the image was built from.
+- It builds the same pinned llama.cpp release the stock images use (`LLAMA_CPP_VERSION` in `libs/ai-coder-core.sh`, overridable by exporting it), so every KV mode runs identical llama.cpp. Bumping the version pulls new stock images and builds a new asym image on the next launch; `--rebuild` removes the asym image (every version's tag) to force a rebuild. `--doctor` shows which llama.cpp release the image was built from.
 - It needs internet access, so it won't build with network isolation on. An image built earlier (or loaded from an offline bundle, which includes it when present) still works.
 - The q8_0/q8_0 and q4_0/q4_0 options keep using the stock image.
 
@@ -214,7 +216,7 @@ When enabled (`--setup`, default **on**), the engine loads a small *draft model*
 
 Details:
 - Only applies to model families that define an external draft in their family conf (`MODEL_DRAFT_FILE`/`URL`). Currently: **Qwen3** (Qwen3-0.6B, ~0.6 GB — drafts for every tier since the whole family shares one tokenizer, `MODEL_SPEC_STRATEGY=none`) and **Qwen3.8** (a small companion draft-head file from the same upstream repo, `MODEL_SPEC_STRATEGY=mtp` — this pairing hasn't been verified against a live llama.cpp run; if it errors on startup, switch that family's `MODEL_SPEC_STRATEGY` to `none`). Other families note in their conf why no draft is wired.
-- Separately, **Gemma 4** and **Qwen3.6 MTP** bake their MTP draft heads into the main GGUF (no `MODEL_DRAFT_FILE`) and always use them regardless of this setting — there's no toggle for those, and they force `--parallel 1` since MTP doesn't support concurrent requests. `MODEL_SPEC_DRAFT_N_MAX` (default 3) tunes the draft depth per family when needed.
+- Separately, **Qwen3.6 MTP** bakes its MTP draft heads into the main GGUF (no `MODEL_DRAFT_FILE`) and always uses them regardless of this setting — there's no toggle for it, and it forces `--parallel 1` since MTP doesn't support concurrent requests. `MODEL_SPEC_DRAFT_N_MAX` (default 3) tunes the draft depth per family when needed.
 - The draft is downloaded once (checksum-verified), synced into the fast-storage volume alongside the main model, and reserved (~1-2 GB, `MODEL_DRAFT_VRAM_GB`) in the VRAM tier calculation.
 - If the draft can't be downloaded, the session degrades gracefully to normal decoding.
 - Toggling the setting takes effect at the next launch via an automatic engine restart.
@@ -286,7 +288,7 @@ MCP (Model Context Protocol) servers extend what the AI agent can do — web sea
 | `packages/mcp-qwencode.txt` | Qwen Code image only |
 | `packages/mcp-goose.txt` | Goose image only — rendered into goose's YAML `extensions:` format instead of the JSON `mcpServers` the other agents use (see note below) |
 
-> **Why the core/extra split?** Every registered server's tool schemas are injected into the model's context on **every request**. A long tool list slows prompt processing and makes small local models measurably worse at choosing the right tool. Core covers day-to-day coding (filesystem, git, shell); enable the extras only if you use them. Toggling extras takes effect on the next launch — no rebuild needed, because extra servers are always pre-installed in the images.
+> **Why the core/extra split?** Every registered server's tool schemas are injected into the model's context on **every request**. A long tool list slows prompt processing and makes small local models measurably worse at choosing the right tool. Core covers day-to-day coding (git, shell — every agent brings its own file tools); enable the extras only if you use them. Toggling extras takes effect on the next launch — no rebuild needed, because extra servers are always pre-installed in the images.
 
 #### File format
 
@@ -312,13 +314,13 @@ Lines starting with `#` and blank lines are ignored.
 | Server | Key | What it does |
 | --- | --- | --- |
 | `mcp-server-git` | `git` | Git operations (status, diff, add, commit) within the workspace |
-| `@modelcontextprotocol/server-filesystem` | `filesystem` | Reliable whole-file read/write across the workspace |
 | `cli-mcp-server` | `shell` | Execute shell commands (cmake, make, ctest, bash scripts) scoped to the workspace |
 
 #### Optional servers (`mcp-extra.txt`) — enable via `--setup` → MCP extras
 
 | Server | Key | What it does |
 | --- | --- | --- |
+| `@modelcontextprotocol/server-filesystem` | `filesystem` | Whole-file read/write and multi-block edits — off by default because it duplicates each agent's own file tools, and small models confuse the two schemas |
 | `@modelcontextprotocol/server-memory` | `memory` | Persistent knowledge graph — survives across sessions within the container lifetime |
 | `@modelcontextprotocol/server-sequential-thinking` | `thinking` | Structured multi-step problem decomposition |
 | `conan-mcp` | `conan` | Manage C++ Conan dependencies, search Conan Center, check CVEs |

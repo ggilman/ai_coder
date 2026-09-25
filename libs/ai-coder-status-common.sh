@@ -49,6 +49,33 @@ get_gpu_stats() {
         --format=csv,noheader,nounits 2>/dev/null || return 1
 }
 
+# Trim leading/trailing whitespace without forking (runs per field per frame).
+_status_trim() {
+    local s="$1"
+    s="${s#"${s%%[![:space:]]*}"}"
+    printf '%s' "${s%"${s##*[![:space:]]}"}"
+}
+
+# get_gpu_stats, cleaned up for display: one "id|name|util|used|total|temp|
+# power|mem%" line per GPU, fields trimmed. GPUs whose memory can't be read
+# are skipped, and a non-numeric used/util ("[N/A]" on some GPUs) reads 0 so
+# callers' arithmetic can't trip set -e. Returns 1 like get_gpu_stats.
+get_gpu_rows() {
+    local _raw; _raw=$(get_gpu_stats) || return 1
+    local id name util used total temp pwr
+    while IFS=',' read -r id name util used total temp pwr; do
+        total=$(_status_trim "$total")
+        case "$total" in ''|*[!0-9]*) continue ;; esac
+        [ "$total" -gt 0 ] || continue
+        used=$(_status_trim "$used"); util=$(_status_trim "$util")
+        case "$used" in ''|*[!0-9]*) used=0 ;; esac
+        case "$util" in ''|*[!0-9]*) util=0 ;; esac
+        printf '%s|%s|%s|%s|%s|%s|%s|%s\n' "$(_status_trim "$id")" "$(_status_trim "$name")" \
+            "$util" "$used" "$total" "$(_status_trim "$temp")" "$(_status_trim "$pwr")" \
+            "$(( used * 100 / total ))"
+    done <<< "$_raw"
+}
+
 # Renders one colorized progress bar. Palette-agnostic: callers pass their own
 # escape codes so each dashboard keeps its own visual theme (legacy uses bold
 # graphics.sh colors + DIM empty segments; the gum dashboard uses a thinner,
@@ -93,20 +120,33 @@ get_network_isolation_status() {
 # Usage: get_engine_footprint <script_dir> — echoes the running model's size
 # line, e.g. "7.3GB model, 4.0GB KV (128k q8_0), ~11.3GB VRAM", from the
 # figures start_hub_engine records in user/state.json (estimates: compute
-# buffers aren't included). Echoes nothing when they're unavailable (no jq,
-# or an engine started before these were recorded).
+# buffers aren't included). The KV figure is what llama.cpp logged allocating
+# when record_engine_kv_measurement found it, else the estimate. Echoes
+# nothing when they're unavailable (no jq, or an engine started before these
+# were recorded).
 get_engine_footprint() {
     local _state_file="$1/user/state.json" _jq="" _vals
     resolve_jq_cmd &>/dev/null && _jq="$JQ_CMD"
     [ -n "$_jq" ] && [ -f "$_state_file" ] || return 0
-    _vals=$("$_jq" -r '[.engine_weights_bytes, .engine_kv_bytes, .engine_vram_bytes, .engine_ctx, .engine_kv]
-        | map(. // "") | join(" ")' "$_state_file" 2>/dev/null | tr -d '\r') || return 0
-    local _w _kv _vram _ctx _kvt
-    read -r _w _kv _vram _ctx _kvt <<< "$_vals"
+    # "-" for missing values keeps the fields positional for read.
+    _vals=$("$_jq" -r '[.engine_weights_bytes, .engine_kv_bytes, .engine_vram_bytes, .engine_ctx, .engine_kv, .engine_kv_measured_bytes, .engine_kv_pool_tokens]
+        | map(if . == null or . == "" then "-" else . end) | join(" ")' "$_state_file" 2>/dev/null | tr -d '\r') || return 0
+    local _w _kv _vram _ctx _kvt _kvm _pool
+    read -r _w _kv _vram _ctx _kvt _kvm _pool <<< "$_vals"
     case "${_w:-}${_kv:-}${_vram:-}" in ''|*[!0-9]*) return 0 ;; esac
-    awk -v w="$_w" -v k="$_kv" -v v="$_vram" -v c="${_ctx:-0}" -v t="${_kvt:-?}" 'BEGIN{
+    case "${_ctx:-}" in ''|*[!0-9]*) _ctx=0 ;; esac
+    [ "${_kvt:--}" = "-" ] && _kvt="?"
+    # Prefer the size llama.cpp reported allocating over the estimate.
+    case "${_kvm:-}" in
+        ''|*[!0-9]*) ;;
+        *) _vram=$(( _vram - _kv + _kvm )); _kv=$_kvm ;;
+    esac
+    # SGLang: how many tokens its KV pool actually holds.
+    case "${_pool:-}" in ''|*[!0-9]*) _pool=0 ;; esac
+    awk -v w="$_w" -v k="$_kv" -v v="$_vram" -v c="$_ctx" -v t="$_kvt" -v p="$_pool" 'BEGIN{
         g=1073741824
         printf "%.1fGB model, %.1fGB KV (%dk %s), ~%.1fGB VRAM", w/g, k/g, c/1024, t, v/g
+        if (p > 0) printf ", KV pool %dk tokens", p/1024
     }'
 }
 

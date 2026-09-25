@@ -51,18 +51,20 @@ get_visible_length() {
 # ai-status.sh (both read the globals defined by ai-coder-status-common.sh).
 source "$SCRIPT_DIR/libs/ai-coder-engine-status.sh"
 
+# Prints <text> as one dashboard row between the ║ borders, padded to the
+# box width by its rendered (not character) length.
+box_line() {
+    local _len _pad
+    _len=$(get_visible_length "$1")
+    _pad=$(( 70 - _len ))
+    [ "$_pad" -lt 0 ] && _pad=0
+    printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$1" "$_pad" "" "$CYAN" "$NC"
+}
+
 # Draws the dashboard header
 draw_header() {
-    # Top border
     printf "%b╔%s╗%b\n" "$CYAN" "$SEPARATOR_LINE" "$NC"
-
-    # Content line
-    local content_text="$BOLD$WHITE$BG_BLUE  AI HUB COMMAND CENTER  $NC $DIM v1.0$NC"
-    local content_len=$(get_visible_length "$content_text")
-    local pad=$((70 - content_len))
-    [ "$pad" -lt 0 ] && pad=0
-
-    printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$content_text" "$pad" "" "$CYAN" "$NC"
+    box_line "$BOLD$WHITE$BG_BLUE  AI HUB COMMAND CENTER  $NC $DIM v1.0$NC"
 }
 
 # Draws a separator line
@@ -82,72 +84,19 @@ main() {
     while true; do
         printf "\033[H"
         draw_header
-        
+
         # Display GPU stats
-        if gpu_data=$(get_gpu_stats); then
-            echo "$gpu_data" | while IFS=',' read -r id name util m_used m_total temp pwr; do
-                # Trim whitespace
-                id=$(echo "$id" | xargs)
-                name=$(echo "$name" | xargs)
-                util=$(echo "$util" | xargs)
-                m_used=$(echo "$m_used" | xargs)
-                m_total=$(echo "$m_total" | xargs)
-                temp=$(echo "$temp" | xargs)
-                pwr=$(echo "$pwr" | xargs)
-
-                # Validate data - skip if empty or zero. Fields can read
-                # "[N/A]" on some GPUs; non-numeric values would crash the
-                # arithmetic below (and kill the dashboard under set -e).
-                case "$m_total" in ''|*[!0-9]*) continue ;; esac
-                if [ "$m_total" -le 0 ]; then
-                    continue
-                fi
-                case "$m_used" in ''|*[!0-9]*) m_used=0 ;; esac
-                case "$util"   in ''|*[!0-9]*) util=0   ;; esac
-
-                # Calculate memory percentage
-                m_perc=$((m_used * 100 / m_total))
-
-                header_text="$BOLD🎮 GPU $id: $name $NC"
-                header_len=$(get_visible_length "$header_text")
-                pad=$((70 - header_len))
-                [ "$pad" -lt 0 ] && pad=0
-                printf "%b║%b%b%*s%b║%b\n" \
-                    "$CYAN" "$NC" "$header_text" "$pad" "" "$CYAN" "$NC"
-
-                # VRAM Line
-                vram_bar_part=$(render_progress_bar "$m_perc" "$BAR_WIDTH" "$GREEN" "$YELLOW" "$RED" "$DIM" "$NC")
-                vram_text="💾  VRAM: ${vram_bar_part} ${m_perc}% (${m_used} MB)"
-                vram_len=$(get_visible_length "$vram_text")
-                vram_pad=$((70 - vram_len))
-                [ "$vram_pad" -lt 0 ] && vram_pad=0
-                printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$vram_text" "$vram_pad" "" "$CYAN" "$NC"
-
-                # Load Line
-                load_bar_part=$(render_progress_bar "$util" "$BAR_WIDTH" "$GREEN" "$YELLOW" "$RED" "$DIM" "$NC")
-                load_text="📊  Load: ${load_bar_part} ${util}%"
-                load_len=$(get_visible_length "$load_text")
-                load_pad=$((70 - load_len))
-                [ "$load_pad" -lt 0 ] && load_pad=0
-                printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$load_text" "$load_pad" "" "$CYAN" "$NC"
-
-                # Temp & Power Line
-                tp_text="🌡️ ${temp}°C | ⚡ ${pwr}W"
-                tp_len=$(get_visible_length "$tp_text")
-                tp_pad=$((70 - tp_len))
-                [ "$tp_pad" -lt 0 ] && tp_pad=0
-                printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$tp_text" "$tp_pad" "" "$CYAN" "$NC"
-
-                # Spacer
-                printf "%b║%b%b%b║%b\n" "$CYAN" "$NC" "$(printf ' %.0s' {1..70})" "$CYAN" "$NC"
-            done
+        if gpu_data=$(get_gpu_rows); then
+            while IFS='|' read -r id name util m_used m_total temp pwr m_perc; do
+                [ -n "$id" ] || continue
+                box_line "$BOLD🎮 GPU $id: $name $NC"
+                box_line "💾  VRAM: $(render_progress_bar "$m_perc" "$BAR_WIDTH" "$GREEN" "$YELLOW" "$RED" "$DIM" "$NC") ${m_perc}% (${m_used} MB)"
+                box_line "📊  Load: $(render_progress_bar "$util" "$BAR_WIDTH" "$GREEN" "$YELLOW" "$RED" "$DIM" "$NC") ${util}%"
+                box_line "🌡️ ${temp}°C | ⚡ ${pwr}W"
+                box_line ""
+            done <<< "$gpu_data"
         else
-            err_text="✘ Failed to query GPU stats"
-            err_colored="${RED}${err_text}${NC}"
-            err_len=$(get_visible_length "$err_colored")
-            err_pad=$((70 - err_len))
-            [ "$err_pad" -lt 0 ] && err_pad=0
-            printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$err_colored" "$err_pad" "" "$CYAN" "$NC"
+            box_line "${RED}✘ Failed to query GPU stats${NC}"
         fi
 
         draw_separator
@@ -160,11 +109,10 @@ main() {
             # Engine is up. Slot detail is best-effort: /slots stalls while a
             # prompt is being processed, which just means "busy", not offline.
             get_engine_slots
-            slots_raw=$(cat "$_SLOTS_TMP" 2>/dev/null || true)
+            slot_counts=$(get_engine_slot_counts)
             rm -f "$_SLOTS_TMP"
-            if [ -n "$slots_raw" ]; then
-                total_slots=$(echo "$slots_raw" | { grep -o '"id"' || true; } | wc -l | xargs)
-                active_slots=$(echo "$slots_raw" | { grep -o '"is_processing":true' || true; } | wc -l | xargs)
+            if [ -n "$slot_counts" ]; then
+                read -r total_slots active_slots <<< "$slot_counts"
                 slot_info="${total_slots} slot(s) | ${active_slots} active"
             elif [ "$ENGINE_KIND" = "sglang" ]; then
                 slot_info="SGLang"
@@ -173,63 +121,29 @@ main() {
             fi
             model_name=$(get_model_name)
 
-            health_text="🚀 ${BOLD}ENGINE HUB: ${GREEN}● Online${NC}${BOLD} | ${slot_info}${NC}"
-            health_len=$(get_visible_length "$health_text")
-            health_pad=$((70 - health_len))
-            [ "$health_pad" -lt 0 ] && health_pad=0
-            printf "%b║%b%b%*s%b║%b\n" \
-                "$CYAN" "$NC" "$health_text" "$health_pad" "" "$CYAN" "$NC"
-
-            if [ -n "$model_name" ]; then
-                model_text="🤖  Model: ${CYAN}${model_name}${NC}"
-                model_len=$(get_visible_length "$model_text")
-                model_pad=$((70 - model_len))
-                [ "$model_pad" -lt 0 ] && model_pad=0
-                printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$model_text" "$model_pad" "" "$CYAN" "$NC"
-            fi
+            box_line "🚀 ${BOLD}ENGINE HUB: ${GREEN}● Online${NC}${BOLD} | ${slot_info}${NC}"
+            [ -n "$model_name" ] && box_line "🤖  Model: ${CYAN}${model_name}${NC}"
 
             size_text=$(get_engine_footprint "$SCRIPT_DIR")
-            if [ -n "$size_text" ]; then
-                size_text="💾  Size: ${size_text}"
-                size_len=$(get_visible_length "$size_text")
-                size_pad=$((70 - size_len))
-                [ "$size_pad" -lt 0 ] && size_pad=0
-                printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$size_text" "$size_pad" "" "$CYAN" "$NC"
-            fi
+            [ -n "$size_text" ] && box_line "💾  Size: ${size_text}"
 
             speed_text=$(get_engine_speed)
-            if [ -n "$speed_text" ]; then
-                speed_text="⚡  Speed: ${speed_text}"
-                speed_len=$(get_visible_length "$speed_text")
-                speed_pad=$((70 - speed_len))
-                [ "$speed_pad" -lt 0 ] && speed_pad=0
-                printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$speed_text" "$speed_pad" "" "$CYAN" "$NC"
-            fi
+            [ -n "$speed_text" ] && box_line "⚡  Speed: ${speed_text}"
 
             # Network isolation status
-            _iso_val=$(get_network_isolation_status "$SCRIPT_DIR")
-            if [ "$_iso_val" = "yes" ]; then
-                net_text="🌐  Network: ${YELLOW}⊘ Isolated${NC}${DIM} (ai-engineering-isolated)${NC}"
+            if [ "$(get_network_isolation_status "$SCRIPT_DIR")" = "yes" ]; then
+                box_line "🌐  Network: ${YELLOW}⊘ Isolated${NC}${DIM} (ai-engineering-isolated)${NC}"
             else
-                net_text="🌐  Network: ${GREEN}◎ Standard${NC}${DIM} (ai-engineering-net)${NC}"
+                box_line "🌐  Network: ${GREEN}◎ Standard${NC}${DIM} (ai-engineering-net)${NC}"
             fi
-            net_len=$(get_visible_length "$net_text")
-            net_pad=$((70 - net_len))
-            [ "$net_pad" -lt 0 ] && net_pad=0
-            printf "%b║%b%b%*s%b║%b\n" "$CYAN" "$NC" "$net_text" "$net_pad" "" "$CYAN" "$NC"
         else
             # Non-empty /health without "ok" means the server is up but the
             # model is still loading; empty means unreachable.
             if [ -n "$health_raw" ]; then
-                health_text="🚀 ${BOLD}ENGINE HUB: ${YELLOW}● Loading model...${NC}"
+                box_line "🚀 ${BOLD}ENGINE HUB: ${YELLOW}● Loading model...${NC}"
             else
-                health_text="🚀 ${BOLD}ENGINE HUB: ${RED}● Offline${NC}"
+                box_line "🚀 ${BOLD}ENGINE HUB: ${RED}● Offline${NC}"
             fi
-            health_len=$(get_visible_length "$health_text")
-            health_pad=$((70 - health_len))
-            [ "$health_pad" -lt 0 ] && health_pad=0
-            printf "%b║%b%b%*s%b║%b\n" \
-                "$CYAN" "$NC" "$health_text" "$health_pad" "" "$CYAN" "$NC"
         fi
 
         draw_footer
@@ -238,5 +152,4 @@ main() {
         sleep "$UPDATE_INTERVAL"
     done
 }
-
 main

@@ -232,17 +232,24 @@ make_mcp_servers_json() {
     _mcp_each_server _mcp_json_entry "$workspace" "$@" | sed '$!s/$/,/'
 }
 
-# Emit the mcpServers JSON entries an agent should register this launch:
-# core servers (mcp-common.txt), optional extras (mcp-extra.txt, only when
-# enabled via --setup), and the agent's own server file.
+# Print (one path per line) the server manifests an agent registers this
+# launch: core servers (mcp-common.txt), optional extras (mcp-extra.txt, only
+# when enabled via --setup), and the agent's own server file.
+# Usage: mcp_manifest_files <agent-mcp-file-basename>
+mcp_manifest_files() {
+    echo "$PACKAGES_DIR/mcp-common.txt"
+    if [ "$(read_setting mcp_extras)" = "yes" ]; then
+        echo "$PACKAGES_DIR/mcp-extra.txt"
+    fi
+    echo "$PACKAGES_DIR/$1"
+}
+
+# Emit the mcpServers JSON entries an agent should register this launch
+# (the manifests from mcp_manifest_files).
 # Usage: make_agent_mcp_json <workspace-path> <mode> <agent-mcp-file-basename>
 make_agent_mcp_json() {
-    local workspace="$1" mode="$2" agent_file="$3"
-    local files=("$PACKAGES_DIR/mcp-common.txt")
-    if [ "$(read_setting mcp_extras)" = "yes" ]; then
-        files+=("$PACKAGES_DIR/mcp-extra.txt")
-    fi
-    files+=("$PACKAGES_DIR/$agent_file")
+    local workspace="$1" mode="$2" files=()
+    mapfile -t files < <(mcp_manifest_files "$3")
     make_mcp_servers_json "$workspace" "$mode" "${files[@]}"
 }
 

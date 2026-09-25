@@ -24,6 +24,13 @@
 # Lines starting with # are ignored. Blank lines are ignored.
 # ============================================================
 
+# Filesystem tools: whole-file read/write and multi-block edits. Off by
+# default: every agent has its own file tools, and the near-duplicate schema
+# (path + edits[{oldText,newText}] vs. e.g. OpenCode's filePath/oldString)
+# makes small models mix up the argument names and fail the call. When
+# enabled, Claude also gets instructions to prefer these over its own tools.
+@modelcontextprotocol/server-filesystem       | filesystem | mcp-server-filesystem            | {workspace}
+
 # Persistent knowledge graph memory — survives across sessions within the container lifetime.
 # Lets the agent remember codebase conventions, decisions, and task context.
 @modelcontextprotocol/server-memory           | memory     | mcp-server-memory                |

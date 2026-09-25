@@ -186,8 +186,8 @@ out-of-memory errors; range 0.50-0.95." \
 
 # GPU mode — only prompt if multiple GPUs are detected
 setup_step_gpu() {
-    local _gpu_count; _gpu_count=$($SMI --query-gpu=name --format=csv,noheader,nounits 2>/dev/null | grep -c '.' || echo 1)
-    [ "${_gpu_count:-1}" -gt 1 ] || return 0
+    local _gpu_count; _gpu_count=$(gpu_query_ints index | wc -l)
+    [ "$_gpu_count" -gt 1 ] || return 0
 
     local _cur_gpu; _cur_gpu=$(read_setting gpu_mode)
     local _cur_gpu_yesno; _cur_gpu_yesno=$([ "$_cur_gpu" = "multi" ] && echo "yes" || echo "no")
@@ -373,10 +373,11 @@ setup_step_mcp_extras() {
     local _cur_extras; _cur_extras=$(read_setting mcp_extras)
     setup_toggle_pref mcp_extras "MCP extras" \
         "MCP extras — register the optional MCP servers with each agent?" \
-        "Extras: memory, sequential-thinking, conan, context7, brave-search, github, fetch, time.
+        "Extras: filesystem, memory, sequential-thinking, conan, context7, brave-search,
+github, fetch, time.
 Every registered server adds tool definitions to the model's context on every
 request — small local models get slower and worse at tool selection as the
-list grows. Core servers (filesystem, git, shell) are always registered." \
+list grows. Core servers (git, shell) are always registered." \
         "Enable MCP extras? [y/N]:" \
         "$_cur_extras" "$_cur_extras" \
         "${ICON_OK} MCP extras ${GREEN}enabled${NC} — applied on next launch (no rebuild needed)." \
@@ -463,8 +464,8 @@ setup_step_spec_decode() {
         "A tiny draft model proposes tokens the main model verifies in one pass —
 typically 1.5-2x faster code generation. Costs ~1-2GB extra VRAM.
 Applies only to model families that define an external draft (currently
-Qwen3 and Qwen3.8). Gemma 4 and Qwen3.6 MTP always use their own built-in
-MTP draft heads baked into the main model regardless of this setting —
+Qwen3 and Qwen3.8). Qwen3.6 MTP always uses its own built-in MTP draft
+heads baked into the main model regardless of this setting —
 there's no toggle for those." \
         "Use speculative decoding? [Y/n]:" \
         "$_cur_spec" "$_cur_spec" \

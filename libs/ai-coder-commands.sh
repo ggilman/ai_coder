@@ -90,26 +90,15 @@ cmd_update() {
 
     echo -e "${ICON_GEAR} Installing..."
 
-    # Wipe dirs that are entirely release-owned so deleted/renamed files don't linger
-    rm -rf "$install_dir/agents" "$install_dir/libs" "$install_dir/packages" "$install_dir/offline" \
-           "$install_dir/config/sglang-patches"
-
-    # Wipe release-owned top-level files
-    rm -f "$install_dir/ai-coder" "$install_dir/ai-status.sh" \
-          "$install_dir/LICENSE" "$install_dir/README.md" \
-          "$install_dir/.gitignore" "$install_dir/.gitattributes" "$install_dir/.editorconfig" \
-          "$install_dir/config/ai-coder-model.conf"
-
-    # For config/families: only remove files that exist in the new release so user-added
-    # custom family confs are preserved
-    if [ -d "$tmp_dir/config/families" ]; then
-        for _f in "$tmp_dir/config/families"/*; do
-            [ -f "$_f" ] && rm -f "$install_dir/config/families/$(basename "$_f")"
-        done
+    # The downloaded release's own installer does the replacing, so the new
+    # release's layout decides which dirs and files are release-owned — not
+    # this (older) copy's idea of it.
+    if [ ! -f "$tmp_dir/install.sh" ]; then
+        echo -e "${RED}✘ The downloaded release has no install.sh — nothing was changed.${NC}"; return 1
     fi
-
-    cp -r "$tmp_dir/." "$install_dir/"
-    chmod +x "$install_dir/ai-coder" "$install_dir/ai-status.sh"
+    bash "$tmp_dir/install.sh" --from "$tmp_dir" "$install_dir" || {
+        echo -e "${RED}✘ Install failed${NC}"; return 1
+    }
 
     # Record the installed release hash (and its checkin date) so future update
     # checks have a baseline to compare and --version has something to show.

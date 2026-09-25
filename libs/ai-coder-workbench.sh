@@ -1,115 +1,13 @@
 #!/bin/bash
 # ==============================================================================
 # AI-CODER-WORKBENCH.SH | Workbench & Hub Engine Container Lifecycle
-# Dockerfile generation and image builds shared by every npm-based agent,
 # run_workbench/exec_in_container for the per-project spoke container, and
 # start_hub_engine (plus its GPU arg resolution and fast-storage model volume
-# sync) for the shared Hub, plus the --rebuild image sweep, the engine
-# (re)start decision, and the post-start readiness poll. start_hub_engine is
-# engine-neutral apart from the docker run itself: _run_llamacpp_engine here,
-# _run_sglang_engine in ai-coder-sglang.sh.
+# sync) for the shared Hub, the engine (re)start decision, and the post-start
+# readiness poll. start_hub_engine is engine-neutral apart from the docker run
+# itself: _run_llamacpp_engine here, _run_sglang_engine in ai-coder-sglang.sh.
+# Building the images these run is ai-coder-image.sh.
 # ==============================================================================
-
-# Emit the shared Dockerfile template every agent image is built from
-# (base image, apt packages, git identity, proxy ENV block).
-# Args: <build-dir> <dockerfile-name> <apt-pkgs> <pm-proxy-cmds> <install-cmds>
-_write_standard_dockerfile() {
-    local build_dir="$1" df_name="$2" apt_pkgs="$3" pm_proxy_cmds="$4" install_cmds="$5"
-    local _proxy_env_block=""
-    if [ -n "${DOWNLOAD_PROXY:-}" ]; then
-        _proxy_env_block=$'ENV http_proxy=${PROXY_URL} https_proxy=${PROXY_URL} HTTP_PROXY=${PROXY_URL} HTTPS_PROXY=${PROXY_URL} \\\n    no_proxy=localhost,127.0.0.1 NO_PROXY=localhost,127.0.0.1'
-    fi
-    cat > "$build_dir/$df_name" <<DOCKERFILE
-FROM $BASE_IMAGE
-ARG PROXY_URL
-ARG GIT_USER_NAME
-ARG GIT_USER_EMAIL
-ENV DEBIAN_FRONTEND=noninteractive
-RUN if [ -n "\${PROXY_URL}" ]; then \
-      apt_proxy=\$(echo "\${PROXY_URL}" | sed 's|^https://|http://|') && \
-      if [ -f /etc/apt/sources.list ]; then \
-        sed -i 's|http://|https://|g' /etc/apt/sources.list; \
-      fi && \
-      if [ -d /etc/apt/sources.list.d ]; then \
-        find /etc/apt/sources.list.d -name '*.list' -exec sed -i 's|http://|https://|g' {} +; \
-      fi && \
-      printf 'Acquire::https::Proxy "%s";\nAcquire::https::Verify-Peer "false";\nAcquire::https::Verify-Host "false";\n' "\${apt_proxy}" > /etc/apt/apt.conf.d/01proxy; \
-    fi
-RUN apt-get update && apt-get install -y wget ca-certificates gnupg apt-transport-https --no-install-recommends && \
-    wget -qO- https://packages.microsoft.com/keys/microsoft.asc | \
-      gpg --dearmor > /usr/share/keyrings/microsoft-archive-keyring.gpg && \
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
-      > /etc/apt/sources.list.d/microsoft-prod.list && \
-    apt-get update && apt-get install -y \
-    ${apt_pkgs} \
-    --no-install-recommends --fix-missing && rm -rf /var/lib/apt/lists/*
-RUN if [ -n "\${GIT_USER_NAME}" ] && [ -n "\${GIT_USER_EMAIL}" ]; then \
-      git config --global user.name "\${GIT_USER_NAME}" && \
-      git config --global user.email "\${GIT_USER_EMAIL}"; \
-    fi
-${_proxy_env_block}
-${pm_proxy_cmds}
-${install_cmds}
-DOCKERFILE
-}
-
-build_standard_image() {
-    # Args: <dockerfile-name> <apt-pkgs> <pm-proxy-cmds> <install-cmds>
-    local df_name="$1" apt_pkgs="$2" pm_proxy_cmds="$3" install_cmds="$4"
-
-    if [ -n "$(docker images -q "$IMAGE_NAME" 2>/dev/null)" ]; then return 0; fi
-
-    pull_image_if_missing "$BASE_IMAGE" || return 1
-
-    local proxy_args=()
-    [ -n "${DOWNLOAD_PROXY:-}" ] && proxy_args=(--build-arg "PROXY_URL=$(resolve_proxy_to_ip "$DOWNLOAD_PROXY")")
-
-    local git_args=()
-    [ -n "${GIT_USER_NAME:-}" ] && [ -n "${GIT_USER_EMAIL:-}" ] && \
-        git_args=(--build-arg "GIT_USER_NAME=${GIT_USER_NAME}" --build-arg "GIT_USER_EMAIL=${GIT_USER_EMAIL}")
-
-    local _build_dir; _build_dir=$(mktemp -d)
-    trap 'rm -rf "$_build_dir"; trap - RETURN' RETURN
-
-    _write_standard_dockerfile "$_build_dir" "$df_name" "$apt_pkgs" "$pm_proxy_cmds" "$install_cmds"
-
-    docker build -t "$IMAGE_NAME" "${proxy_args[@]}" "${git_args[@]}" \
-        -f "$(to_host_path "$_build_dir")/$df_name" \
-        "$(to_host_path "$_build_dir")" || {
-        echo -e "${RED}✘ Docker build failed${NC}"; return 1
-    }
-}
-
-build_npm_agent_image() {
-    # Shared build_image scaffolding for npm-based agents.
-    # Args:
-    #   $1  dockerfile name
-    #   $2  agent-specific apt package file basename (under $PACKAGES_DIR)
-    #   $3  agent-specific mcp package file basename (under $PACKAGES_DIR)
-    #   $4  npm package(s) to pass to npm install -g
-    #   $5  extra npm flags appended after mcp packages (e.g. "--quiet"), or ""
-    #   $6  extra RUN line appended after npm install (e.g. "RUN gemini --version"), or ""
-    local df_name="$1" apt_file="$2" mcp_file="$3" npm_pkg="$4" npm_extra_flags="${5:-}" verify_run="${6:-}"
-
-    if [ -n "$(docker images -q "$IMAGE_NAME" 2>/dev/null)" ]; then
-        echo -e "${ICON_OK} ${TOOL_NAME} Image: ready."
-        return 0
-    fi
-    echo -e "${ICON_GEAR} Building ${TOOL_NAME} Image..."
-    local pm_proxy_cmds; pm_proxy_cmds=$(make_npm_proxy_cmds)
-    local pip_proxy_cmds; pip_proxy_cmds=$(make_pip_proxy_cmds)
-    local apt_pkgs; apt_pkgs="$(read_package_list "$PACKAGES_DIR/apt-common.txt") $(read_package_list "$PACKAGES_DIR/$apt_file")"
-    # mcp-extra.txt servers are always installed in the image (so toggling the
-    # MCP extras setting never requires a rebuild); registration in the agent
-    # config is decided per-launch by make_agent_mcp_json.
-    local mcp_pkgs; mcp_pkgs=$(read_mcp_packages "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-extra.txt" "$PACKAGES_DIR/$mcp_file")
-    local mcp_pip_pkgs; mcp_pip_pkgs=$(read_mcp_pip_packages --offline "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-extra.txt" "$PACKAGES_DIR/$mcp_file")
-    local mcp_pip_online; mcp_pip_online=$(read_mcp_pip_packages --online "$PACKAGES_DIR/mcp-common.txt" "$PACKAGES_DIR/mcp-extra.txt" "$PACKAGES_DIR/$mcp_file")
-    local pip_cmd; pip_cmd=$(build_pip_install_cmds "$pip_proxy_cmds" "$mcp_pip_pkgs" "$mcp_pip_online")
-    local install_cmds="RUN npm install -g ${npm_pkg} ${mcp_pkgs}${npm_extra_flags}${pip_cmd}"
-    [ -n "$verify_run" ] && install_cmds+=$'\n'"$verify_run"
-    build_standard_image "$df_name" "$apt_pkgs" "$pm_proxy_cmds" "$install_cmds"
-}
 
 exec_in_container() {
     # Usage: exec_in_container [extra docker exec flags...] <container> <cmd> [args...]
@@ -203,17 +101,10 @@ _resolve_engine_gpu_args() {
         # Split by FREE VRAM (fallback: capacity) so the display GPU — which
         # loses VRAM to the desktop — receives proportionally fewer layers.
         # This runs after the old engine is stopped, so free reflects reality.
-        local _vram_raw; _vram_raw=$($SMI --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | tr -d '\r') || true
         local _split_vals=()
-        for _v in $_vram_raw; do
-            case "$_v" in *[!0-9]*) ;; *) _split_vals+=("$_v") ;; esac
-        done
+        mapfile -t _split_vals < <(gpu_query_ints memory.free)
         if [ "${#_split_vals[@]}" -lt 2 ]; then
-            _vram_raw=$($SMI --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | tr -d '\r') || true
-            _split_vals=()
-            for _v in $_vram_raw; do
-                case "$_v" in *[!0-9]*) ;; *) _split_vals+=("$_v") ;; esac
-            done
+            mapfile -t _split_vals < <(gpu_query_ints memory.total)
         fi
         if [ "${#_split_vals[@]}" -gt 1 ]; then
             local _ts; _ts=$(IFS=,; echo "${_split_vals[*]}")
@@ -362,7 +253,7 @@ _run_llamacpp_engine() {
     LLAMA_SPEC_FLAGS=""
     case "${MODEL_SPEC_STRATEGY:-none}" in
         mtp)
-            # Most MTP families (Gemma 4, Qwen3.6 MTP) bake the draft heads into
+            # Most MTP families (e.g. Qwen3.6 MTP) bake the draft heads into
             # the main GGUF itself — no MODEL_DRAFT_FILE, so the flags always
             # apply. Qwen3.8 instead pairs this with a real external draft file
             # (see qwen3.8.conf), which the spec_decode setting — or a failed
@@ -371,13 +262,16 @@ _run_llamacpp_engine() {
             # ai-coder) is what tells the two cases apart. Without this check,
             # a disabled/failed Qwen3.8 draft would still get --spec-type
             # draft-mtp with no draft model loaded to back it.
-            # MODEL_MTP additionally covers built-in-head families where only
-            # some tiers actually have them baked in (e.g. Gemma 4's 12B/E2B
-            # don't) — llama.cpp hard-errors on load if forced against a GGUF
-            # without MTP layers, so this must be checked even when there's no
-            # external draft file to speak of.
-            if [ "${MODEL_DRAFT_DEFINED:-false}" != "true" ] && [ "${MODEL_MTP:-true}" = "false" ]; then
-                echo -e "${ICON_GEAR} Speculative decoding: ${DIM}disabled (this model tier has no built-in MTP draft heads)${NC}"
+            # Self-contained MTP also needs the heads to actually be in the
+            # GGUF — not every tier of an MTP family ships them (unsloth's
+            # Gemma 4 GGUFs don't), and llama-server exits at load when they
+            # are missing. An unreadable header keeps the family's choice.
+            local _mtp_n=""
+            if [ "${MODEL_DRAFT_DEFINED:-false}" != "true" ]; then
+                _mtp_n=$(gguf_mtp_layers "$MODEL_STORAGE_DIR/$MODEL_FILE") || _mtp_n=""
+            fi
+            if [ "$_mtp_n" = "0" ]; then
+                echo -e "${ICON_GEAR} Speculative decoding: ${DIM}disabled (model has no MTP layers)${NC}"
             elif [ "${MODEL_DRAFT_DEFINED:-false}" != "true" ] || spec_decode_enabled; then
                 # MODEL_SPEC_DRAFT_N_MAX is per-family (default 3) — e.g.
                 # qwen3.6MTP.conf's own verified value is 2; don't assume one
@@ -469,179 +363,12 @@ _llama_supports_flag() {
     [ "${_cached##*|}" = "yes" ]
 }
 
-# Fetches .devops/cuda.Dockerfile at <ref> and prints (one per line) the
-# resolved FROM images (ARG defaults substituted in), for pre-pulling ahead
-# of `docker build`. Silent no-output (not a failure) if the fetch fails —
-# callers just skip pre-pulling and let `docker build` fetch them itself.
-_llama_dockerfile_base_images() {
-    local _ref="$1" _proxy="$2"
-    local _curl_args=(-fsSL --connect-timeout 10)
-    [ -n "$_proxy" ] && _curl_args+=(--proxy "$_proxy")
-    local _content
-    _content=$(curl "${_curl_args[@]}" \
-        "https://raw.githubusercontent.com/ggml-org/llama.cpp/${_ref}/.devops/cuda.Dockerfile" 2>/dev/null) || return 0
-    [ -n "$_content" ] || return 0
-
-    local -A _args=()
-    local _line
-    while IFS= read -r _line; do
-        [[ "$_line" =~ ^ARG[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)=(.+)$ ]] && _args["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
-    done <<< "$_content"
-
-    # ARG defaults can reference earlier ARGs (e.g. BASE_CUDA_DEV_CONTAINER
-    # embeds ${CUDA_VERSION}) — resolve the map against itself a few passes
-    # deep before using it to substitute into FROM lines.
-    local _pass _arg_name
-    for _pass in 1 2 3 4 5; do
-        for _arg_name in "${!_args[@]}"; do
-            local _other
-            for _other in "${!_args[@]}"; do
-                _args["$_arg_name"]="${_args[$_arg_name]//\$\{$_other\}/${_args[$_other]}}"
-                _args["$_arg_name"]="${_args[$_arg_name]//\$$_other/${_args[$_other]}}"
-            done
-        done
-    done
-
-    # Multi-stage builds: a FROM can reference an earlier stage's "AS <name>"
-    # alias instead of a real registry image (e.g. "FROM build AS base") —
-    # track aliases seen so far and skip those, since they aren't pullable.
-    local -A _stage_names=()
-    local _val _arg_name _alias
-    while IFS= read -r _line; do
-        [[ "$_line" =~ ^FROM[[:space:]]+([^[:space:]]+)([[:space:]]+[Aa][Ss][[:space:]]+([^[:space:]]+))? ]] || continue
-        _val="${BASH_REMATCH[1]}"; _alias="${BASH_REMATCH[3]}"
-        if [ -z "${_stage_names[$_val]:-}" ]; then
-            # $VAR / ${VAR} can appear anywhere in the ref (e.g. "node:$NODE_VERSION").
-            for _arg_name in "${!_args[@]}"; do
-                _val="${_val//\$\{$_arg_name\}/${_args[$_arg_name]}}"
-                _val="${_val//\$$_arg_name/${_args[$_arg_name]}}"
-            done
-            [ -n "$_val" ] && [ "$_val" != "scratch" ] && echo "$_val"
-        fi
-        [ -n "$_alias" ] && _stage_names["$_alias"]=1
-    done <<< "$_content" | sort -u
-}
-
-# Builds LLAMA_ASYM_IMAGE (the llama.cpp server with a CUDA Flash Attention
-# kernel for the q8_0 K / q4_0 V cache pair) when the asym KV mode selected
-# it as ENGINE_IMAGE and it doesn't exist yet. No-op otherwise. Called from
-# ai-coder BEFORE the hub lock: the build takes 10-30 minutes, far longer
-# than the hub lock's wait, so it gets its own lock instead. Exits (it
-# doesn't fall back to the stock image) on failure, since the stock image
-# would run the mismatched pair on its much slower fallback path.
-ensure_llama_asym_image() {
-    [ "$ENGINE_IMAGE" = "$LLAMA_ASYM_IMAGE" ] || return 0
-    docker image inspect "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1 && return 0
-
-    # Reads the setting directly: this runs before ensure_network_config sets
-    # NETWORK_INTERNAL (so --build-only builds the image too).
-    if [ "$(read_setting isolated)" = "yes" ]; then
-        echo -e "${RED}✘ The asymmetric KV cache needs a locally built llama.cpp image (${LLAMA_ASYM_IMAGE}),${NC}"
-        echo -e "${RED}  and network isolation blocks the download it needs.${NC}"
-        echo -e "${YELLOW}  Pick another KV cache option with: ${CYAN}ai --model${NC}${YELLOW}, or load the image from an offline bundle.${NC}"
-        exit 1
-    fi
-
-    # A concurrent session may be building it already: wait (up to ~1 hour)
-    # and re-check before starting a second build. LLAMA_BUILD_LOCK_HELD
-    # lets ai-coder's cleanup trap release the lock after a Ctrl-C mid-build.
-    local _lock_dir="$USER_DIR/.llama-build.lock"
-    acquire_lock "$_lock_dir" 2 1800
-    LLAMA_BUILD_LOCK_HELD=true
-    if docker image inspect "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1; then
-        release_lock "$_lock_dir"; LLAMA_BUILD_LOCK_HELD=false
-        return 0
-    fi
-
-    local _http_proxy=""
-    [ -n "${DOWNLOAD_PROXY:-}" ] && _http_proxy=$(resolve_proxy_to_ip "$(echo "$DOWNLOAD_PROXY" | sed "s|^https://|http://|")")
-
-    # llama.cpp ref: pinned via LLAMA_BUILD_REF, else the latest release tag.
-    local _ref="$LLAMA_BUILD_REF"
-    if [ -z "$_ref" ]; then
-        local _curl_args=(-fsSL --connect-timeout 10)
-        [ -n "$_http_proxy" ] && _curl_args+=(--proxy "$_http_proxy")
-        _ref=$(curl "${_curl_args[@]}" https://api.github.com/repos/ggml-org/llama.cpp/releases/latest 2>/dev/null \
-            | "${JQ_CMD:-jq}" -r '.tag_name // empty' 2>/dev/null | tr -d '\r') || _ref=""
-        [ -n "$_ref" ] || _ref=master
-    fi
-
-    # Compile for the detected GPUs only (e.g. compute_cap 8.9 -> 89): an
-    # all-architectures build takes several times longer.
-    local _archs
-    _archs=$($SMI --query-gpu=compute_cap --format=csv,noheader 2>/dev/null \
-        | tr -d '\r .' | grep -E '^[0-9]+$' | sort -u | paste -sd';' -) || _archs=""
-    if [ -z "$_archs" ]; then
-        _archs=default
-        echo -e "${YELLOW}⚠ Couldn't detect the GPU architecture — building for all of them (much slower).${NC}"
-    fi
-
-    # FA kernel pairs: llama.cpp's default set plus q8_0-q4_0. The upstream
-    # Dockerfile's only CMake hook is CUDA_DOCKER_ARCH, which it expands
-    # unquoted into the cmake command line, so the extra -D flag rides along
-    # after the architecture list.
-    local _fa_quants="q4_0-q4_0;q8_0-q8_0;q8_0-q4_0;f16-f16;bf16-bf16"
-    local _proxy_args=()
-    [ -n "$_http_proxy" ] && _proxy_args=(
-        --build-arg "http_proxy=$_http_proxy" --build-arg "https_proxy=$_http_proxy"
-        --build-arg "HTTP_PROXY=$_http_proxy" --build-arg "HTTPS_PROXY=$_http_proxy")
-
-    # Pre-pull the Dockerfile's own base images (nvidia/cuda, node) through
-    # pull_image_if_missing rather than letting `docker build` fetch them: the
-    # Docker Desktop "docker:default" builder resolves a FROM tag from the
-    # local image store first and only hits the registry if it's missing, but
-    # its own registry client doesn't share pull_base_image_via_proxy's
-    # TLS/proxy handling — on a corporate MITM proxy that trips up buildkit's
-    # fetch (auth.docker.io cert errors) but not a plain `docker pull`.
-    local _base_img
-    while IFS= read -r _base_img; do
-        [ -n "$_base_img" ] || continue
-        pull_image_if_missing "$_base_img" || {
-            release_lock "$_lock_dir"; LLAMA_BUILD_LOCK_HELD=false
-            echo -e "${RED}✘ Couldn't pull base image ${_base_img} needed for the build${NC}"
-            exit 1
-        }
-    done < <(_llama_dockerfile_base_images "$_ref" "$_http_proxy")
-
-    echo -e "${ICON_GEAR} Building llama.cpp ${CYAN}${_ref}${NC} with the asymmetric KV cache kernel (GPU arch ${_archs})..."
-    echo -e "${YELLOW}  One-time build, typically 10-30 minutes. If it runs out of memory, give Docker Desktop more RAM.${NC}"
-    # Retried once: transient Ubuntu/CUDA mirror hiccups inside the upstream
-    # Dockerfile's apt-get step ("Mirror sync in progress?") are common and
-    # BuildKit's layer cache means a retry only redoes the failed step, not
-    # the whole build.
-    local _attempt _build_ok=false
-    for _attempt in 1 2; do
-        if docker build \
-            -f .devops/cuda.Dockerfile --target server \
-            --build-arg "CUDA_DOCKER_ARCH=${_archs} -DGGML_CUDA_FA_QUANTS=${_fa_quants}" \
-            --build-arg "APP_VERSION=${_ref}" \
-            --label "ai-coder.llama-ref=${_ref}" \
-            "${_proxy_args[@]}" \
-            -t "$LLAMA_ASYM_IMAGE" \
-            "https://github.com/ggml-org/llama.cpp.git#${_ref}"; then
-            _build_ok=true
-            break
-        fi
-        [ "$_attempt" = 1 ] && echo -e "${YELLOW}  Build failed — retrying once (may be a transient mirror error)...${NC}"
-    done
-    if [ "$_build_ok" != true ]; then
-        release_lock "$_lock_dir"; LLAMA_BUILD_LOCK_HELD=false
-        echo -e "${RED}✘ llama.cpp build failed${NC}"
-        echo -e "${YELLOW}  Pick the full (q8_0/q8_0) or q4_0 KV cache with: ${CYAN}ai --model${NC}"
-        exit 1
-    fi
-    release_lock "$_lock_dir"; LLAMA_BUILD_LOCK_HELD=false
-    echo -e "${ICON_OK} Built ${LLAMA_ASYM_IMAGE} (llama.cpp ${_ref})."
-}
-
 start_hub_engine() {
     echo -e "${ICON_GEAR} Initializing Global GPU Hub ($(engine_display_name))..."
 
-    docker stop "$GLOBAL_ENGINE_NAME" 2>/dev/null || true
-    docker rm   "$GLOBAL_ENGINE_NAME" 2>/dev/null || true
+    remove_containers "$GLOBAL_ENGINE_NAME"
     if [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ]; then
-        docker stop "$GLOBAL_PROXY_NAME" 2>/dev/null || true
-        docker rm   "$GLOBAL_PROXY_NAME" 2>/dev/null || true
+        remove_containers "$GLOBAL_PROXY_NAME"
     fi
 
     # The asymmetric-KV image is built locally at launch (before the hub
@@ -707,6 +434,7 @@ start_hub_engine() {
     }
 
     write_pref "$STATE_FILE" engine_backend "$ENGINE_BACKEND"
+    write_pref "$STATE_FILE" engine_image "$ENGINE_IMAGE"
     write_pref "$STATE_FILE" engine_gpu_mode "${GPU_MODE:-multi}"
     write_pref "$STATE_FILE" engine_model "${MODEL_FILE:-}"
     # Informational only — deliberately NOT part of the restart-detection
@@ -745,6 +473,10 @@ start_hub_engine() {
     write_pref "$STATE_FILE" engine_weights_bytes "$_w_bytes"
     write_pref "$STATE_FILE" engine_kv_bytes "$_kv_bytes"
     write_pref "$STATE_FILE" engine_vram_bytes "$(( _vram_bytes + _kv_bytes ))"
+    # Filled in by record_engine_kv_measurement once the engine is up.
+    write_pref "$STATE_FILE" engine_kv_measured_bytes ""
+    write_pref "$STATE_FILE" engine_kv_pool_tokens ""
+    ENGINE_STARTED_THIS_RUN=true
 
     start_gpu_guard
 
@@ -802,66 +534,6 @@ ensure_workbench_running() {
     release_lock "$_lock_dir"
     return $_rc
 }
-# --rebuild: collect every workbench image (current + historical naming
-# conventions), stop/remove dependent containers, remove the images, and
-# clear the .rebuild-needed flag so the next run rebuilds from scratch.
-rebuild_workbench_images() {
-    # Docker must be up — with the daemon down every docker call below fails
-    # silently and the .rebuild-needed flag would be cleared without rebuilding.
-    check_docker || exit 1
-    # Collect every image name defined in any agent script (current version).
-    # tr -d '\r' guards against CRLF on Windows-mounted filesystems.
-    # Also sweep for any leftover images from previous version numbers by
-    # matching the naming convention patterns used across all agent generations.
-    _agents_dir="$ROOT_DIR/agents"
-    _removed=0
-    declare -A _seen_imgs=()
-    for f in "$_agents_dir"/ai-coder-*.sh; do
-        [ -f "$f" ] || continue
-        _img=$(grep -m1 '^IMAGE_NAME=' "$f" | cut -d'"' -f2 | tr -d '\r')
-        [ -z "$_img" ] && continue
-        _seen_imgs["$_img"]=1
-    done
-    # Also include any Docker images whose name matches the historical naming
-    # conventions: *-engineer-* and local-* (old naming from early versions).
-    while IFS= read -r _img; do
-        [ -n "$_img" ] && _seen_imgs["$_img"]=1
-    done < <(docker images --format '{{.Repository}}' 2>/dev/null | grep -E '(-engineer-|^local-(claude|opencode|gemini|aider))' || true)
-    for _img in "${!_seen_imgs[@]}"; do
-        if docker image inspect "$_img" >/dev/null 2>&1; then
-            echo -e "${CYAN}◈ Removing [$_img]...${NC}"
-            # Stop and remove any containers using this image before trying rmi.
-            while IFS= read -r _cid; do
-                [ -z "$_cid" ] && continue
-                _cname=$(docker inspect --format '{{.Name}}' "$_cid" 2>/dev/null | tr -d '/')
-                echo -e "${YELLOW}  Stopping container [${_cname:-$_cid}]...${NC}"
-                docker stop "$_cid" 2>/dev/null || true
-                docker rm   "$_cid" 2>/dev/null || true
-            done < <(docker ps -aq --filter "ancestor=$_img" 2>/dev/null)
-            if docker rmi "$_img" 2>/dev/null; then
-                echo -e "${GREEN}✔ Removed${NC}"
-                _removed=$((_removed + 1))
-            else
-                echo -e "${YELLOW}  Could not remove [$_img]${NC}"
-            fi
-        fi
-    done
-    [ "$_removed" -eq 0 ] && \
-        echo -e "${DIM}  No workbench images found — nothing to remove.${NC}" || \
-        echo -e "${ICON_OK} Workbench images cleared. They will be rebuilt on next run."
-    # The locally built asymmetric-KV llama.cpp image: removing it is how a
-    # newer llama.cpp gets picked up (rebuilt on the next asym-mode launch).
-    # Skipped while the engine is running on it.
-    if docker image inspect "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1; then
-        if [ -n "$(docker ps -q --filter "ancestor=$LLAMA_ASYM_IMAGE" 2>/dev/null)" ]; then
-            echo -e "${YELLOW}  Keeping [$LLAMA_ASYM_IMAGE] — the engine is running on it (stop it with ai --clean first).${NC}"
-        elif docker rmi "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1; then
-            echo -e "${ICON_OK} Removed [$LLAMA_ASYM_IMAGE] — llama.cpp is rebuilt on the next asymmetric-KV launch."
-        fi
-    fi
-    rm -f "$USER_DIR/.rebuild-needed"
-}
-
 # Decide whether the running Hub engine (if any) matches the current
 # settings, and (re)start it when it does not — or when the LiteLLM proxy
 # is missing. Must be called while the caller holds the hub-start lock
@@ -883,6 +555,7 @@ ensure_engine_currently_running() {
         spec_decode_enabled && [ -f "$MODEL_STORAGE_DIR/${MODEL_DRAFT_FILE:-}" ] && _cur_spec=yes
         _restart_checks=(
             "Engine|$(read_pref "$STATE_FILE" engine_backend "")|${ENGINE_BACKEND:-llamacpp}"
+            "Engine image|$(read_pref "$STATE_FILE" engine_image "")|${ENGINE_IMAGE}"
             "SGLang memory fraction|$(read_pref "$STATE_FILE" engine_memfrac "")|$(_current_sgl_memfrac)"
             "GPU mode|$(read_pref "$STATE_FILE" engine_gpu_mode "")|${GPU_MODE:-multi}"
             "Model|$(read_pref "$STATE_FILE" engine_model "")|${MODEL_FILE:-}"
@@ -985,6 +658,7 @@ wait_for_engine_ready() {
         # The engine can report ready while a GPU is silently oversubscribed
         # (WDDM pages the overflow to system RAM) — check and warn before use.
         warn_if_vram_oversubscribed
+        record_engine_kv_measurement
     else
         echo -e " ${RED}TIMEOUT${NC}"
         echo -e "${RED}✘ Engine/Proxy failed to initialize after ~${retry_count} seconds${NC}"
@@ -994,5 +668,56 @@ wait_for_engine_ready() {
             docker logs "$GLOBAL_ENGINE_NAME" 2>&1 | tail -20 | sed 's/^/    /'
         fi
         exit 1
+    fi
+}
+
+# After a fresh engine start, check the KV cache the engine actually set up
+# (from its startup log) against the estimate the tier was picked with.
+# llama.cpp: sums every KV and recurrent-state cache size line (a
+# sliding-window model logs one per cache), stopping at the draft model's,
+# records it for the --status dashboard (engine_kv_measured_bytes), and warns
+# when it exceeds the estimate by more than 10% — that tier's MODEL_N_KV is
+# missing or wrong, so the tier choice may overfill VRAM; --kv-probe fixes it.
+# SGLang: it sizes its KV pool to whatever VRAM is left rather than to the
+# context, so the check is whether that pool (max_total_num_tokens) holds one
+# full-length context (context_len); warns when it doesn't.
+record_engine_kv_measurement() {
+    [ "${ENGINE_STARTED_THIS_RUN:-false}" = "true" ] || return 0
+    # Via a temp file, not a pipe: awk exiting early would fail docker logs
+    # under pipefail.
+    local _tmp="${TMPDIR:-/tmp}/.ai-coder-kvlog.$$" _bytes _est _pool _ctx
+    docker logs "$GLOBAL_ENGINE_NAME" > "$_tmp" 2>&1 || true
+    if engine_is_sglang; then
+        read -r _pool _ctx <<< "$(awk '
+            match($0, /max_total_num_tokens=[0-9]+/) {
+                p = substr($0, RSTART + 21, RLENGTH - 21)
+                if (match($0, /context_len=[0-9]+/)) c = substr($0, RSTART + 12, RLENGTH - 12)
+            }
+            END { if (p != "") print p, c }' "$_tmp" 2>/dev/null | tr -d '\r')" || true
+        rm -f "$_tmp"
+        case "${_pool:-}${_ctx:-}" in ''|*[!0-9]*) return 0 ;; esac
+        write_pref "$STATE_FILE" engine_kv_pool_tokens "$_pool"
+        if [ "$_pool" -lt "$_ctx" ]; then
+            echo -e "${YELLOW}⚠ KV cache: SGLang's pool holds ${_pool} tokens, less than the ${_ctx}-token context — longer conversations will fail.${NC}"
+            echo -e "${DIM}  Lower the context level or pick a smaller tier ($(basename "$0") --model), or re-check this family: $(basename "$0") --kv-probe ${FAMILY_PREF:-<family>}${NC}"
+        fi
+        return 0
+    fi
+    _bytes=$(awk '
+        /loading draft model/ { exit }
+        /llama_(kv_cache[a-z_]*|memory_recurrent): +size = +[0-9.]+ MiB/ {
+            if (match($0, /size = +[0-9.]+/)) {
+                s = substr($0, RSTART, RLENGTH); sub(/size = +/, "", s); t += s
+            }
+        }
+        END { if (t > 0) printf "%.0f", t * 1048576 }' "$_tmp" 2>/dev/null | tr -d '\r') || true
+    rm -f "$_tmp"
+    [ -n "$_bytes" ] || return 0
+    write_pref "$STATE_FILE" engine_kv_measured_bytes "$_bytes"
+    _est=$(read_pref "$STATE_FILE" engine_kv_bytes "0")
+    case "$_est" in ''|*[!0-9]*) return 0 ;; esac
+    if [ "$_bytes" -gt $(( _est + _est / 10 )) ]; then
+        echo -e "${YELLOW}⚠ KV cache: llama.cpp allocated $(_human_size "$_bytes"), but the tier was picked assuming $(_human_size "$_est") — it may not fit VRAM.${NC}"
+        echo -e "${DIM}  Record this family's real KV sizes: $(basename "$0") --kv-probe ${FAMILY_PREF:-<family>} --write${NC}"
     fi
 }

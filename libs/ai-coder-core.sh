@@ -11,7 +11,7 @@ USER_DIR="$INSTALL_DIR/user"
 SETTINGS_FILE="$USER_DIR/settings.json"
 STATE_FILE="$USER_DIR/state.json"
 PACKAGES_DIR="$INSTALL_DIR/packages"
-DOCKER_BIN="${DOCKER_BIN:-}"   # default resolved below, after WIN_HOME is known
+DOCKER_BIN="${DOCKER_BIN:-}"   # default resolved on demand by _resolve_docker_bin (ai-coder-model.sh)
 GLOBAL_ENGINE_NAME="ai-hub-engine"
 GLOBAL_PROXY_NAME="ai-hub-proxy"
 GLOBAL_WEBUI_NAME="ai-hub-webui"
@@ -40,14 +40,18 @@ RESUME_FLAG=""
 RESUME_ARGS=()
 WORKBENCH_PREFIX="coder"
 LITELLM_IMAGE="ghcr.io/berriai/litellm:main-latest"
-LLAMA_IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
-LLAMA_IMAGE_FULL="ghcr.io/ggml-org/llama.cpp:full-cuda"
+# llama.cpp release every llama.cpp image runs: the stock server/full images
+# pull this tag, and the asymmetric-KV image builds this git tag. Pinned (not
+# the floating :server-cuda) so every KV mode runs the same llama.cpp and an
+# upstream change can't slip in unnoticed; bump it deliberately. Each image
+# tag carries the version, so a bump pulls/builds fresh images on next launch.
+LLAMA_CPP_VERSION="${LLAMA_CPP_VERSION:-v0.5.0}"
+LLAMA_IMAGE="${LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-${LLAMA_CPP_VERSION}}"
+LLAMA_IMAGE_FULL="${LLAMA_IMAGE_FULL:-ghcr.io/ggml-org/llama.cpp:full-cuda-${LLAMA_CPP_VERSION}}"
 # Locally built llama.cpp server image for the asymmetric (q8_0 K / q4_0 V)
 # KV cache, which the stock image has no Flash Attention kernel for — see
-# ensure_llama_asym_image. LLAMA_BUILD_REF pins the llama.cpp git tag/branch
-# it builds; empty = the latest release at build time.
-LLAMA_ASYM_IMAGE="${LLAMA_ASYM_IMAGE:-ai-coder/llama.cpp:server-cuda-asym}"
-LLAMA_BUILD_REF="${LLAMA_BUILD_REF:-}"
+# ensure_llama_asym_image.
+LLAMA_ASYM_IMAGE="${LLAMA_ASYM_IMAGE:-ai-coder/llama.cpp:server-cuda-asym-${LLAMA_CPP_VERSION}}"
 # SGLang engine image (used when the "engine" setting is sglang). Pinned to a
 # release rather than :latest so an upstream flag rename can't silently break
 # engine start. The -runtime variant is the serving-only build; v0.5.20 is a
@@ -100,31 +104,6 @@ else
     SMI="nvidia-smi"
 fi
 
-# Resolve the default Docker Desktop launcher path. Docker Desktop may be a
-# machine-wide install (Program Files) or a per-user install (AppData\Local).
-# Candidates are probed in mount-path form; under WSL the match is converted
-# to the Windows backslash form powershell.exe Start-Process expects (the Git
-# Bash launch path converts with cygpath instead).
-if [ -z "$DOCKER_BIN" ]; then
-    _docker_c_root="/c"
-    [ "$IS_WSL" = "true" ] && _docker_c_root="/mnt/c"
-    for _docker_candidate in \
-        "$_docker_c_root/Program Files/Docker/Docker/Docker Desktop.exe" \
-        "$WIN_HOME/AppData/Local/Programs/DockerDesktop/frontend/Docker Desktop.exe"; do
-        if [ -f "$_docker_candidate" ]; then
-            DOCKER_BIN="$_docker_candidate"
-            break
-        fi
-    done
-    if [ -z "$DOCKER_BIN" ]; then
-        # No install found — keep the historical Program Files default so the
-        # failure mode (Start-Process error + manual-start hint) is unchanged.
-        DOCKER_BIN="C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"
-    elif [ "$IS_WSL" = "true" ]; then
-        DOCKER_BIN=$(wslpath -w "$DOCKER_BIN")
-    fi
-fi
-
 # --- [ SUB-LIBRARIES ] --------------------------------------------------------
 # Split out of this file for readability. Order matters only in that each
 # depends on globals/colors set above and functions from files sourced before
@@ -133,7 +112,11 @@ source "$SCRIPT_DIR/ai-coder-env.sh"        # path/shell utils, pref I/O, MCP JS
 source "$SCRIPT_DIR/ai-coder-jq.sh"        # jq binary bootstrap & resolution
 source "$SCRIPT_DIR/ai-coder-migrate.sh"   # settings JSON schema versioning + one-time migration
 source "$SCRIPT_DIR/ai-coder-settings.sh"   # git identity + launch-time preference resolution
-source "$SCRIPT_DIR/ai-coder-model.sh"      # docker preflight, VRAM budgeting, model select/download
+source "$SCRIPT_DIR/ai-coder-docker.sh"     # docker preflight, image pulls
+source "$SCRIPT_DIR/ai-coder-model.sh"      # VRAM budgeting, model tier selection, --models/--speed
+source "$SCRIPT_DIR/ai-coder-download.sh"   # model/draft download, build-time npm/pip proxy helpers
+source "$SCRIPT_DIR/ai-coder-gguf.sh"       # GGUF metadata reader, per-tier KV geometry, --kv-probe
+source "$SCRIPT_DIR/ai-coder-image.sh"      # agent image builds, asym llama.cpp build, --rebuild sweep
 source "$SCRIPT_DIR/ai-coder-workbench.sh"  # workbench + hub engine container lifecycle
 source "$SCRIPT_DIR/ai-coder-sglang.sh"     # SGLang engine: HF snapshot download, launch args
 
@@ -217,17 +200,10 @@ model_id() {
 schedule_hub_idle_stop() {
     local idle_min="$1"
     local stamp; stamp=$(date +%s)
-    local jq_cmd="${JQ_CMD:-jq}"
     write_pref "$STATE_FILE" hub_idle_since "$stamp"
-    nohup bash -c "
-        sleep $(( idle_min * 60 ))
-        cur=\$('$jq_cmd' -r '(.hub_idle_since // empty)' '$STATE_FILE' 2>/dev/null)
-        [ \"\$cur\" = '$stamp' ] || exit 0
-        [ -n \"\$(docker ps -q --filter 'name=^/${WORKBENCH_PREFIX}-' 2>/dev/null)\" ] && exit 0
-        docker stop '$GLOBAL_ENGINE_NAME' '$GLOBAL_PROXY_NAME' '$GLOBAL_WEBUI_NAME' >/dev/null 2>&1
-        docker rm   '$GLOBAL_ENGINE_NAME' '$GLOBAL_PROXY_NAME' '$GLOBAL_WEBUI_NAME' >/dev/null 2>&1
-        '$jq_cmd' 'del(.hub_idle_since)' '$STATE_FILE' > '$STATE_FILE.tmp.\$\$' 2>/dev/null && mv '$STATE_FILE.tmp.\$\$' '$STATE_FILE' || true
-    " >/dev/null 2>&1 &
+    nohup bash "$SCRIPT_DIR/ai-coder-watch.sh" idle "$idle_min" "$stamp" "$STATE_FILE" \
+        "$WORKBENCH_PREFIX" "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME" \
+        >/dev/null 2>&1 &
     disown 2>/dev/null || true
 }
 
@@ -241,24 +217,8 @@ start_gpu_guard() {
     local max_c="${MODEL_GPU_MAX_TEMP_C:-90}"
     case "$max_c" in ''|*[!0-9]*|0) return 0 ;; esac
     command -v "$SMI" >/dev/null 2>&1 || return 0
-    local jq_cmd="${JQ_CMD:-jq}"
-    nohup bash -c "
-        strikes=0
-        while docker ps -q -f name=^/${GLOBAL_ENGINE_NAME}\$ 2>/dev/null | grep -q .; do
-            hot=''
-            for t in \$($SMI --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | tr -d '\r'); do
-                case \"\$t\" in ''|*[!0-9]*) ;; *) [ \"\$t\" -ge $max_c ] && hot=\$t ;; esac
-            done
-            if [ -n \"\$hot\" ]; then strikes=\$((strikes+1)); else strikes=0; fi
-            if [ \"\$strikes\" -ge 3 ]; then
-                docker stop '$GLOBAL_ENGINE_NAME' >/dev/null 2>&1
-                trip_val=\"\$(date '+%Y-%m-%d %H:%M') GPU held \${hot}C (limit ${max_c}C)\"
-                '$jq_cmd' --arg v \"\$trip_val\" '.engine_guard_trip = \$v' '$STATE_FILE' > '$STATE_FILE.tmp.\$\$' 2>/dev/null && mv '$STATE_FILE.tmp.\$\$' '$STATE_FILE' || true
-                exit 0
-            fi
-            sleep 10
-        done
-    " >/dev/null 2>&1 &
+    nohup bash "$SCRIPT_DIR/ai-coder-watch.sh" gpu-guard "$max_c" "$SMI" "$STATE_FILE" \
+        "$GLOBAL_ENGINE_NAME" >/dev/null 2>&1 &
     disown 2>/dev/null || true
 }
 
@@ -268,7 +228,7 @@ start_gpu_guard() {
 # the whole desktop. 97%+ used right after load means the fit is
 # oversubscribed even if llama.cpp started "successfully".
 warn_if_vram_oversubscribed() {
-    local _list; _list=$($SMI --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | tr -d '\r') || return 0
+    local _list; _list=$(gpu_query memory.used,memory.total) || return 0
     local _u _t _pct _idx=0 _warned=false
     while IFS=', ' read -r _u _t _; do
         case "$_u" in ''|*[!0-9]*) _idx=$((_idx + 1)); continue ;; esac
@@ -370,26 +330,31 @@ start_webui_sidecar() {
     return 0
 }
 
+# Usage: remove_containers [-t <secs>] <name|id>... — stop (gracefully, with
+# docker's default or the given timeout) then remove; missing ones are fine.
+remove_containers() {
+    local _stop_args=()
+    if [ "${1:-}" = "-t" ]; then _stop_args=(-t "$2"); shift 2; fi
+    [ "$#" -gt 0 ] || return 0
+    docker stop "${_stop_args[@]}" "$@" >/dev/null 2>&1 || true
+    docker rm "$@" >/dev/null 2>&1 || true
+}
+
 stop_webui_sidecar() {
-    docker stop "$GLOBAL_WEBUI_NAME" 2>/dev/null || true
-    docker rm   "$GLOBAL_WEBUI_NAME" 2>/dev/null || true
+    remove_containers "$GLOBAL_WEBUI_NAME"
 }
 
 stop_hub() {
     echo -e "${CYAN}◈ Shutting down Hub...${NC}"
-    docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME" 2>/dev/null || true
-    docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME" 2>/dev/null || true
+    remove_containers "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME"
     echo -e "${ICON_OK} Hub stopped."
 }
 
 teardown() {
     echo -e "${CYAN}Tearing down Hub & Project Spokes...${NC}"
-    local _running; _running=$(docker ps -q  --filter "name=^/${WORKBENCH_PREFIX}-" 2>/dev/null || true)
-    local _all;     _all=$(docker ps -aq --filter "name=^/${WORKBENCH_PREFIX}-" 2>/dev/null || true)
-    # shellcheck disable=SC2086
-    docker stop "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME" $( [ -n "$_running" ] && echo "$_running") 2>/dev/null || true
-    # shellcheck disable=SC2086
-    docker rm   "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME" $( [ -n "$_all" ]     && echo "$_all")     2>/dev/null || true
+    local _spokes
+    mapfile -t _spokes < <(docker ps -aq --filter "name=^/${WORKBENCH_PREFIX}-" 2>/dev/null || true)
+    remove_containers "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME" "${_spokes[@]}"
     docker network rm "$HUB_NETWORK" "$HUB_ISOLATED_NET" 2>/dev/null || true
 }
 

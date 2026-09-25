@@ -52,11 +52,8 @@ sglang_tp_size() {
 # VRAM differs by more than 10%: an even split means the smallest card caps
 # what every card can hold.
 _resolve_sglang_tp_args() {
-    local _totals; _totals=$($SMI --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | tr -d '\r') || true
     local _vals=() _v
-    for _v in $_totals; do
-        case "$_v" in *[!0-9]*) ;; *) _vals+=("$_v") ;; esac
-    done
+    mapfile -t _vals < <(gpu_query_ints memory.total)
     local _n="${#_vals[@]}"
     [ "$_n" -gt 0 ] || _n=1
     local _tp; _tp=$(sglang_tp_size "$_n")
