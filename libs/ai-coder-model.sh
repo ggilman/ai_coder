@@ -7,6 +7,25 @@
 # ai-coder-download.sh; Docker preflight and image pulls, ai-coder-docker.sh.
 # ==============================================================================
 
+# Usage: gpu_query <field[,field...]> — nvidia-smi's CSV (no header, no
+# units) for those fields, one line per GPU, CRs stripped. Fails when
+# nvidia-smi does.
+gpu_query() {
+    local _out
+    _out=$("$SMI" --query-gpu="$1" --format=csv,noheader,nounits 2>/dev/null) || return 1
+    printf '%s\n' "$_out" | tr -d '\r'
+}
+
+# Usage: gpu_query_ints <field> — gpu_query of one numeric field, one value
+# per line, dropping non-numeric readings ("[N/A]" on some GPUs). Prints
+# nothing when nvidia-smi fails.
+gpu_query_ints() {
+    local _v
+    for _v in $(gpu_query "$1" || true); do
+        case "$_v" in *[!0-9]*) ;; *) echo "$_v" ;; esac
+    done
+}
+
 # KV cache sizing. A tier's MODEL_N_KV / MODEL_N_KV_SWA (MODEL_SGL_N_* for
 # SGLang: cache elements per token, measured by --kv-probe from its GGUF
 # header or its repo's config.json) give the exact geometry; KV size depends
@@ -239,7 +258,7 @@ _human_size() {
 # overhead, and select the model tier that fits (sets the MODEL_* vars via
 # select_model_for_vram). Prints the budget breakdown.
 detect_model() {
-    local vram_list; vram_list=$($SMI --query-gpu=memory.total,memory.free --format=csv,noheader,nounits 2>/dev/null | tr -d '\r') || {
+    local vram_list; vram_list=$(gpu_query memory.total,memory.free) || {
         echo -e "${RED}✘ nvidia-smi failed${NC}"; return 1
     }
 

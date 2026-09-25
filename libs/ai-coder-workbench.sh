@@ -101,17 +101,10 @@ _resolve_engine_gpu_args() {
         # Split by FREE VRAM (fallback: capacity) so the display GPU — which
         # loses VRAM to the desktop — receives proportionally fewer layers.
         # This runs after the old engine is stopped, so free reflects reality.
-        local _vram_raw; _vram_raw=$($SMI --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | tr -d '\r') || true
         local _split_vals=()
-        for _v in $_vram_raw; do
-            case "$_v" in *[!0-9]*) ;; *) _split_vals+=("$_v") ;; esac
-        done
+        mapfile -t _split_vals < <(gpu_query_ints memory.free)
         if [ "${#_split_vals[@]}" -lt 2 ]; then
-            _vram_raw=$($SMI --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | tr -d '\r') || true
-            _split_vals=()
-            for _v in $_vram_raw; do
-                case "$_v" in *[!0-9]*) ;; *) _split_vals+=("$_v") ;; esac
-            done
+            mapfile -t _split_vals < <(gpu_query_ints memory.total)
         fi
         if [ "${#_split_vals[@]}" -gt 1 ]; then
             local _ts; _ts=$(IFS=,; echo "${_split_vals[*]}")

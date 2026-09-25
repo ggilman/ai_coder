@@ -186,8 +186,8 @@ out-of-memory errors; range 0.50-0.95." \
 
 # GPU mode — only prompt if multiple GPUs are detected
 setup_step_gpu() {
-    local _gpu_count; _gpu_count=$($SMI --query-gpu=name --format=csv,noheader,nounits 2>/dev/null | grep -c '.' || echo 1)
-    [ "${_gpu_count:-1}" -gt 1 ] || return 0
+    local _gpu_count; _gpu_count=$(gpu_query_ints index | wc -l)
+    [ "$_gpu_count" -gt 1 ] || return 0
 
     local _cur_gpu; _cur_gpu=$(read_setting gpu_mode)
     local _cur_gpu_yesno; _cur_gpu_yesno=$([ "$_cur_gpu" = "multi" ] && echo "yes" || echo "no")

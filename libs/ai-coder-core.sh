@@ -228,7 +228,7 @@ start_gpu_guard() {
 # the whole desktop. 97%+ used right after load means the fit is
 # oversubscribed even if llama.cpp started "successfully".
 warn_if_vram_oversubscribed() {
-    local _list; _list=$($SMI --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | tr -d '\r') || return 0
+    local _list; _list=$(gpu_query memory.used,memory.total) || return 0
     local _u _t _pct _idx=0 _warned=false
     while IFS=', ' read -r _u _t _; do
         case "$_u" in ''|*[!0-9]*) _idx=$((_idx + 1)); continue ;; esac

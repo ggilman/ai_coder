@@ -201,8 +201,7 @@ ensure_llama_asym_image() {
     # Compile for the detected GPUs only (e.g. compute_cap 8.9 -> 89): an
     # all-architectures build takes several times longer.
     local _archs
-    _archs=$($SMI --query-gpu=compute_cap --format=csv,noheader 2>/dev/null \
-        | tr -d '\r .' | grep -E '^[0-9]+$' | sort -u | paste -sd';' -) || _archs=""
+    _archs=$(gpu_query compute_cap | tr -d ' .' | grep -E '^[0-9]+$' | sort -u | paste -sd';' -) || _archs=""
     if [ -z "$_archs" ]; then
         _archs=default
         echo -e "${YELLOW}⚠ Couldn't detect the GPU architecture — building for all of them (much slower).${NC}"
