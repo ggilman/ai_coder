@@ -29,6 +29,7 @@ $(make_agent_mcp_json "/$WORKSPACE_DIR" standard mcp-claude.txt)
 EOF
     merge_json_file "$_tmp" "$_cfg"
     rm -f "$_tmp"
+    report_mcp_registration "/$WORKSPACE_DIR" standard "mcp-claude.txt"
     # Write global instructions so Claude uses MCP tools for file I/O.
     # This avoids the str_replace exact-match failures that occur when editing
     # files with whitespace variance or after merge conflicts add marker lines.
@@ -38,8 +39,6 @@ EOF
         rm -f "$HOME/.claude-config/CLAUDE.md"
         return 0
     fi
-    report_mcp_registration "/$WORKSPACE_DIR" standard "mcp-claude.txt"
-    report_mcp_registration "/$WORKSPACE_DIR" standard "mcp-claude.txt"
     cat > "$HOME/.claude-config/CLAUDE.md" <<'EOF'
 # File Editing Instructions
 
