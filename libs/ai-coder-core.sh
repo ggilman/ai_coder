@@ -116,6 +116,7 @@ source "$SCRIPT_DIR/ai-coder-docker.sh"     # docker preflight, image pulls
 source "$SCRIPT_DIR/ai-coder-model.sh"      # VRAM budgeting, model tier selection, --models/--speed
 source "$SCRIPT_DIR/ai-coder-download.sh"   # model/draft download, build-time npm/pip proxy helpers
 source "$SCRIPT_DIR/ai-coder-gguf.sh"       # GGUF metadata reader, per-tier KV geometry, --kv-probe
+source "$SCRIPT_DIR/ai-coder-image.sh"      # agent image builds, asym llama.cpp build, --rebuild sweep
 source "$SCRIPT_DIR/ai-coder-workbench.sh"  # workbench + hub engine container lifecycle
 source "$SCRIPT_DIR/ai-coder-sglang.sh"     # SGLang engine: HF snapshot download, launch args
 
