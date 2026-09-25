@@ -68,6 +68,9 @@ extensions:
 $(_mcp_each_server _goose_mcp_extension_yaml "/$WORKSPACE_DIR" "${mcp_files[@]}")
 EOF
     report_mcp_registration "/$WORKSPACE_DIR" standard "mcp-goose.txt"
+    # Agent instructions (prompts/) as the global hints file; Goose also
+    # reads the project's own .goosehints itself.
+    render_agent_prompt goose "$config_dir/.goosehints" || true
 }
 
 start_workbench() {
@@ -78,7 +81,13 @@ start_workbench() {
 }
 
 execute_tool() {
+    # GOOSE_CONTEXT_LIMIT: goose assumes 128k for a model it doesn't know, so it
+    # wouldn't compact before the engine's real context fills up.
+    # GOOSE_MAX_TOKENS: the family's model-card reply size, when it has one.
+    local _env=(-e GOOSE_CONTEXT_LIMIT="$MODEL_CTX_SIZE")
+    local _max_out; _max_out=$(agent_max_output_tokens)
+    [ -n "$_max_out" ] && _env+=(-e GOOSE_MAX_TOKENS="$_max_out")
     exec_in_container \
-        -e TERM=xterm-256color -e COLORTERM=truecolor \
+        "${_env[@]}" -e TERM=xterm-256color -e COLORTERM=truecolor \
         "$WORKBENCH" goose session "${RESUME_ARGS[@]}"
 }

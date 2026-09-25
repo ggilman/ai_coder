@@ -11,6 +11,7 @@ USER_DIR="$INSTALL_DIR/user"
 SETTINGS_FILE="$USER_DIR/settings.json"
 STATE_FILE="$USER_DIR/state.json"
 PACKAGES_DIR="$INSTALL_DIR/packages"
+PROMPTS_DIR="$INSTALL_DIR/prompts"
 DOCKER_BIN="${DOCKER_BIN:-}"   # default resolved on demand by _resolve_docker_bin (ai-coder-model.sh)
 GLOBAL_ENGINE_NAME="ai-hub-engine"
 GLOBAL_PROXY_NAME="ai-hub-proxy"
@@ -138,7 +139,10 @@ fi
 
 # Default LiteLLM config — routes every model name to the local engine
 # (openai/local at http://<engine>:<port>/v1). Overridable by a child agent
-# that needs a different proxy config.
+# that needs a different proxy config. additional_drop_params strips the
+# sampling values the client sends (Gemini CLI sends temperature 1, top_p
+# 0.95 and top_k 64, tuned for Gemini) so the engine's family defaults
+# (MODEL_SAMPLING) apply instead.
 get_litellm_config() {
     echo "model_list:
   - model_name: \"*\"
@@ -149,6 +153,7 @@ get_litellm_config() {
       api_key: sk-1234
       timeout: 600
       stream_timeout: 600
+      additional_drop_params: [\"temperature\", \"top_p\", \"top_k\"]
 
 litellm_settings:
   request_timeout: 600

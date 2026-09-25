@@ -44,6 +44,7 @@ pref_default() {
         vram_overhead)    echo "1" ;;
         cpu_offload_pct) echo "90" ;;
         mcp_extras)       echo "no" ;;
+        agent_prompt)     echo "yes" ;;
         keep_hub)         echo "no" ;;
         keep_hub_timeout) echo "60" ;;
         model_volume)     echo "${MODEL_VOLUME_DEFAULT:-no}" ;;

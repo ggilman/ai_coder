@@ -384,6 +384,21 @@ list grows. Core servers (git, shell) are always registered." \
         "${DIM}  MCP extras disabled — only core servers are registered.${NC}"
 }
 
+setup_step_agent_prompt() {
+    local _cur_prompt; _cur_prompt=$(read_setting agent_prompt)
+    setup_toggle_pref agent_prompt "Agent instructions" \
+        "Agent instructions — give each coding tool a short set of working rules?" \
+        "A few lines from prompts/ in the ai-coder folder (read before editing,
+one tool call at a time, no internet under network isolation, ...), plus a
+family- or tool-specific line where one is known to help. Delivered through
+each tool's own instructions file. Claude also gets the project's CLAUDE.md
+or AGENTS.md this way, since it runs in --bare mode, which skips them." \
+        "Give agents instructions? [Y/n]:" \
+        "$_cur_prompt" "$_cur_prompt" \
+        "${ICON_OK} Agent instructions ${GREEN}enabled${NC} — applied on next launch (no rebuild needed)." \
+        "${DIM}  Agent instructions disabled — tools run with their own defaults only.${NC}"
+}
+
 setup_step_keep_hub() {
     local _cur_keep; _cur_keep=$(read_setting keep_hub)
     local _keep_input; _keep_input=$(ui_yesno "Keep hub warm" \
@@ -564,6 +579,8 @@ cmd_setup() {
     setup_step_gpu
     _ui_abort_if_cancelled
     setup_step_mcp_extras
+    _ui_abort_if_cancelled
+    setup_step_agent_prompt
     _ui_abort_if_cancelled
     setup_step_keep_hub
     _ui_abort_if_cancelled

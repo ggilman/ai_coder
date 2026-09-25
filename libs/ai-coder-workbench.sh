@@ -299,6 +299,14 @@ _run_llamacpp_engine() {
     else
         echo -e "${ICON_GEAR} Jinja template: ${YELLOW}disabled (model uses non-JSON tool call format)${NC}"
     fi
+    # Family chat-template options (MODEL_CHAT_TEMPLATE_KWARGS, e.g. Qwen3.6's
+    # preserve_thinking) — the template only reads them in --jinja mode.
+    local _ctk
+    _ctk=$(_current_template_kwargs)
+    if [ "$_ctk" != "-" ]; then
+        _jinja_args+=(--chat-template-kwargs "$_ctk")
+        echo -e "${ICON_GEAR} Chat template options: ${GREEN}${_ctk}${NC}"
+    fi
 
     # Thinking mode: reasoning models (Qwen3) burn hundreds of tokens before
     # every tool call. MODEL_THINKING=false disables it for snappier turns.
@@ -324,6 +332,23 @@ _run_llamacpp_engine() {
         echo -e "${ICON_GEAR} Repeat penalty: ${YELLOW}${MODEL_REPEAT_PENALTY}${NC}"
     fi
 
+    # Sampling defaults from the family conf (MODEL_SAMPLING, see
+    # config/ai-coder-model.conf) — otherwise llama-server's generic defaults
+    # apply to every model. Only a default: a client that sends its own value
+    # in the request wins (see agents/ai-coder-aider.sh).
+    local _samp_args=() _samp _kv _k
+    _samp=$(resolve_model_sampling)
+    for _kv in $_samp; do
+        _k="${_kv%%=*}"
+        case "$_k" in
+            temp|top_p|top_k|min_p|presence_penalty)
+                _samp_args+=("--${_k//_/-}" "${_kv#*=}") ;;
+            *)
+                echo -e "${YELLOW}⚠ Ignoring unknown sampling setting '${_kv}' (known: temp, top_p, top_k, min_p, presence_penalty)${NC}" ;;
+        esac
+    done
+    [ -n "$_samp" ] && echo -e "${ICON_GEAR} Sampling: ${GREEN}${_samp}${NC}"
+
     # --cache-reuse: agent conversations grow by appending, so reusing KV
     # cache chunks across requests avoids reprocessing the whole prompt each
     # turn — a large time-to-first-token win in agent loops.
@@ -337,7 +362,7 @@ _run_llamacpp_engine() {
         --batch-size "${MODEL_BATCH_SIZE:-1024}" --ubatch-size "${MODEL_UBATCH_SIZE:-${MODEL_BATCH_SIZE:-1024}}" --defrag-thold 0.1 \
         --cache-reuse "${MODEL_CACHE_REUSE:-256}" \
         ${LLAMA_SPEC_FLAGS} \
-        "${_draft_args[@]}" "${_think_args[@]}" "${_rp_args[@]}" "${_jinja_args[@]}" "${_ts_args[@]}" > /dev/null
+        "${_draft_args[@]}" "${_think_args[@]}" "${_rp_args[@]}" "${_samp_args[@]}" "${_jinja_args[@]}" "${_ts_args[@]}" > /dev/null
 }
 
 # Usage: _llama_supports_flag <image> <flag> — true when that image's
@@ -452,6 +477,8 @@ start_hub_engine() {
     write_pref "$STATE_FILE" engine_mvol "$(read_setting model_volume)"
     write_pref "$STATE_FILE" engine_memfrac "$(_current_sgl_memfrac)"
     write_pref "$STATE_FILE" engine_thinking "$(_current_thinking)"
+    write_pref "$STATE_FILE" engine_sampling "$(_current_sampling)"
+    write_pref "$STATE_FILE" engine_template_kwargs "$(_current_template_kwargs)"
     local _spec_state="${MODEL_SPEC_STRATEGY:-none}"
     engine_is_sglang && _spec_state="none"
     [ "${#_draft_args[@]}" -gt 0 ] && _spec_state="external-draft"
@@ -489,6 +516,40 @@ start_hub_engine() {
 # llama.cpp, which has no such setting, so it never triggers a restart there.
 _current_sgl_memfrac() {
     engine_is_sglang && echo "${SGL_MEM_FRACTION:-0.85}" || echo "-"
+}
+
+# The family's sampling settings as "key=value ..." — MODEL_SAMPLING, or
+# MODEL_SAMPLING_NOTHINK when thinking is off and the family sets one. Empty
+# under SGLang (not wired there) or when the family sets neither, which
+# leaves the engine on its own defaults. Also used by the engine_sampling
+# restart check and by agents that must stop sending their own temperature.
+resolve_model_sampling() {
+    engine_is_sglang && return 0
+    if [ "${MODEL_THINKING:-true}" = "false" ] && [ -n "${MODEL_SAMPLING_NOTHINK:-}" ]; then
+        echo "$MODEL_SAMPLING_NOTHINK"
+    else
+        echo "${MODEL_SAMPLING:-}"
+    fi
+}
+
+# Sampling for the engine_sampling restart check — "-" under SGLang, "default"
+# when the family sets none (never empty, which the check reads as "not
+# recorded").
+_current_sampling() {
+    if engine_is_sglang; then echo "-"; return; fi
+    local _s; _s=$(resolve_model_sampling)
+    echo "${_s:-default}"
+}
+
+# The family's --chat-template-kwargs for the engine and for the
+# engine_template_kwargs restart check — "-" when there are none to pass:
+# unset, SGLang, or MODEL_JINJA=false (the internal template ignores them).
+_current_template_kwargs() {
+    if engine_is_sglang || [ "${MODEL_JINJA:-true}" != "true" ] || \
+       [ -z "${MODEL_CHAT_TEMPLATE_KWARGS:-}" ]; then
+        echo "-"; return
+    fi
+    echo "$MODEL_CHAT_TEMPLATE_KWARGS"
 }
 
 # Thinking mode for the engine_thinking restart check — "-" under SGLang,
@@ -567,6 +628,8 @@ ensure_engine_currently_running() {
             "Model storage mode|$(read_pref "$STATE_FILE" engine_mvol "")|$(read_setting model_volume)"
             "Speculative decoding|$(read_pref "$STATE_FILE" engine_spec "")|$_cur_spec"
             "Thinking mode|$(read_pref "$STATE_FILE" engine_thinking "")|$(_current_thinking)"
+            "Sampling|$(read_pref "$STATE_FILE" engine_sampling "")|$(_current_sampling)"
+            "Chat template options|$(read_pref "$STATE_FILE" engine_template_kwargs "")|$(_current_template_kwargs)"
         )
         for _check in "${_restart_checks[@]}"; do
             IFS='|' read -r _label _old _new <<< "$_check"

@@ -16,11 +16,27 @@ configure_workbench() {
     local config_dir="$HOME/.opencode-config"
     # Docker runs as root so mounted dir files can become root-owned on the WSL host.
     ensure_host_dir_writable "$config_dir"
+    # Agent instructions (prompts/) — OpenCode reads the project's AGENTS.md
+    # itself, so only ai-coder's file is listed here.
+    local _instructions=""
+    if render_agent_prompt opencode "$config_dir/ai-coder-prompt.md"; then
+        _instructions='  "instructions": ["/root/.config/opencode/ai-coder-prompt.md"],'
+    fi
+    # Largest reply: the family's model-card value (capped), else 8192.
+    local _max_out; _max_out=$(agent_max_output_tokens)
+    # When the engine keeps past reasoning (reasoning_preserved), OpenCode
+    # must send it back as reasoning_content — it drops it otherwise.
+    local _reasoning=""
+    if reasoning_preserved; then
+        _reasoning='          "reasoning": true,
+          "interleaved": { "field": "reasoning_content" },'
+    fi
     cat > "$config_dir/opencode.json" <<EOF
 {
   "\$schema": "https://opencode.ai/config.json",
   "autoupdate": false,
   "share": "disabled",
+$_instructions
   "permission": {
     "write": "deny"
   },
@@ -36,10 +52,11 @@ configure_workbench() {
       "models": {
         "hub-model": {
           "name": "$MODEL_FAMILY Local",
+$_reasoning
           "limit": {
             "context": $MODEL_CTX_SIZE,
             "input": $MODEL_CTX_SIZE,
-            "output": 8192
+            "output": ${_max_out:-8192}
           }
         }
       }

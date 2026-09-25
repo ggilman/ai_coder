@@ -145,7 +145,7 @@ mkdir -p "$BUNDLE_IMAGES_DIR" "$BUNDLE_MODELS_DIR" "$BUNDLE_SCRIPTS_DIR" "$BUNDL
 
 # --- [ Copy project scripts ] -------------------------------------------------
 echo -e "${ICON_GEAR} Copying project scripts..."
-for _item in ai-coder ai-status.sh agents libs config packages README.md; do
+for _item in ai-coder ai-status.sh agents libs config packages prompts README.md; do
     [ -e "$PROJECT_ROOT/$_item" ] || continue
     cp -r "$PROJECT_ROOT/$_item" "$BUNDLE_SCRIPTS_DIR/"
 done

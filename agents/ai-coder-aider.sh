@@ -29,6 +29,31 @@ configure_workbench() {
     ensure_host_dir_writable "$HOME/.aider-config"
     # Git identity + autocrlf come from ~/.gitconfig-container, which
     # run_workbench mounts at /root/.gitconfig for every agent.
+    # Agent instructions (prompts/) and the project's own conventions file go
+    # in as read-only chat files. Aider reads the latter live from the
+    # workspace, so edits to it apply without a relaunch.
+    local _read=""
+    if render_agent_prompt aider "$HOME/.aider-config/ai-coder-prompt.md"; then
+        _read="read:
+  - /root/.aider-config/ai-coder-prompt.md"
+        local _proj; _proj=$(project_instructions_file AGENTS.md CONVENTIONS.md CLAUDE.md)
+        if [ -n "$_proj" ]; then
+            _read="$_read
+  - /$WORKSPACE_DIR/$(basename "$_proj")"
+        fi
+    fi
+    # Aider doesn't know "openai/local", so it would fall back to whole-file
+    # edits and no repo map. Use what Aider's own model settings give the
+    # local coding models it does list (Qwen2.5-Coder: diff edits, repo map).
+    # It also sends temperature 0 on every request, overriding the family's
+    # sampling on the engine (and greedy decoding is what Qwen's model cards
+    # warn against) — when the family defines sampling, stop sending it.
+    local _model_settings="$HOME/.aider-config/.aider.model.settings.yml"
+    printf -- '- name: openai/local\n  edit_format: diff\n  use_repo_map: true\n' > "$_model_settings"
+    if [ -n "$(resolve_model_sampling)" ]; then
+        printf -- '  use_temperature: false\n' >> "$_model_settings"
+    fi
+    local _settings_line="model-settings-file: /root/.aider-config/.aider.model.settings.yml"
     # Always write the aider config so the API base URL stays current.
     # User customisations (model, flags) can be made in the file after first run
     # but the connection settings must match the current infrastructure.
@@ -42,6 +67,8 @@ show-model-warnings: false
 show-release-notes: false
 gitignore: true
 input-history-file: /root/.aider-config/.aider.input.history
+$_settings_line
+$_read
 EOF
 }
 

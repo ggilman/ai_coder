@@ -28,7 +28,8 @@
 # default: every agent has its own file tools, and the near-duplicate schema
 # (path + edits[{oldText,newText}] vs. e.g. OpenCode's filePath/oldString)
 # makes small models mix up the argument names and fail the call. When
-# enabled, Claude also gets instructions to prefer these over its own tools.
+# enabled, Claude is told to fall back to these when its own Edit fails
+# (prompts/tools/claude-mcp-extras.md).
 @modelcontextprotocol/server-filesystem       | filesystem | mcp-server-filesystem            | {workspace}
 
 # Persistent knowledge graph memory — survives across sessions within the container lifetime.

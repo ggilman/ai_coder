@@ -21,9 +21,15 @@ Bash CLI that launches AI coding tools (Claude, OpenCode, Aider, Gemini) inside 
 ## Adding a model family
 Copy existing `config/families/<family>.conf`, keep double-sourcing guard, fill `MODEL_FAMILY` and ordered `MODEL_N_*` candidates (best quality first, `WEIGHTS_GB=0` last). Family confs are read at launch time only — no code changes needed.
 
+## Agent instructions and sampling
+- `prompts/*.md` → assembled by `render_agent_prompt` (`libs/ai-coder-env.sh`) into each tool's own instructions file/flag in its `configure_workbench`; gated by the `agent_prompt` setting; files carry `AGENT_PROMPT_MARKER` so user-written files are never overwritten
+- Claude runs `--bare` (skips CLAUDE.md discovery), so it gets `--append-system-prompt-file` with the project's CLAUDE.md/AGENTS.md folded in
+- Per-family sampling: `MODEL_SAMPLING`/`MODEL_SAMPLING_NOTHINK` in the family conf → llama-server `--temp/--top-p/...` via `resolve_model_sampling`; no rebuild, engine restarts on change
+- Other model-card settings per family: `MODEL_REASONING_PRESERVE` (Qwen3.6/3.8; OpenCode then gets `interleaved` so it sends reasoning back), `MODEL_CHAT_TEMPLATE_KWARGS` (→ `--chat-template-kwargs`, jinja only), `MODEL_MAX_OUTPUT` (→ each tool's output limit via `agent_max_output_tokens`, capped at ctx/4). Tool-specific context/output env vars are set in each agent's `execute_tool`
+
 ## Config vs rebuild
 - **Rebuild needed**: apt packages, MCP npm/pip packages, git identity, base image
-- **No rebuild**: model family/tier, `config/ai-coder-model.conf` settings, MCP server args, GPU mode, most `--setup` toggles, KV cache type, speculative decoding, proxy/network isolation
+- **No rebuild**: `prompts/*.md`, model family/tier, `config/ai-coder-model.conf` settings, MCP server args, GPU mode, most `--setup` toggles, KV cache type, speculative decoding, proxy/network isolation
 
 Run `./ai-coder --rebuild` then `./ai-coder` for image changes.
 

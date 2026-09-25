@@ -44,6 +44,7 @@ The environment uses a **Hub & Spoke** model:
 | `ai-status.sh` | System health dashboard |
 | `offline/bundle.sh` | Offline bundle creator — packages scripts, Docker images, and a model for air-gapped deployment |
 | `offline/unbundle.sh` | Offline bundle installer — loads a bundle onto an isolated target machine |
+| `prompts/` | Agent instructions assembled at launch — see [Agent Instructions](#agent-instructions) |
 
 ## Family Configuration Format
 
@@ -87,6 +88,7 @@ The launcher normally picks the first (best) entry whose `WEIGHTS_GB` plus its o
 - `MODEL_KV_TYPE`: KV cache quantization (e.g., `q8_0`, `q4_0`). Applied to both K and V unless the `--model` KV cache choice overrides it (`MODEL_KV_TYPE_V` overrides the V side alone).
 - `MODEL_JINJA`: Enable model's built-in Jinja template.
 - `MODEL_THINKING`: Family default for reasoning tokens (`true`/`false`; e.g., for the Qwen3 family). The *Thinking mode* question in `--model` overrides it.
+- `MODEL_SAMPLING` / `MODEL_SAMPLING_NOTHINK`: Engine sampling defaults from the model card, as `key=value` pairs (e.g. `temp=0.6 top_p=0.95 top_k=20 min_p=0`); the second applies when thinking is off. See [Sampling defaults per family](#sampling-defaults-per-family).
 
 ## Available Tools
 
@@ -223,6 +225,56 @@ Details:
 
 To judge the benefit on your hardware, run the same task with the setting on and off (`--setup`, then reopen a session) and compare tokens/sec in the engine logs or the feel of long generations.
 
+## Agent Instructions
+
+ai-coder gives every coding tool a short set of working rules, written for small local models: read a file before editing it, re-read after a failed edit, emit the tool call instead of describing it, don't invent APIs, keep replies short. The text lives in `prompts/` and is assembled at each launch:
+
+| File | Included |
+| --- | --- |
+| `prompts/common.md` | Always. `{workspace}` becomes the container workspace path |
+| `prompts/offline.md` | When network isolation is on |
+| `prompts/families/<family>.md` | For that family (named after its conf, e.g. `gptoss20b.md`), for known model quirks |
+| `prompts/tools/<tool>.md` | For that tool |
+| `prompts/tools/<tool>-mcp-extras.md` | For that tool, when MCP extras is on |
+
+Every file after `common.md` continues its bullet list, so write them as `- ` bullets. Keep them short: each tool sends the text with every request, so it costs context the same way registered MCP tools do.
+
+Each tool gets the text through its own instructions mechanism:
+
+| Tool | Delivered as | Project instructions |
+| --- | --- | --- |
+| Claude Code | `--append-system-prompt-file` (`~/.claude-config/ai-coder-prompt.md`) | Claude runs with `--bare`, which skips CLAUDE.md discovery, so the project's `CLAUDE.md` (or else `AGENTS.md`) is appended to the same file at launch |
+| OpenCode | `instructions` in `opencode.json` | OpenCode reads `AGENTS.md` itself |
+| Aider | `read:` in `.aider.conf.yml` | The project's `AGENTS.md`, `CONVENTIONS.md` or `CLAUDE.md` (first found) is added as a read-only file |
+| Gemini CLI | `~/.gemini-config/GEMINI.md` | Gemini reads the project's `GEMINI.md` itself |
+| Qwen Code | `~/.qwen-config/QWEN.md` | Qwen Code reads the project's `QWEN.md` itself |
+| Goose | `~/.goose-config/.goosehints` | Goose reads the project's `.goosehints` itself |
+
+Generated files start with an `<!-- ai-coder: ... -->` marker line. A same-named file without it (for example your own `GEMINI.md`) is never overwritten or deleted; ai-coder warns and skips its instructions for that tool instead. Turn the feature off with *Agent instructions* in `--setup`, which also removes the generated files on the next launch. Editing `prompts/` needs no rebuild. `--update` replaces the shipped prompt files, so keep your own changes in new files (e.g. a family file) or re-apply them after updating.
+
+### Sampling defaults per family
+
+Prompt wording matters less to small models than sampling settings do, and every model vendor publishes its own. Each family conf sets `MODEL_SAMPLING` (and, for Qwen, `MODEL_SAMPLING_NOTHINK` for thinking-off mode) from its model card, and the engine starts with those as its defaults (`--temp`, `--top-p`, `--top-k`, `--min-p`, `--presence-penalty`). Without them, llama-server uses generic defaults (temperature 0.8) for every model. They are only defaults: a tool that sends its own value in the request wins. Aider sends temperature 0 unless told otherwise, so when a family sets sampling, ai-coder writes an Aider model settings file that stops it. Changing a family's sampling restarts the engine on the next launch. Override one session with, e.g., `MODEL_SAMPLING="temp=0.3" ./ai-coder`. llama.cpp only.
+
+### Model-card and tool settings
+
+Besides sampling, family confs can carry other settings from the model card:
+
+- `MODEL_REASONING_PRESERVE`: keep earlier turns' reasoning in the prompt. Qwen3.6 and Qwen3.8 recommend this for agent work, so those families turn it on; everything else drops old reasoning to save context. When it's on, OpenCode is also configured to send its past reasoning back (`reasoning` + `interleaved` in `opencode.json`), because it drops it otherwise.
+- `MODEL_CHAT_TEMPLATE_KWARGS`: options for the model's chat template, passed as `--chat-template-kwargs` (e.g. Qwen3.6's `{"preserve_thinking":true}`). Ignored for families running with `MODEL_JINJA=false`.
+- `MODEL_MAX_OUTPUT`: the longest reply the model card recommends, capped at a quarter of the context size.
+
+Each tool is also told about the local model where it has a setting for it:
+
+| Tool | Settings passed |
+| --- | --- |
+| Claude Code | `CLAUDE_CODE_ATTRIBUTION_HEADER=0` (keeps the engine's prompt cache working across turns), `CLAUDE_CODE_MAX_CONTEXT_TOKENS` (the real context size, so it compacts in time), `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` |
+| OpenCode | `limit.output`, and the reasoning send-back above |
+| Aider | Model settings: diff edits and repo map (Aider's own settings for local coding models), no temperature when the family sets sampling |
+| Gemini CLI | The LiteLLM proxy drops the temperature/top_p/top_k Gemini CLI sends, so the family's sampling applies |
+| Qwen Code | `QWEN_CODE_MAX_OUTPUT_TOKENS` |
+| Goose | `GOOSE_CONTEXT_LIMIT` (the real context size), `GOOSE_MAX_TOKENS` |
+
 ## Customising the Workbench Image
 
 ### When does a rebuild apply changes?
@@ -238,6 +290,7 @@ A rebuild (`./ai-coder --rebuild` followed by `./ai-coder`) is only needed when 
 | Change an MCP env var value (e.g. `BRAVE_API_KEY`) | No | Value is read from your shell at launch time |
 | Change model family or VRAM tier | No | Model is loaded by the engine container at runtime |
 | Change `config/ai-coder-model.conf` settings | No | Read at launch time |
+| Edit agent instructions (`prompts/*.md`) or a family's `MODEL_SAMPLING` | No | Instructions are rendered at launch; a sampling change restarts the engine |
 | Add a new model family config (`config/families/*.conf`) | No | Read at launch time |
 | Change GPU mode (`--setup`) | No | Passed as flags when the engine container starts |
 | Toggle fast model storage (`--setup`) | No | Engine restarts with the new mount on next launch |
@@ -471,7 +524,7 @@ Git checkouts are tracked through git itself: `--version` reports the local `ori
 
 ### Setup (`--setup`)
 
-**`--setup` must be run once before first launch.** It walks through up to twelve configuration steps — which ones depends on the inference engine you choose, since options one engine doesn't use are not shown. On first run the installer downloads [gum](https://github.com/charmbracelet/gum) — a CLI tool for beautiful interactive prompts — and uses it for the wizard on both WSL and Git Bash. If gum is unavailable it falls back to plain text prompts. Either way the questions and defaults are the same:
+**`--setup` must be run once before first launch.** It walks through up to thirteen configuration steps — which ones depends on the inference engine you choose, since options one engine doesn't use are not shown. On first run the installer downloads [gum](https://github.com/charmbracelet/gum) — a CLI tool for beautiful interactive prompts — and uses it for the wizard on both WSL and Git Bash. If gum is unavailable it falls back to plain text prompts. Either way the questions and defaults are the same:
 
 ```bash
 ./ai-coder --setup
@@ -483,12 +536,13 @@ Git checkouts are tracked through git itself: `--version` reports the local `ori
 4. **Inference engine** — llama.cpp (default) or SGLang. See [Inference Engine](#inference-engine-llamacpp-or-sglang).
 5. **GPU mode** — only shown when 2+ GPUs are detected; choose multi (all GPUs) or single.
 6. **MCP extras** — register the optional MCP servers (memory, thinking, conan, context7, brave-search, github, fetch, time) with each agent. Off by default: fewer registered tools means faster prompts and better tool selection on small local models.
-7. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Also asks for an idle timeout (default 60 min, `0` = forever) after which the warm hub stops itself to release VRAM; stop it immediately with `--clean`.
-8. **Fast model storage** — cache models in a Docker volume so engine cold starts load from the VM's native disk instead of the slow Windows filesystem bridge. Default on for WSL/Git Bash; see [Model Storage](#model-storage).
-9. **Speculative decoding** *(llama.cpp)* — use a small draft model to speed up generation, typically 1.5–2× on code. Default on; costs ~1 GB VRAM and applies only to families that define a draft (currently Qwen3). See [Speculative Decoding](#speculative-decoding).
-10. **Generation speed tracking** *(llama.cpp)* — off by default. Enables the `--speed` command: a one-shot `llama-bench` pass on your model on a clean GPU that prints tokens-per-second (tg = generation, pp = prompt processing).
-11. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
-12. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
+7. **Agent instructions** — give each coding tool a short set of working rules from `prompts/` (see [Agent Instructions](#agent-instructions)). On by default.
+8. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Also asks for an idle timeout (default 60 min, `0` = forever) after which the warm hub stops itself to release VRAM; stop it immediately with `--clean`.
+9. **Fast model storage** — cache models in a Docker volume so engine cold starts load from the VM's native disk instead of the slow Windows filesystem bridge. Default on for WSL/Git Bash; see [Model Storage](#model-storage).
+10. **Speculative decoding** *(llama.cpp)* — use a small draft model to speed up generation, typically 1.5–2× on code. Default on; costs ~1 GB VRAM and applies only to families that define a draft (currently Qwen3). See [Speculative Decoding](#speculative-decoding).
+11. **Generation speed tracking** *(llama.cpp)* — off by default. Enables the `--speed` command: a one-shot `llama-bench` pass on your model on a clean GPU that prints tokens-per-second (tg = generation, pp = prompt processing).
+12. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
+13. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
 
 Settings that change which model tier fits in VRAM are deliberately not wizard steps — `--model` asks them instead (along with the model family, tool, and Open WebUI), and a plain launch verifies they are set:
 
@@ -500,7 +554,7 @@ Settings that change which model tier fits in VRAM are deliberately not wizard s
 
 `--model` also asks one question that doesn't affect sizing but is worth revisiting per model:
 
-- **Thinking mode** *(llama.cpp)* — family default, on, or off. Reasoning models write a block of reasoning before every reply and tool call: better planning on hard tasks, but each agent turn produces many more tokens and takes longer. Off passes `--reasoning-budget 0`. When it's on, earlier turns' reasoning is dropped from the prompt (`--no-reasoning-preserve`) so it doesn't use up context; set `MODEL_REASONING_PRESERVE=true` to keep it. The family default is on for the Qwen families and gpt-oss, off for GLM-4.7-Flash. (Under SGLang thinking is a per-request option, so there's no engine-level switch.)
+- **Thinking mode** *(llama.cpp)* — family default, on, or off. Reasoning models write a block of reasoning before every reply and tool call: better planning on hard tasks, but each agent turn produces many more tokens and takes longer. Off passes `--reasoning-budget 0`. When it's on, earlier turns' reasoning is dropped from the prompt (`--no-reasoning-preserve`) so it doesn't use up context, except for Qwen3.6 and Qwen3.8, whose model cards recommend keeping it for agent work (`MODEL_REASONING_PRESERVE`; see [Model-card and tool settings](#model-card-and-tool-settings)). The family default is on for the Qwen families and gpt-oss, off for GLM-4.7-Flash. (Under SGLang thinking is a per-request option, so there's no engine-level switch.)
 
 In gum mode, pressing **Esc** or **Cancel** on any step keeps that setting unchanged and moves to the next question — nothing is lost mid-wizard. To force the plain-text prompts even where gum is installed, set `AI_CODER_NO_GUM=1`.
 

@@ -1,0 +1,2 @@
+- If the built-in Edit tool fails to match text (whitespace or line-ending differences), use `mcp__filesystem__edit_file` (`path`, `edits: [{oldText, newText}]`), or `mcp__filesystem__write_file` with the full file content.
+- For merge conflicts: `git status` to find the files, then replace each whole block from `<<<<<<<` to `>>>>>>>` with the resolved text in one edit.

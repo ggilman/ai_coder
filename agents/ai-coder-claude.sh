@@ -6,6 +6,8 @@
 IMAGE_NAME="ai-coder-claude"
 TOOL_NAME="Claude"
 RESUME_FLAG="--continue"
+# Set by configure_workbench when agent instructions are rendered.
+CLAUDE_PROMPT_ARGS=()
 
 build_image() {
     build_npm_agent_image "Dockerfile" "apt-claude.txt" "mcp-claude.txt" \
@@ -30,77 +32,23 @@ EOF
     merge_json_file "$_tmp" "$_cfg"
     rm -f "$_tmp"
     report_mcp_registration "/$WORKSPACE_DIR" standard "mcp-claude.txt"
-    # Write global instructions so Claude uses MCP tools for file I/O.
-    # This avoids the str_replace exact-match failures that occur when editing
-    # files with whitespace variance or after merge conflicts add marker lines.
-    # The filesystem server is an MCP extra, so without it the file is removed
-    # rather than left pointing at tools that aren't registered.
-    if [ "$(read_setting mcp_extras)" != "yes" ]; then
+    # Agent instructions (prompts/) go in through --append-system-prompt-file
+    # in execute_tool: --bare skips CLAUDE.md discovery, both ~/.claude's and
+    # the project's, so the project's CLAUDE.md (or AGENTS.md) is folded into
+    # the same file. Earlier ai-coder versions wrote a ~/.claude/CLAUDE.md
+    # that --bare never read — remove it if it's still that generated file.
+    if [ "$(head -n 1 "$HOME/.claude-config/CLAUDE.md" 2>/dev/null)" = "# File Editing Instructions" ]; then
         rm -f "$HOME/.claude-config/CLAUDE.md"
-        return 0
     fi
-    cat > "$HOME/.claude-config/CLAUDE.md" <<'EOF'
-# File Editing Instructions
-
-When reading or writing files, **always use the MCP filesystem tools** — never
-the built-in `str_replace_based_edit_tool` or `create_file`.
-
-## Tool reference — exact parameter names
-
-### Read a file
-```
-mcp__filesystem__read_file
-  path: "/abs/path/to/file"
-```
-
-### Write (create or fully replace) a file
-```
-mcp__filesystem__write_file
-  path: "/abs/path/to/file"
-  content: "<full file content>"
-```
-
-### Edit — replace one block inside a file
-```
-mcp__filesystem__edit_file
-  path: "/abs/path/to/file"
-  edits:
-    - oldText: "<exact text to replace>"
-      newText: "<replacement text>"
-```
-
-`edits` is an array — you may include multiple `{oldText, newText}` pairs in a
-single call to make several replacements atomically.
-
-## Why MCP filesystem, not built-in tools?
-
-`str_replace_based_edit_tool` requires a character-for-character match and fails
-whenever indentation, trailing spaces, or line endings differ even slightly.
-The MCP filesystem tools are tolerant of minor whitespace variance.
-
-## Workflow for merge conflicts
-
-1. Run `git status` (shell) to list conflicted files.
-2. Use `mcp__filesystem__read_file` to read the file and locate the conflict block.
-3. Use `mcp__filesystem__edit_file` with:
-   - `oldText` = the entire conflict block verbatim, from `<<<<<<<` through `>>>>>>>`
-   - `newText` = the resolved content (no conflict markers)
-4. Repeat for every conflict block.
-5. Run `git add <file>` then `git commit` (shell) to finalise.
-
-If `edit_file` fails, fall back to `mcp__filesystem__write_file` with the fully
-resolved file content.
-EOF
+    CLAUDE_PROMPT_ARGS=()
+    if render_agent_prompt claude "$HOME/.claude-config/ai-coder-prompt.md" \
+            "$(project_instructions_file CLAUDE.md AGENTS.md)"; then
+        CLAUDE_PROMPT_ARGS=(--append-system-prompt-file /root/.claude/ai-coder-prompt.md)
+    fi
 }
 
 start_workbench() {
-    # SGLang's radix prefix cache only hits across turns when Claude Code
-    # stops prepending its per-request attribution header to the system
-    # prompt (SGLang's own Claude Code guidance).
-    local _engine_env=()
-    engine_is_sglang && _engine_env=(-e CLAUDE_CODE_ATTRIBUTION_HEADER=0)
     run_workbench \
-        "${_engine_env[@]}" \
         -v "$(to_host_path "$HOME/.npm-cache"):/root/.npm" \
         -v "$(to_host_path "$HOME/.claude-config"):/root/.claude" \
         -v "$(to_host_path "$HOME/.claude-config.json"):/root/.claude.json" \
@@ -110,5 +58,24 @@ start_workbench() {
 }
 
 execute_tool() {
-    exec_in_container -e CLAUDE_CODE_SIMPLE=1 "$WORKBENCH" claude --bare "${RESUME_ARGS[@]}"
+    # Per-session settings go on the exec, not the container, since they
+    # follow the model and context size and the container can outlive them.
+    #  - ATTRIBUTION_HEADER=0: the per-request attribution header changes the
+    #    prompt prefix, so neither engine's prefix cache hits across turns
+    #    (unsloth's and SGLang's Claude Code guidance).
+    #  - MAX_CONTEXT_TOKENS: the GGUF-name model ID is unknown to Claude Code,
+    #    so it would otherwise assume a larger window and never compact
+    #    before the engine rejects the prompt.
+    #  - DEFAULT_HAIKU_MODEL: background requests name the local model too.
+    #  - MAX_OUTPUT_TOKENS: the family's model-card value, when it has one.
+    local _env=(
+        -e CLAUDE_CODE_SIMPLE=1
+        -e CLAUDE_CODE_ATTRIBUTION_HEADER=0
+        -e CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+        -e CLAUDE_CODE_MAX_CONTEXT_TOKENS="$MODEL_CTX_SIZE"
+        -e ANTHROPIC_DEFAULT_HAIKU_MODEL="$(model_id)"
+    )
+    local _max_out; _max_out=$(agent_max_output_tokens)
+    [ -n "$_max_out" ] && _env+=(-e CLAUDE_CODE_MAX_OUTPUT_TOKENS="$_max_out")
+    exec_in_container "${_env[@]}" "$WORKBENCH" claude --bare "${CLAUDE_PROMPT_ARGS[@]}" "${RESUME_ARGS[@]}"
 }

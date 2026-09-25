@@ -33,6 +33,9 @@ $(make_agent_mcp_json "/$WORKSPACE_DIR" standard mcp-qwencode.txt)
 }
 EOF
     report_mcp_registration "/$WORKSPACE_DIR" standard "mcp-qwencode.txt"
+    # Agent instructions (prompts/) as the global context file; Qwen Code
+    # also reads the project's own QWEN.md itself.
+    render_agent_prompt qwencode "$HOME/.qwen-config/QWEN.md" || true
 }
 
 start_workbench() {
@@ -45,7 +48,12 @@ start_workbench() {
 }
 
 execute_tool() {
+    # The family's model-card reply size, when it has one; otherwise Qwen Code
+    # uses its own default for the model.
+    local _env=()
+    local _max_out; _max_out=$(agent_max_output_tokens)
+    [ -n "$_max_out" ] && _env+=(-e QWEN_CODE_MAX_OUTPUT_TOKENS="$_max_out")
     exec_in_container \
-        -e TERM=xterm-256color -e COLORTERM=truecolor \
+        "${_env[@]}" -e TERM=xterm-256color -e COLORTERM=truecolor \
         "$WORKBENCH" qwen "${RESUME_ARGS[@]}"
 }

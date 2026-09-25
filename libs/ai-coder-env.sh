@@ -262,6 +262,83 @@ make_agent_mcp_json() {
     make_mcp_servers_json "$workspace" "$mode" "${files[@]}"
 }
 
+# First line of every instructions file render_agent_prompt writes. It marks
+# the file as ai-coder's, so a same-named file the user wrote themselves
+# (e.g. their own ~/.gemini-config/GEMINI.md) is never overwritten or deleted.
+AGENT_PROMPT_MARKER="<!-- ai-coder: generated each launch from prompts/ in the ai-coder install -->"
+
+# Print the largest reply to let a tool request: the family's MODEL_MAX_OUTPUT,
+# capped at a quarter of the context size so a long reply can't crowd out the
+# conversation (tools reserve their output limit out of the context window).
+# Prints nothing when the family doesn't set one — callers keep their default.
+agent_max_output_tokens() {
+    [ -n "${MODEL_MAX_OUTPUT:-}" ] || return 0
+    local _cap=$(( ${MODEL_CTX_SIZE:-0} / 4 ))
+    if [ "$_cap" -gt 0 ] && [ "$MODEL_MAX_OUTPUT" -gt "$_cap" ]; then
+        echo "$_cap"
+    else
+        echo "$MODEL_MAX_OUTPUT"
+    fi
+}
+
+# True when the engine keeps past turns' reasoning in the prompt (thinking on
+# and MODEL_REASONING_PRESERVE=true) — tools that drop reasoning from the
+# history they send back must then be told to keep it.
+reasoning_preserved() {
+    ! engine_is_sglang && [ "${MODEL_THINKING:-true}" != "false" ] && \
+        [ "${MODEL_REASONING_PRESERVE:-false}" = "true" ]
+}
+
+# Print the host path of the first of <name>... that exists in the project
+# folder ($PWD, mounted as /$WORKSPACE_DIR), or nothing.
+# Usage: project_instructions_file CLAUDE.md AGENTS.md
+project_instructions_file() {
+    local _n
+    for _n in "$@"; do
+        [ -f "$PWD/$_n" ] && { echo "$PWD/$_n"; return 0; }
+    done
+    return 0
+}
+
+# Write the agent instructions for <tool> to <out-file>: prompts/common.md,
+# prompts/offline.md (network isolation only), prompts/families/<family>.md,
+# prompts/tools/<tool>.md and prompts/tools/<tool>-mcp-extras.md (MCP extras
+# only) — each included when it exists, with {workspace} replaced by the
+# container workspace path — then, if given, the project's own instructions
+# file under a heading. Every file after common.md continues its bullet list,
+# so write them as plain "- " bullets. Kept short on purpose: agents re-send
+# it on every request, same reasoning as the mcp-common/mcp-extra split.
+# Returns 1 without writing when the agent_prompt setting is off (removing a
+# file an earlier launch wrote) or when <out-file> is the user's own file.
+# Usage: render_agent_prompt <tool> <out-file> [project-instructions-file]
+render_agent_prompt() {
+    local tool="$1" out="$2" project_file="${3:-}"
+    if [ -f "$out" ] && [ "$(head -n 1 "$out" | tr -d '\r')" != "$AGENT_PROMPT_MARKER" ]; then
+        echo -e "${YELLOW}⚠ $out wasn't written by ai-coder — leaving it as is (no ai-coder agent instructions this session).${NC}" >&2
+        return 1
+    fi
+    if [ "$(read_setting agent_prompt)" != "yes" ]; then
+        rm -f "$out"
+        return 1
+    fi
+    local parts=("$PROMPTS_DIR/common.md")
+    [ "${NETWORK_INTERNAL:-false}" = "true" ] && parts+=("$PROMPTS_DIR/offline.md")
+    parts+=("$PROMPTS_DIR/families/${FAMILY_PREF:-}.md" "$PROMPTS_DIR/tools/$tool.md")
+    [ "$(read_setting mcp_extras)" = "yes" ] && parts+=("$PROMPTS_DIR/tools/$tool-mcp-extras.md")
+    local _ws="/$WORKSPACE_DIR" _f
+    _ws="${_ws//&/\\&}"
+    {
+        echo "$AGENT_PROMPT_MARKER"
+        for _f in "${parts[@]}"; do
+            [ -f "$_f" ] && sed -e 's/\r$//' -e "s|{workspace}|$_ws|g" "$_f"
+        done
+        if [ -n "$project_file" ] && [ -f "$project_file" ]; then
+            printf '\n# Project instructions (%s)\n\n' "$(basename "$project_file")"
+            sed 's/\r$//' "$project_file"
+        fi
+    } > "$out"
+}
+
 # Fetch the commit sha the release branch points at from the GitHub API.
 # Echoes empty on any failure (offline, proxy down) — callers treat a blank
 # result as "unavailable", matching _fetch_commit_date.

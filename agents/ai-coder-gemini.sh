@@ -36,6 +36,9 @@ EOF
     # hits the corrupted-file error and always uses the env var cleanly.
     rm -f "$HOME/.gemini-config/gemini-credentials.json"
     report_mcp_registration "/$WORKSPACE_DIR" standard "mcp-gemini.txt"
+    # Agent instructions (prompts/) as the global context file; Gemini CLI
+    # also reads the project's own GEMINI.md itself.
+    render_agent_prompt gemini "$HOME/.gemini-config/GEMINI.md" || true
 }
 
 start_workbench() {
