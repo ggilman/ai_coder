@@ -181,14 +181,22 @@ pull_base_image_via_proxy() {
 }
 
 # Pull <image> if not present locally, routing through the proxy-aware
-# pull_base_image_via_proxy when DOWNLOAD_PROXY is set.
+# pull_base_image_via_proxy when DOWNLOAD_PROXY is set. Retried like model
+# downloads (AI_CODER_DOWNLOAD_RETRIES); Docker keeps the layers a failed
+# pull already fetched, so a retry only fetches the rest.
 pull_image_if_missing() {
     local img="$1"
     docker image inspect "$img" >/dev/null 2>&1 && return 0
     echo -e "${CYAN}  Pulling $img ...${NC}"
+    retry_with_backoff "${AI_CODER_DOWNLOAD_RETRIES:-3}" "Image pull" _pull_image_once "$img" || {
+        echo -e "${RED}✘ Failed to pull $img${NC}"; return 1
+    }
+}
+
+_pull_image_once() {
     if [ -n "${DOWNLOAD_PROXY:-}" ]; then
-        pull_base_image_via_proxy "$img" "$DOWNLOAD_PROXY" || { echo -e "${RED}✘ Failed to pull $img${NC}"; return 1; }
+        pull_base_image_via_proxy "$1" "$DOWNLOAD_PROXY"
     else
-        docker pull "$img" || { echo -e "${RED}✘ Failed to pull $img${NC}"; return 1; }
+        docker pull "$1"
     fi
 }

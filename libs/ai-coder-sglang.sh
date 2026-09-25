@@ -83,7 +83,9 @@ _resolve_sglang_tp_args() {
 # since snapshot_download resumes — then writes the completion marker and
 # renames into place. Revision pins (MODEL_SGL_N_REVISION) stand in for the
 # GGUF path's sha256 check. HF_TOKEN, if set (e.g. in ~/.ai-coder-env), is
-# passed through for gated repos.
+# passed through for gated repos. Holds the model's download lock (a second
+# session would otherwise `docker rm -f` this one's download container) and
+# retries failed attempts, each resuming the last.
 download_sglang_model() {
     if [ -z "${MODEL_FILE:-}" ] || [ -z "${MODEL_URL:-}" ]; then
         select_model_for_vram "${EFFECTIVE_VRAM_GB:-${VRAM_GB:-0}}"
@@ -92,7 +94,11 @@ download_sglang_model() {
     [ -n "${MODEL_URL:-}" ] || { echo -e "${RED}✘ Missing Hugging Face repo for ${MODEL_FILE:-model}${NC}"; return 1; }
 
     pull_image_if_missing "$SGLANG_IMAGE" || return 1
+    _with_download_lock "$MODEL_STORAGE_DIR/$MODEL_FILE" _download_sglang_locked
+}
 
+_download_sglang_locked() {
+    model_present && return 0   # finished by the session we waited for
     local dest="$MODEL_STORAGE_DIR/$MODEL_FILE" part="$MODEL_STORAGE_DIR/$MODEL_FILE.part"
     mkdir -p "$part"
 
@@ -110,6 +116,22 @@ download_sglang_model() {
     local _token_env=()
     [ -n "${HF_TOKEN:-}" ] && _token_env=(-e HF_TOKEN)
 
+    if ! retry_with_backoff "${AI_CODER_DOWNLOAD_RETRIES:-3}" "Download" _sglang_snapshot_attempt; then
+        echo -e "${RED}✘ Download failed${NC} ${DIM}(partial download kept in $(basename "$part") — the next launch resumes it)${NC}"
+        return 1
+    fi
+
+    touch "$part/$SGL_COMPLETE_MARKER"
+    rm -rf "$dest"
+    mv "$part" "$dest"
+    echo -e "${GREEN}✔ Model downloaded successfully${NC}"
+}
+
+# One snapshot_download run for _download_sglang_locked (whose locals — part,
+# _proxy_env, _token_env — it reads through bash's dynamic scoping).
+# snapshot_download skips files already complete in the .part dir, so a
+# retry resumes rather than restarts.
+_sglang_snapshot_attempt() {
     local _name="ai-coder-model-download"
     docker rm -f "$_name" >/dev/null 2>&1 || true
     # The repo's original/ and metal/ folders (e.g. gpt-oss) duplicate the
@@ -133,15 +155,9 @@ snapshot_download(repo_id=repo, revision=rev, local_dir=dest,
         sleep 3
     done
     printf "\n"
-    if ! wait "$_dl_pid"; then
-        echo -e "${RED}✘ Download failed${NC} ${DIM}(partial download kept in $(basename "$part") — the next launch resumes it)${NC}"
-        return 1
-    fi
-
-    touch "$part/$SGL_COMPLETE_MARKER"
-    rm -rf "$dest"
-    mv "$part" "$dest"
-    echo -e "${GREEN}✔ Model downloaded successfully${NC}"
+    local _rc=0
+    wait "$_dl_pid" || _rc=$?
+    return "$_rc"
 }
 
 # docker run for the SGLang engine. Called by start_hub_engine after the

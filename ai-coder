@@ -249,6 +249,10 @@ cleanup() {
     if [ "${LLAMA_BUILD_LOCK_HELD:-false}" = "true" ]; then
         release_lock "$USER_DIR/.llama-build.lock"
     fi
+    # And a model download's lock (Ctrl-C mid-download; the .part is kept).
+    if [ -n "${DOWNLOAD_LOCK_DIR:-}" ]; then
+        release_lock "$DOWNLOAD_LOCK_DIR"
+    fi
     # Only stop the workbench container if this process started it.
     # Guarding here prevents --build-only (or any early-exit path) from stopping
     # a workbench that belongs to a concurrently running session in the same project.
@@ -358,7 +362,7 @@ fi
 # race to create the same-named container, crashing whichever loses. The same
 # lock also covers ensure_model_in_volume's model-sync container, which is
 # only ever invoked from within start_hub_engine below.
-acquire_lock "$_hub_lock_dir" 0.2 150
+acquire_lock "$_hub_lock_dir" 0.2 150 "Another ai-coder session is starting the Hub — waiting for it..."
 _hub_lock_held=true
 
 ensure_engine_currently_running

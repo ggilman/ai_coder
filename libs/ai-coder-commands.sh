@@ -249,21 +249,27 @@ cmd_doctor() {
     fi
 
     # --- orphaned lock directories --------------------------------------------
-    # acquire_lock's mkdir-based locks are only ever held for the duration of a
-    # single preference write or the Hub check-then-restart section — a couple
-    # of seconds at most. One older than 2 minutes belonged to a session that
-    # died while holding it (crash, kill -9) rather than one still in progress.
-    # The exception is the llama.cpp asym-image build lock, held for the whole
-    # 10-30 minute build: it only counts as orphaned after 90 minutes.
+    # acquire_lock records its holder's PID, so a lock whose holder has died
+    # (crash, kill -9) is orphaned — acquire_lock would take it over anyway,
+    # this just tidies it. A lock whose holder can't be checked (older
+    # version, or another shell kind) falls back to age: 2 minutes, or 90 for
+    # the llama.cpp asym-image build lock, held for the whole 10-30 min build.
     echo -e "${ICON_GEAR} Orphaned lock directories..."
-    local _lock_found=() _d
+    local _lock_found=() _d _state
     while IFS= read -r _d; do
-        [ -n "$_d" ] && _lock_found+=("$_d")
-    done < <(find "$USER_DIR" -maxdepth 1 -name "*.lock" -not -name ".llama-build.lock" -type d -mmin +2 2>/dev/null
-             find "$USER_DIR" -maxdepth 1 -name ".llama-build.lock" -type d -mmin +90 2>/dev/null)
+        [ -n "$_d" ] || continue
+        _state=0; _lock_owner_state "$_d" || _state=$?
+        if [ "$_state" -eq 1 ]; then
+            _lock_found+=("$_d")
+        elif [ "$_state" -eq 2 ]; then
+            local _age=2
+            [ "$(basename "$_d")" = ".llama-build.lock" ] && _age=90
+            [ -n "$(find "$_d" -maxdepth 0 -mmin +"$_age" 2>/dev/null)" ] && _lock_found+=("$_d")
+        fi
+    done < <(find "$USER_DIR" "$MODEL_STORAGE_DIR" -maxdepth 2 -name "*.lock" -type d 2>/dev/null)
     if [ "${#_lock_found[@]}" -gt 0 ]; then
         for _d in "${_lock_found[@]}"; do
-            rmdir "$_d" 2>/dev/null && echo -e "  ${GREEN}✔${NC} removed ${DIM}$(basename "$_d")${NC}"
+            rm -rf "$_d" && echo -e "  ${GREEN}✔${NC} removed ${DIM}$(basename "$_d")${NC}"
         done
         issues=$((issues + ${#_lock_found[@]}))
     else

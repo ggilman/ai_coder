@@ -185,7 +185,7 @@ ensure_llama_asym_image() {
     # and re-check before starting a second build. LLAMA_BUILD_LOCK_HELD
     # lets ai-coder's cleanup trap release the lock after a Ctrl-C mid-build.
     local _lock_dir="$USER_DIR/.llama-build.lock"
-    acquire_lock "$_lock_dir" 2 1800
+    acquire_lock "$_lock_dir" 2 1800 "Another ai-coder session is building the llama.cpp image — waiting for it..."
     LLAMA_BUILD_LOCK_HELD=true
     if docker image inspect "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1; then
         release_lock "$_lock_dir"; LLAMA_BUILD_LOCK_HELD=false

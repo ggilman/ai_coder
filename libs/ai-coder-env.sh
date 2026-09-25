@@ -385,25 +385,94 @@ check_for_update() {
     echo -e "${YELLOW}◈ Update available — run: ${CYAN}$(realpath "$install_dir/ai-coder") --update${NC}"
 }
 
-# Acquire a simple mkdir-based spinlock — mkdir is atomic on both WSL and Git
-# Bash, making it safe against concurrent ai-coder sessions racing on the same
-# shared resource (a preference file, the Hub singleton container, a
-# per-project workbench container). Best-effort, not a hard mutual-exclusion
-# guarantee: gives up and proceeds anyway once max_wait iterations pass,
-# rather than hang forever on a lock dir orphaned by a killed session.
-# Usage: acquire_lock <lock_dir> [sleep_interval] [max_wait_iterations]
-acquire_lock() {
-    local lock_dir="$1" interval="${2:-0.2}" max_wait="${3:-150}"
-    local waited=0
-    while ! mkdir "$lock_dir" 2>/dev/null; do
-        sleep "$interval"
-        waited=$((waited + 1))
-        [ "$waited" -gt "$max_wait" ] && break
-    done
+# Owner tag written into a lock dir: "<pid> <shell-kind>". PIDs are only
+# comparable within one shell kind — a WSL session can't see a Git Bash PID
+# (and vice versa), though both can share a lock under $WIN_HOME.
+_lock_owner_tag() {
+    local kind=linux
+    [ "${IS_WSL:-false}" = "true" ] && kind=wsl
+    [ "${IS_GITBASH:-false}" = "true" ] && kind=gitbash
+    echo "$$ $kind"
 }
 
+# Is the session holding <lock_dir> still running? Returns 0 alive, 1 dead,
+# 2 unknown (no owner file — a lock from an older version, or one being
+# written this instant — or an owner of another shell kind).
+_lock_owner_state() {
+    local owner pid kind mine
+    owner=$(cat "$1/owner" 2>/dev/null) || return 2
+    read -r pid kind <<< "$owner"
+    [[ "${pid:-}" =~ ^[0-9]+$ ]] || return 2
+    mine=$(_lock_owner_tag); [ "$kind" = "${mine#* }" ] || return 2
+    kill -0 "$pid" 2>/dev/null && return 0
+    return 1
+}
+
+# Acquire a mkdir-based lock — mkdir is atomic on both WSL and Git Bash,
+# making it safe against concurrent ai-coder sessions racing on the same
+# shared resource (a preference file, the Hub singleton container, a
+# per-project workbench container, a model download). The holder's PID is
+# recorded in <lock_dir>/owner, so a waiter:
+#   - takes the lock over at once when its owner has died (crash, kill -9);
+#   - keeps waiting, without a time limit, while the owner is still alive —
+#     proceeding early would race the very thing the lock guards (Ctrl-C to
+#     abandon the wait);
+#   - takes it over after max_wait iterations only when the owner can't be
+#     checked (see _lock_owner_state).
+# wait_msg, if given, is printed once when the lock is found busy.
+# Usage: acquire_lock <lock_dir> [sleep_interval] [max_wait_iterations] [wait_msg]
+acquire_lock() {
+    local lock_dir="$1" interval="${2:-0.2}" max_wait="${3:-150}" wait_msg="${4:-}"
+    local waited=0 told=false state failed=0
+    until mkdir "$lock_dir" 2>/dev/null; do
+        if [ ! -d "$lock_dir" ]; then
+            # mkdir failed without the lock existing (parent missing or not
+            # writable) — or it was released this instant, which the next
+            # mkdir picks up. Persisting: proceed unlocked, as best-effort.
+            failed=$((failed + 1))
+            [ "$failed" -ge 5 ] && return 0
+            continue
+        fi
+        state=0; _lock_owner_state "$lock_dir" || state=$?
+        if [ "$state" -eq 1 ] || { [ "$state" -eq 2 ] && [ "$waited" -ge "$max_wait" ]; }; then
+            rm -rf "$lock_dir"
+            continue
+        fi
+        if [ -n "$wait_msg" ] && ! $told; then
+            echo -e "${CYAN:-}◈ ${wait_msg}${NC:-}"
+            told=true
+        fi
+        sleep "$interval"
+        [ "$state" -eq 2 ] && waited=$((waited + 1))
+    done
+    _lock_owner_tag > "$lock_dir/owner" 2>/dev/null || true
+}
+
+# Release a lock taken by acquire_lock — only when this session still owns
+# it, so a session whose lock was taken over never frees the new holder's.
 release_lock() {
+    [ "$(cat "$1/owner" 2>/dev/null)" = "$(_lock_owner_tag)" ] || return 0
+    rm -f "$1/owner"
     rmdir "$1" 2>/dev/null || true
+}
+
+# Run <cmd...> up to <attempts> times, sleeping 5s, 15s, 45s, ... between
+# tries. Returns the last attempt's exit status. <label> names the operation
+# in the retry message (e.g. "Download", "Image pull").
+# Usage: retry_with_backoff <attempts> <label> <cmd> [args...]
+retry_with_backoff() {
+    local _rwb_max="$1" _rwb_label="$2"; shift 2
+    [[ "$_rwb_max" =~ ^[1-9][0-9]*$ ]] || _rwb_max=3
+    local _rwb_try=1 _rwb_rc
+    while true; do
+        _rwb_rc=0; "$@" || _rwb_rc=$?
+        [ "$_rwb_rc" -eq 0 ] && return 0
+        [ "$_rwb_try" -ge "$_rwb_max" ] && return "$_rwb_rc"
+        local _rwb_delay=$(( 5 * (3 ** (_rwb_try - 1)) ))
+        echo -e "${YELLOW}⚠ ${_rwb_label} failed — retrying (${_rwb_try}/${_rwb_max}) in ${_rwb_delay}s…${NC}"
+        sleep "$_rwb_delay"
+        _rwb_try=$((_rwb_try + 1))
+    done
 }
 
 # True when a container with this exact name is currently running (not merely

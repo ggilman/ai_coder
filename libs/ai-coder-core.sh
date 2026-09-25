@@ -304,13 +304,7 @@ run_open_webui_container() {
         )
     fi
 
-    if ! docker image inspect "$OPEN_WEBUI_IMAGE" >/dev/null 2>&1; then
-        echo -e "${CYAN}  Pulling $OPEN_WEBUI_IMAGE ...${NC}"
-        docker pull "$OPEN_WEBUI_IMAGE" || {
-            echo -e "${RED}✘ Failed to pull Open WebUI image${NC}"
-            return 1
-        }
-    fi
+    pull_image_if_missing "$OPEN_WEBUI_IMAGE" || return 1
 
     local _wb_network="$HUB_NETWORK"
     [ "${NETWORK_INTERNAL:-false}" = "true" ] && _wb_network="$HUB_ISOLATED_NET"
