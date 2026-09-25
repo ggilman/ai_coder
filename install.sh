@@ -11,6 +11,12 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/ggilman/ai_coder/release/install.sh | bash -s -- .
 #       Installs into the current directory.
+#
+#   bash install.sh --from <extracted-release-dir> <install-dir>
+#       Installs an already-extracted release without downloading or asking
+#       to overwrite. ai-coder --update uses this: it downloads the release
+#       and runs that release's own installer, so the new release's layout
+#       (which dirs and files it owns) decides what gets replaced.
 # ==============================================================================
 set -euo pipefail
 
@@ -24,17 +30,22 @@ ICON_OK=" ${GREEN}✔${NC} "; ICON_GEAR=" ${CYAN}⚙${NC} "
 TARBALL_URL="https://github.com/ggilman/ai_coder/archive/refs/heads/release.tar.gz"
 API_URL="https://api.github.com/repos/ggilman/ai_coder/git/refs/heads/release"
 COMMIT_API_URL="https://api.github.com/repos/ggilman/ai_coder/commits"
+FROM_DIR=""
+if [ "${1:-}" = "--from" ]; then
+    FROM_DIR="${2:?--from needs the extracted release directory}"
+    shift 2
+fi
 INSTALL_DIR="${1:-$HOME/ai-coder}"
 
-echo -e "\n${BOLD}ai-coder installer${NC}\n"
+[ -z "$FROM_DIR" ] && echo -e "\n${BOLD}ai-coder installer${NC}\n"
 
 # --- [ preflight ] ------------------------------------------------------------
 
-if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+if [ -z "$FROM_DIR" ] && ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
     echo -e "${RED}✘ Neither curl nor wget found — install one and retry.${NC}"; exit 1
 fi
 
-if [ -d "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
+if [ -z "$FROM_DIR" ] && [ -d "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
     echo -e "${YELLOW}⚠ Directory already exists and is not empty: ${CYAN}${INSTALL_DIR}${NC}"
     printf "  Overwrite? [y/N]: "
     # Read from the terminal, not stdin — under `curl | bash` stdin is the
@@ -54,30 +65,39 @@ mkdir -p "$INSTALL_DIR"
 
 # --- [ download & extract ] ---------------------------------------------------
 
-echo -e "${ICON_GEAR}Downloading release..."
-tmp_dir=$(mktemp -d)
-trap 'rm -rf "$tmp_dir"' EXIT
-
-if command -v curl >/dev/null 2>&1; then
-    curl -fsSL --connect-timeout 15 "$TARBALL_URL" | tar xz --strip-components=1 -C "$tmp_dir" || {
-        echo -e "${RED}✘ Download failed${NC}"; exit 1
-    }
+if [ -n "$FROM_DIR" ]; then
+    tmp_dir="$FROM_DIR"
 else
-    wget -qO- --timeout=30 "$TARBALL_URL" | tar xz --strip-components=1 -C "$tmp_dir" || {
-        echo -e "${RED}✘ Download failed${NC}"; exit 1
-    }
+    echo -e "${ICON_GEAR}Downloading release..."
+    tmp_dir=$(mktemp -d)
+    trap 'rm -rf "$tmp_dir"' EXIT
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --connect-timeout 15 "$TARBALL_URL" | tar xz --strip-components=1 -C "$tmp_dir" || {
+            echo -e "${RED}✘ Download failed${NC}"; exit 1
+        }
+    else
+        wget -qO- --timeout=30 "$TARBALL_URL" | tar xz --strip-components=1 -C "$tmp_dir" || {
+            echo -e "${RED}✘ Download failed${NC}"; exit 1
+        }
+    fi
 fi
 
 # --- [ install ] --------------------------------------------------------------
 
 echo -e "${ICON_GEAR}Installing to ${CYAN}${INSTALL_DIR}${NC}..."
 
-rm -rf "$INSTALL_DIR/agents" "$INSTALL_DIR/libs" "$INSTALL_DIR/packages" "$INSTALL_DIR/offline"
-rm -f  "$INSTALL_DIR/ai-coder" "$INSTALL_DIR/ai-status.sh" \
-       "$INSTALL_DIR/LICENSE"  "$INSTALL_DIR/README.md" \
+# Wipe dirs that are entirely release-owned so deleted/renamed files don't linger.
+rm -rf "$INSTALL_DIR/agents" "$INSTALL_DIR/libs" "$INSTALL_DIR/packages" "$INSTALL_DIR/offline" \
+       "$INSTALL_DIR/config/sglang-patches"
+# Release-owned top-level files.
+rm -f  "$INSTALL_DIR/ai-coder" "$INSTALL_DIR/ai-status.sh" "$INSTALL_DIR/ai-status-legacy.sh" \
+       "$INSTALL_DIR/install.sh" "$INSTALL_DIR/LICENSE"  "$INSTALL_DIR/README.md" \
        "$INSTALL_DIR/.gitignore" "$INSTALL_DIR/.gitattributes" "$INSTALL_DIR/.editorconfig" \
        "$INSTALL_DIR/config/ai-coder-model.conf"
 
+# config/families: only replace the confs the release ships, so user-added
+# family confs survive.
 if [ -d "$tmp_dir/config/families" ]; then
     for _f in "$tmp_dir/config/families"/*; do
         [ -f "$_f" ] && rm -f "$INSTALL_DIR/config/families/$(basename "$_f")"
@@ -91,6 +111,9 @@ chmod +x "$INSTALL_DIR/ai-coder" "$INSTALL_DIR/ai-status.sh"
 # of this script instead of the standalone bootstrap copy above.
 # shellcheck source=/dev/null
 source "$INSTALL_DIR/libs/ai-coder-graphics.sh"
+
+# --update records the release hash in the existing state.json itself.
+[ -n "$FROM_DIR" ] && exit 0
 
 # --- [ record release hash ] --------------------------------------------------
 
