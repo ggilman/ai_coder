@@ -41,8 +41,8 @@ Commands:
   --fix-project      Fix line endings in the current project for AI editing (run from project folder)
   --clean            Stop and remove all containers
   --rebuild          Remove all workbench images to force a full rebuild on next run
-  --model            Reset model family, tool, Open WebUI, context level and KV cache type preferences, show selection menus
-  --models [family]  Dry-run model tier selection: hardware audit, VRAM reserves and which tier a launch would pick (no Docker, no launch)
+  --model            Configure the model: model family, tool, Open WebUI, context level, KV cache type, VRAM overhead, CPU offload, thinking mode
+  --family [family]  Dry-run model tier selection: hardware audit, VRAM reserves and which tier a launch would pick (no Docker, no launch)
   --kv-probe [family|all] [--write]  Read each tier's KV cache size from its GGUF header (no download); --write records it in the family conf
   --speed [family]   Generation-speed benchmark: run llama-bench on your model on a clean GPU and print t/s (llama.cpp engine only)
   --build-only       Build the workbench image then exit (no Hub or agent launch)
@@ -63,7 +63,7 @@ HELP
     exit $? ;;
 --status)
     exec bash "$ROOT_DIR/ai-status.sh" ;;
---models)
+--family)
     cmd_models "${2:-}"
     exit $? ;;
 --kv-probe)
@@ -131,24 +131,25 @@ if [ -f "$AI_CODER_ENV_FILE" ]; then
     source "$AI_CODER_ENV_FILE"
 fi
 
-# Handle --model flag: clears the family, tool, and Open WebUI preferences so
-# all the selection questions are shown again on the next step of this run,
-# and re-prompts the settings that change which model gets selected
-# (context level, the KV cache type — q8/asymmetric/q4 for llama.cpp, FP8
-# for SGLang — plus llama.cpp's VRAM overhead reserve and CPU offload
-# threshold and thinking mode, or SGLang's memory fraction) directly — they all have
-# defaults, so they have no "empty means show" gate to piggyback on like
-# the other three.
-_prev_family=""; _prev_tool=""; _prev_webui=""
+# Handle --model flag: ask every model-related question — the family, tool,
+# and Open WebUI menus plus the settings that change which model gets selected
+# (context level, the KV cache type — q8/asymmetric/q4 for llama.cpp, FP8 for
+# SGLang — plus llama.cpp's VRAM overhead reserve and CPU offload threshold
+# and thinking mode, or SGLang's memory fraction) — then mark the model
+# configuration complete. Then stops: the user launches with a plain
+# `ai-coder` afterwards.
 if [[ "${1:-}" == "--model" ]]; then
     _prev_family=$(read_pref "$STATE_FILE" family_pref "")
     _prev_tool=$(read_pref   "$STATE_FILE" tool_pref   "")
     _prev_webui=$(read_pref  "$STATE_FILE" webui_pref  "")
-    write_pref "$STATE_FILE" family_pref ""
-    write_pref "$STATE_FILE" tool_pref   ""
-    write_pref "$STATE_FILE" webui_pref  ""
     shift
     _menu_ui_init
+    show_family_menu "$_prev_family"
+    show_menu "$_prev_tool"
+    if [ "$(read_pref "$STATE_FILE" tool_pref "")" != "webui" ] && \
+       [ "$(read_setting expose_host_port)" = "yes" ]; then
+        show_webui_prompt "$_prev_webui"
+    fi
     setup_step_ctx
     if engine_is_sglang; then
         setup_step_sgl_kv
@@ -159,16 +160,23 @@ if [[ "${1:-}" == "--model" ]]; then
         setup_step_cpu_offload
         setup_step_thinking
     fi
+    write_pref "$SETTINGS_FILE" model_config_complete "yes"
+    echo -e "${ICON_OK} Model configuration updated."
+    echo -e "${DIM}  Start the tool with:${NC} $(basename "$0")"
+    exit 0
+fi
+
+# --- [ MODEL CONFIGURATION GATE ] -------------------------------------------
+# --model is the single place model settings are asked. A plain launch
+# verifies they are complete and stops with instructions if not.
+if [ "$(read_setting model_config_complete)" != "yes" ]; then
+    echo -e "${YELLOW}◈ Model configuration not complete.${NC}"
+    echo -e "${DIM}  Run:${NC} $(basename "$0") --model"
+    exit 1
 fi
 
 # --- [ FAMILY SELECTION ] ----------------------------------------------------
-# Show the family menu on first run or after --model clears the preference.
 FAMILY_PREF=$(read_pref "$STATE_FILE" family_pref "")
-if [ -z "$FAMILY_PREF" ]; then
-    show_family_menu "$_prev_family"
-    FAMILY_PREF=$(read_pref "$STATE_FILE" family_pref "")
-fi
-
 FAMILY_CONF="$FAMILIES_DIR/${FAMILY_PREF}.conf"
 if [ ! -f "$FAMILY_CONF" ]; then
     echo -e "${RED}Error: Unknown model family '${FAMILY_PREF}'. Run with --model to reselect.${NC}"
@@ -184,12 +192,7 @@ if ! require_family_supports_engine "$FAMILY_PREF"; then
 fi
 
 # --- [ TOOL SELECTION ] ------------------------------------------------------
-# Show the tool menu on first run or after --model clears the preference.
 TOOL_PREF=$(read_pref "$STATE_FILE" tool_pref "")
-if [ -z "$TOOL_PREF" ]; then
-    show_menu "$_prev_tool"
-    TOOL_PREF=$(read_pref "$STATE_FILE" tool_pref "")
-fi
 
 # Resolve child script from agents directory
 AGENTS_DIR="$ROOT_DIR/agents"
@@ -201,16 +204,10 @@ if [ ! -f "$CHILD_SCRIPT" ]; then
 fi
 
 # --- [ OPEN WEBUI SIDECAR SELECTION ] -----------------------------------------
-# Third question: offer to run Open WebUI alongside the coding agent. Only
-# asked when the engine port is exposed to the host (enable via --setup), and
-# skipped when Open WebUI itself is the selected tool. Left unanswered while
-# the port is closed, so it appears automatically once exposure is enabled.
+# Ask whether to start Open WebUI alongside the agent. Only asked when the
+# engine port is exposed to the host (enable via --setup), and skipped when
+# Open WebUI itself is the selected tool.
 WEBUI_PREF=$(read_pref "$STATE_FILE" webui_pref "")
-if [ -z "$WEBUI_PREF" ] && [ "$TOOL_PREF" != "webui" ] && \
-   [ "$(read_setting expose_host_port)" = "yes" ]; then
-    show_webui_prompt "$_prev_webui"
-    WEBUI_PREF=$(read_pref "$STATE_FILE" webui_pref "")
-fi
 
 source "$CHILD_SCRIPT"
 

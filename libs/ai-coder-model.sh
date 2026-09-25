@@ -3,7 +3,7 @@
 # AI-CODER-MODEL.SH | VRAM Budgeting & Model Tier Selection
 # Picks the model tier that fits the detected hardware before the Hub engine
 # starts: VRAM/KV estimation, select_model_for_vram, detect_model, and the
-# --models / --speed commands. Fetching the chosen tier is
+# --family / --speed commands. Fetching the chosen tier is
 # ai-coder-download.sh; Docker preflight and image pulls, ai-coder-docker.sh.
 # ==============================================================================
 
@@ -412,7 +412,7 @@ cmd_models() {
     [ -n "$family_key" ] || family_key=$(read_pref "$STATE_FILE" family_pref "")
     if [ -z "$family_key" ]; then
         echo -e "${RED}No model family selected yet. Pass a family key or run ${CYAN}--model${NC} first:${NC}"
-        echo -e "${DIM}  $(basename "$0") --models <family-key>${NC}"
+        echo -e "${DIM}  $(basename "$0") --family <family-key>${NC}"
         return 1
     fi
     local _conf="$FAMILIES_DIR/${family_key}.conf"

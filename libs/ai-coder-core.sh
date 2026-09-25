@@ -113,7 +113,7 @@ source "$SCRIPT_DIR/ai-coder-jq.sh"        # jq binary bootstrap & resolution
 source "$SCRIPT_DIR/ai-coder-migrate.sh"   # settings JSON schema versioning + one-time migration
 source "$SCRIPT_DIR/ai-coder-settings.sh"   # git identity + launch-time preference resolution
 source "$SCRIPT_DIR/ai-coder-docker.sh"     # docker preflight, image pulls
-source "$SCRIPT_DIR/ai-coder-model.sh"      # VRAM budgeting, model tier selection, --models/--speed
+source "$SCRIPT_DIR/ai-coder-model.sh"      # VRAM budgeting, model tier selection, --family/--speed
 source "$SCRIPT_DIR/ai-coder-download.sh"   # model/draft download, build-time npm/pip proxy helpers
 source "$SCRIPT_DIR/ai-coder-gguf.sh"       # GGUF metadata reader, per-tier KV geometry, --kv-probe
 source "$SCRIPT_DIR/ai-coder-image.sh"      # agent image builds, asym llama.cpp build, --rebuild sweep

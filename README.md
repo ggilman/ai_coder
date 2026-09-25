@@ -102,16 +102,16 @@ Use this script to monitor the health of your environment.
 ```
 
 ### 2. Unified AI Coding Interface (`ai-coder`)
-A single launcher for Claude Code, OpenCode, Aider, Gemini CLI, Qwen Code, and Goose. On first run (or with `--model`) it prompts you to select your preferred tool, which is saved to `user/state.json` in the install directory. Subsequent runs launch the saved preference directly.
+A single launcher for Claude Code, OpenCode, Aider, Gemini CLI, Qwen Code, and Goose. Model configuration is done once via `--model` (which asks for the model family, tool, Open WebUI, and all model-sizing settings and saves them to `user/state.json` and `user/settings.json`). A plain `ai-coder` launch verifies the configuration is complete and launches the saved preference directly; if it isn't complete it stops and tells you to run `--model` first.
 
 - **Alias**: `ai` (configure with `--setup`)
-- **Model family selection**: On first run, prompts you to choose a model family (Gemma 4, Qwen3, Qwen3.6, Llama 4, Devstral 2, …). Within the chosen family, the best GGUF tier is selected automatically from detected VRAM **minus an estimated KV-cache reserve** for your chosen context level **and a per-GPU overhead reserve** (CUDA context, compute buffers, display usage — `MODEL_VRAM_OVERHEAD_GB`) — so the model actually fits instead of silently paging to system RAM. If the reserves cost you a tier, the launcher says so; choose a smaller context level (or a lower overhead reserve) in `--model` to unlock the bigger model.
-- **Tool selection**: On first run, also prompts for your preferred coding tool (Claude, OpenCode, Aider, Gemini, Qwen Code, Goose). Both choices are saved to `user/state.json`.
-- **Gum-powered menus**: Family, tool, and Open WebUI prompts render as [gum](https://github.com/charmbracelet/gum) pickers, same as `--setup`. Falls back to plain numbered/text prompts if gum can't be installed or run (or with `AI_CODER_NO_GUM=1`).
-- **Open WebUI sidecar**: If host port exposure is enabled in `--setup`, a third question asks whether to also start Open WebUI (`http://localhost:3000`) alongside your coding agent, so you can chat with the same local model while you code. The answer is saved like the other preferences and re-asked via `--model`. It shuts down together with the Hub.
+- **Model family selection**: `--model` prompts you to choose a model family (Gemma 4, Qwen3, Qwen3.6, Llama 4, Devstral 2, …). Within the chosen family, the best GGUF tier is selected automatically from detected VRAM **minus an estimated KV-cache reserve** for your chosen context level **and a per-GPU overhead reserve** (CUDA context, compute buffers, display usage — `MODEL_VRAM_OVERHEAD_GB`) — so the model actually fits instead of silently paging to system RAM. If the reserves cost you a tier, the launcher says so; choose a smaller context level (or a lower overhead reserve) in `--model` to unlock the bigger model.
+- **Tool selection**: `--model` also prompts for your preferred coding tool (Claude, OpenCode, Aider, Gemini, Qwen Code, Goose). Both choices are saved to `user/state.json`.
+- **Gum-powered menus**: Family, tool, and Open WebUI prompts (asked during `--model`) render as [gum](https://github.com/charmbracelet/gum) pickers, same as `--setup`. Falls back to plain numbered/text prompts if gum can't be installed or run (or with `AI_CODER_NO_GUM=1`).
+- **Open WebUI sidecar**: If host port exposure is enabled in `--setup`, `--model` asks whether to also start Open WebUI (`http://localhost:3000`) alongside your coding agent, so you can chat with the same local model while you code. The answer is saved like the other preferences. It shuts down together with the Hub.
 - **Workspace mount**: Your project folder is mounted into the container as `/<foldername>` (e.g. `/my-project`), so the AI tool starts directly in your project directory.
 - **Auto-cleanup**: When you exit the tool, the workbench container is stopped. If it was the last active spoke, the Hub (engine + proxy) is also shut down automatically — unless the *keep hub warm* setting is enabled (`--setup`), which leaves the engine loaded so the next session starts in seconds. A warm hub auto-stops after a configurable idle timeout (default 60 min, `0` = never) to release GPU VRAM; stop it immediately with `--clean`.
-- **Agent-free commands**: `--help`, `--status`, `--clean`, `--rebuild`, `--model`, `--models`, `--kv-probe`, `--speed`, and `--setup` run immediately without requiring a tool to be selected.
+- **Agent-free commands**: `--help`, `--status`, `--clean`, `--rebuild`, `--model`, `--family`, `--kv-probe`, `--speed`, and `--setup` run immediately without requiring a tool to be selected.
 - **Setup required**: `--setup` must be run at least once before launching. This ensures all preferences are configured intentionally.
 
 **Commands:**
@@ -119,8 +119,8 @@ A single launcher for Claude Code, OpenCode, Aider, Gemini CLI, Qwen Code, and G
 | --- | --- |
 | (no argument) | Launch the AI tool inside the active workbench container |
 | `--continue` | Resume the previous agent session — passes the tool's native continue flag (`--continue` for Claude/OpenCode/Aider, `--resume` for Gemini/Qwen Code/Goose) |
-| `--model` | Reset model family, tool, Open WebUI, the model-sizing preferences (context level, KV cache, VRAM overhead, CPU offload threshold / SGLang memory fraction) and thinking mode; show the selection menus again |
-| `--models [family]` | Dry-run model tier selection: hardware audit, VRAM reserves, and which tier a launch would pick — no Docker, no launch |
+| `--model` | Configure the model: model family, tool, Open WebUI, the model-sizing preferences (context level, KV cache, VRAM overhead, CPU offload threshold / SGLang memory fraction) and thinking mode. A plain launch verifies these are set and stops with "run `--model`" if not |
+| `--family [family]` | Dry-run model tier selection: hardware audit, VRAM reserves, and which tier a launch would pick — no Docker, no launch |
 | `--kv-probe [family\|all] [--write]` | Read each tier's KV cache geometry — from its GGUF metadata header for llama.cpp (local file or a ranged download — never the whole model), from its repo's `config.json` for SGLang — and compare the resulting KV size with the conf's current estimate; `--write` records it in the family conf (`MODEL_N_KV`/`MODEL_N_KV_SWA`, `MODEL_SGL_N_*`) |
 | `--speed [family]` | Generation-speed benchmark: run `llama-bench` on your model on a clean GPU and print tokens/s (requires the *generation speed tracking* setup option; llama.cpp engine only) |
 | `--status` | Show the real-time GPU and engine status dashboard |
@@ -490,7 +490,7 @@ Git checkouts are tracked through git itself: `--version` reports the local `ori
 11. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
 12. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
 
-Settings that change which model tier fits in VRAM are deliberately not wizard steps — `--model` re-prompts them on every run instead, before the family menu:
+Settings that change which model tier fits in VRAM are deliberately not wizard steps — `--model` asks them instead (along with the model family, tool, and Open WebUI), and a plain launch verifies they are set:
 
 - **Context window level** — 4k–256k, default 64k.
 - **KV cache** — llama.cpp: family default `q8_0`, [asymmetric](#asymmetric-kv-cache) `q8_0` K / `q4_0` V, or `q4_0`. SGLang: optional FP8 (off by default).
