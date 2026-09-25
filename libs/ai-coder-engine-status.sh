@@ -88,6 +88,17 @@ get_engine_slots() {
     set -o pipefail
 }
 
+# Prints "<total> <active>" slot counts from the last get_engine_slots fetch,
+# or nothing when it came back empty (engine busy, or SGLang).
+get_engine_slot_counts() {
+    local _raw _total _active
+    _raw=$(cat "$_SLOTS_TMP" 2>/dev/null || true)
+    [ -n "$_raw" ] || return 0
+    _total=$(echo "$_raw" | { grep -o '"id"' || true; } | wc -l)
+    _active=$(echo "$_raw" | { grep -o '"is_processing":true' || true; } | wc -l)
+    echo "$(( _total )) $(( _active ))"
+}
+
 # Fetches the loaded model name from the engine's /v1/models endpoint
 get_model_name() {
     local _mtmp="/tmp/ai_status_model_$$"

@@ -66,29 +66,14 @@ main() {
             "🤖  AI HUB COMMAND CENTER"
 
         # 2. RENDER GPU CARDS (Vertical Stack Mode - Cyan Accented Borders)
-        if gpu_data=$(get_gpu_stats); then
+        if gpu_data=$(get_gpu_rows); then
             if [ -z "$gpu_data" ]; then
                 $GUM_CMD style \
                     --border rounded --border-foreground 1 \
                     --foreground 1 --align center --width 74 \
                     "✘  NVIDIA GPU details could not be queried (no data returned)"
             else
-                while IFS=',' read -r id name util m_used m_total temp pwr; do
-                    id=$(echo "$id" | xargs)
-                    name=$(echo "$name" | xargs)
-                    util=$(echo "$util" | xargs)
-                    m_used=$(echo "$m_used" | xargs)
-                    m_total=$(echo "$m_total" | xargs)
-                    temp=$(echo "$temp" | xargs)
-                    pwr=$(echo "$pwr" | xargs)
-
-                    case "$m_total" in ''|*[!0-9]*) continue ;; esac
-                    if [ "$m_total" -le 0 ]; then continue; fi
-                    case "$m_used" in ''|*[!0-9]*) m_used=0 ;; esac
-                    case "$util"   in ''|*[!0-9]*) util=0   ;; esac
-
-                    m_perc=$((m_used * 100 / m_total))
-                    
+                while IFS='|' read -r id name util m_used m_total temp pwr m_perc; do
                     local vram_bar
                     vram_bar=$(render_progress_bar "$m_perc" "40" "$C_GRN" "$C_YEL" "$C_RED" "$C_GRY" "$C_RST")
                     local util_bar
@@ -130,11 +115,10 @@ main() {
         local engine_status_text=""
         if echo "$health_raw" | grep -q '"ok"'; then
             get_engine_slots
-            slots_raw=$(cat "$_SLOTS_TMP" 2>/dev/null || true)
+            slot_counts=$(get_engine_slot_counts)
 
-            if [ -n "$slots_raw" ]; then
-                total_slots=$(echo "$slots_raw" | { grep -o '"id"' || true; } | wc -l | xargs)
-                active_slots=$(echo "$slots_raw" | { grep -o '"is_processing":true' || true; } | wc -l | xargs)
+            if [ -n "$slot_counts" ]; then
+                read -r total_slots active_slots <<< "$slot_counts"
                 slot_info="$total_slots slot(s) | $active_slots active"
             elif [ "$ENGINE_KIND" = "sglang" ]; then
                 slot_info="n/a (SGLang has no slot endpoint)"
