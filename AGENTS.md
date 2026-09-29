@@ -29,7 +29,7 @@ Copy existing `config/families/<family>.conf`, keep double-sourcing guard, fill 
 
 ## Config vs rebuild
 - **Rebuild needed**: apt packages, MCP npm/pip packages, git identity, base image
-- **No rebuild**: `prompts/*.md`, model family/tier, `config/ai-coder-model.conf` settings, MCP server args, GPU mode, most `--setup` toggles, KV cache type, speculative decoding, proxy/network isolation
+- **No rebuild**: `prompts/*.md`, model family/tier, `config/ai-coder-model.conf` settings, MCP server args, GPU mode, most `--setup` toggles (incl. container timezone), KV cache type, speculative decoding, proxy/network isolation
 
 Run `./ai-coder --rebuild` then `./ai-coder` for image changes.
 

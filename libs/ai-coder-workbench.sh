@@ -353,6 +353,7 @@ _run_llamacpp_engine() {
     # cache chunks across requests avoids reprocessing the whole prompt each
     # turn — a large time-to-first-token win in agent loops.
     docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$_hub_net" --gpus "$_gpus_flag" --restart no \
+        -e TZ="$(read_setting container_tz)" \
         "${_port_args[@]}" "${_cuda_env[@]}" \
         -v "${_models_src}:/models" \
         "$ENGINE_IMAGE" \

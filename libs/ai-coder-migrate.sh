@@ -53,6 +53,7 @@ pref_default() {
         expose_host_port) echo "no" ;;
         git_email)        echo "" ;;
         git_name)         echo "" ;;
+        container_tz)     echo "America/Chicago" ;;
         model_config_complete) echo "no" ;;
         *)                echo "" ;;
     esac

@@ -514,6 +514,39 @@ ${DIM}  Next launch will also offer to start Open WebUI alongside your agent.${N
         "${DIM}  Engine port not exposed to host.${NC}"
 }
 
+# Container time zone — which US wall clock shows inside every workbench and
+# engine container (TZ env var). Only affects what timestamps look like in
+# containers, not anything on the host. No rebuild needed: it's an env var set
+# at each docker run, so a change takes effect from the next launch onward.
+setup_step_container_tz() {
+    local _cur_tz; _cur_tz=$(read_setting container_tz)
+    local _tz_input; _tz_input=$(ui_menu "Container timezone" \
+        "Timezone for containers — which US time should tools inside Docker show?" \
+        "Sets TZ in every workbench/engine container so logs and file stamps use your wall clock (host is unaffected). Default: Central." \
+        "US timezone [${_cur_tz}]:" \
+        "$_cur_tz" \
+        "America/Honolulu"   "Hawaii      UTC-10" \
+        "America/Anchorage"  "Alaska      UTC-9/-8" \
+        "America/Los_Angeles" "Pacific     UTC-8/-7" \
+        "America/Denver"     "Mountain    UTC-7/-6" \
+        "America/Chicago"    "Central     UTC-6/-5 (default)" \
+        "America/New_York"   "Eastern     UTC-5/-4")
+    case "${_tz_input}" in
+        America/Honolulu|America/Anchorage|America/Los_Angeles|\
+        America/Denver|America/Chicago|America/New_York)
+            write_pref "$SETTINGS_FILE" container_tz "$_tz_input"
+            printf "%s%s Container timezone set to %s%s — applied on next launch (no rebuild needed).%s\n" \
+                "${ICON_OK}" "" "${GREEN}" "$(read_setting container_tz)" "${NC}."
+            ;;
+        "")
+            printf "%s  Timezone unchanged (%s)%s\n" "$DIM" "$_cur_tz" "$NC"
+            ;;
+        *)
+            printf "%s⚠ Unknown zone '%s' — keeping %s%s\n" "$YELLOW" "$_tz_input" "$_cur_tz" "$NC"
+            ;;
+    esac
+}
+
 setup_step_git_identity() {
     local _cur_git_email; _cur_git_email=$(read_setting git_email)
     local _cur_git_name;  _cur_git_name=$(read_setting git_name)
@@ -595,6 +628,8 @@ cmd_setup() {
     fi
     _ui_abort_if_cancelled
     setup_step_expose_port
+    _ui_abort_if_cancelled
+    setup_step_container_tz
     _ui_abort_if_cancelled
     setup_step_git_identity
 

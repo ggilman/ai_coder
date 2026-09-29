@@ -216,7 +216,7 @@ _run_sglang_engine() {
     echo -e "${ICON_GEAR} Engine: ${GREEN}SGLang${NC} ${DIM}(mem-fraction ${SGL_MEM_FRACTION:-0.85}, KV ${MODEL_KV_TYPE:-auto}${MODEL_SGL_TOOL_PARSER:+, tool parser ${MODEL_SGL_TOOL_PARSER}}${MODEL_PATCH:+, patch ${MODEL_PATCH}})${NC}"
 
     docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$_hub_net" --gpus "$_gpus_flag" --restart no \
-        --ipc=host -e HF_HUB_OFFLINE=1 \
+        --ipc=host -e HF_HUB_OFFLINE=1 -e TZ="$(read_setting container_tz)" \
         "${_port_args[@]}" "${_cuda_env[@]}" \
         -v "${_models_src}:/models" \
         "${_launch[@]}" \
