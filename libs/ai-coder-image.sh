@@ -44,6 +44,8 @@ RUN if [ -n "\${GIT_USER_NAME}" ] && [ -n "\${GIT_USER_EMAIL}" ]; then \
       git config --global user.name "\${GIT_USER_NAME}" && \
       git config --global user.email "\${GIT_USER_EMAIL}"; \
     fi
+    COPY ca-certs/ /usr/local/share/ca-certificates/
+    RUN ls /usr/local/share/ca-certificates/ | grep -v '^mozilla$' >/dev/null && update-ca-certificates || true
 ${_proxy_env_block}
 ${pm_proxy_cmds}
 ${install_cmds}
@@ -59,7 +61,7 @@ build_standard_image() {
     pull_image_if_missing "$BASE_IMAGE" || return 1
 
     local proxy_args=()
-    [ -n "${DOWNLOAD_PROXY:-}" ] && proxy_args=(--build-arg "PROXY_URL=$(resolve_proxy_to_ip "$DOWNLOAD_PROXY")")
+    [ -n "${DOWNLOAD_PROXY:-}" ] && proxy_args=(--build-arg "PROXY_URL=$(resolve_proxy_env_url)")
 
     local git_args=()
     [ -n "${GIT_USER_NAME:-}" ] && [ -n "${GIT_USER_EMAIL:-}" ] && \
@@ -68,6 +70,45 @@ build_standard_image() {
     local _build_dir; _build_dir=$(mktemp -d)
     trap 'rm -rf "$_build_dir"; trap - RETURN' RETURN
 
+    # Copy user-supplied CA certificates (corporate proxy CAs, etc.) into the
+    # build context so the Dockerfile can bake them into the image's trust store.
+    local _certs_dir="$USER_DIR/certificates"
+    mkdir -p "$_build_dir/ca-certs"
+    if [ -d "$_certs_dir" ]; then
+        # update-ca-certificates only accepts PEM text, but the files may be
+        # valid single certs in DER form — normalize anything without PEM
+        # markers through openssl instead of copying it raw.
+        local _cert
+        for _cert in "$_certs_dir"/*.crt "$_certs_dir"/*.pem "$_certs_dir"/*.cer; do
+            [ -f "$_cert" ] || continue
+            # update-ca-certificates only accepts PEM text. Windows "Export" can emit
+            # DER binary even when the file is a valid single cert, so normalize any
+            # file lacking PEM markers through openssl instead of copying it raw.
+            if command -v openssl >/dev/null 2>&1 && \
+               ! grep -q -- '-----BEGIN CERTIFICATE' "$_cert"; then
+                local _pem; _pem=$(openssl x509 -in "$_cert" -inform DER -outform PEM 2>/dev/null) || continue
+                local _base
+                _base="$(basename "$_cert")"
+                local _stem="${_base%.*}"
+                local _out="$_build_dir/ca-certs/${_stem}.pem"
+                if [ -e "$_out" ]; then
+                    local _n=1
+                    while [ -e "$_build_dir/ca-certs/${_stem}-${_n}.pem" ]; do _n=$((_n + 1)); done
+                    _out="$_build_dir/ca-certs/${_stem}-${_n}.pem"
+                fi
+                printf '%s\n' "$_pem" > "$_out"
+            else
+                local _base; _base=$(basename "$_cert")
+                if [ -e "$_build_dir/ca-certs/$_base" ]; then
+                    local _stem="${_base%.*}" _n=1
+                    local _ext=".${_base##*.+_}"
+                    while [ -e "$_build_dir/ca-certs/${_stem}-${_n}${_ext}" ]; do _n=$((_n + 1)); done
+                    _base="${_stem}-${_n}${_ext}"
+                fi
+                cp "$_cert" "$_build_dir/ca-certs/$_base"
+            fi
+        done 2>/dev/null || true
+    fi
     _write_standard_dockerfile "$_build_dir" "$df_name" "$apt_pkgs" "$pm_proxy_cmds" "$install_cmds"
 
     docker build -t "$IMAGE_NAME" "${proxy_args[@]}" "${git_args[@]}" \
@@ -193,7 +234,7 @@ ensure_llama_asym_image() {
     fi
 
     local _http_proxy=""
-    [ -n "${DOWNLOAD_PROXY:-}" ] && _http_proxy=$(resolve_proxy_to_ip "$(echo "$DOWNLOAD_PROXY" | sed "s|^https://|http://|")")
+    [ -n "${DOWNLOAD_PROXY:-}" ] && _http_proxy=$(resolve_proxy_env_url)
 
     # Same llama.cpp release as the stock images (LLAMA_CPP_VERSION).
     local _ref="$LLAMA_CPP_VERSION"

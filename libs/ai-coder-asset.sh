@@ -74,11 +74,15 @@ _asset_proxy_url() {
     fi
 }
 
-# curl through the download proxy, if one is configured.
+# curl through the download proxy, if one is configured. This runs on the
+# host (gum/jq bootstrap), whose trust store does not include the corporate
+# CA, so whenever a proxy is in use certificate verification is disabled (-k).
+# Workbench containers are different: their CAs come from user/certificates/
+# and are verified normally unless verify_proxy_tls is "no" (insecure).
 _asset_curl() {
     local proxy; proxy=$(_asset_proxy_url)
     if [ -n "$proxy" ]; then
-        curl -x "$proxy" "$@"
+        curl -x "$proxy" -k "$@"
     else
         curl "$@"
     fi

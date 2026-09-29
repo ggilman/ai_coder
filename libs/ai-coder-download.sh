@@ -55,10 +55,21 @@ _dl_path() {
     fi
 }
 
-# DOWNLOAD_PROXY as a plain http://ip:port for curl/wget, or empty.
-_dl_proxy() {
+# Canonical proxy URL for http(s)_proxy env vars and curl/wget --proxy:
+# plain http:// scheme + IP-resolved host, or empty when no proxy is set.
+# The proxy is a plain-HTTP port; an https:// scheme makes clients do
+# TLS-in-TLS against it and fail with "wrong version number", so the scheme
+# is always coerced here. Every caller that needs a usable proxy URL must use
+# this (or _dl_proxy, which wraps it) instead of raw $DOWNLOAD_PROXY or an
+# ad-hoc sed chain.
+resolve_proxy_env_url() {
     [ -n "${DOWNLOAD_PROXY:-}" ] || return 0
     resolve_proxy_to_ip "$(echo "$DOWNLOAD_PROXY" | sed 's|^https://|http://|')"
+}
+
+# DOWNLOAD_PROXY as a plain http://ip:port for curl/wget, or empty.
+_dl_proxy() {
+    resolve_proxy_env_url
 }
 
 # Download a URL to a local path, resuming whatever is already in <dest>.
@@ -304,22 +315,9 @@ _download_model_locked() {
     echo -e "${GREEN}✔ Model downloaded successfully${NC}"
 }
 
-# Resolve DOWNLOAD_PROXY to a plain http://ip:port URL for tools (npm, pip)
-# that need an explicit http:// proxy scheme regardless of the configured
-# scheme. resolve_proxy_to_ip converts the hostname to an IP so proxy
-# resolution doesn't depend on DNS being reachable during a Docker build.
-# Echoes empty when no proxy is configured. Shared by make_npm_proxy_cmds,
-# make_pip_proxy_cmds, and any agent build_image() that installs via pip
-# outside build_pip_install_cmds (e.g. Aider's venv-based install).
-resolve_http_proxy_url() {
-    [ -z "${DOWNLOAD_PROXY:-}" ] && return
-    local build_proxy; build_proxy=$(resolve_proxy_to_ip "$DOWNLOAD_PROXY")
-    echo "$build_proxy" | sed 's|^https://|http://|'
-}
-
 # Returns Dockerfile RUN commands to configure npm proxy, or empty string if no proxy.
 make_npm_proxy_cmds() {
-    local npm_proxy; npm_proxy=$(resolve_http_proxy_url)
+    local npm_proxy; npm_proxy=$(resolve_proxy_env_url)
     [ -z "$npm_proxy" ] && return
     echo "RUN npm config set proxy $npm_proxy && npm config set https-proxy $npm_proxy && npm config set strict-ssl false"
 }
@@ -333,7 +331,7 @@ make_pip_proxy_cmds() {
     # TLS-in-TLS when https_proxy is set, even with http:// scheme, causing
     # "check_hostname requires server_hostname"). Clearing the env vars and
     # passing --proxy http:// explicitly forces a plain CONNECT tunnel.
-    local pip_proxy; pip_proxy=$(resolve_http_proxy_url)
+    local pip_proxy; pip_proxy=$(resolve_proxy_env_url)
     if [ -z "$pip_proxy" ]; then
         echo "pip3 install --break-system-packages"
         return

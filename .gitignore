@@ -7,5 +7,6 @@ bundle/
 .bundle-work/
 .claude/
 user/
+user/certificates/
 
 .aider*

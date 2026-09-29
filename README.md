@@ -126,7 +126,7 @@ A single launcher for Claude Code, OpenCode, Aider, Gemini CLI, Qwen Code, and G
 | `--kv-probe [family\|all] [--write]` | Read each tier's KV cache geometry — from its GGUF metadata header for llama.cpp (local file or a ranged download — never the whole model), from its repo's `config.json` for SGLang — and compare the resulting KV size with the conf's current estimate; `--write` records it in the family conf (`MODEL_N_KV`/`MODEL_N_KV_SWA`, `MODEL_SGL_N_*`) |
 | `--speed [family]` | Generation-speed benchmark: run `llama-bench` on your model on a clean GPU and print tokens/s (requires the *generation speed tracking* setup option; llama.cpp engine only) |
 | `--status` | Show the real-time GPU and engine status dashboard |
-| `--setup` | First-time and re-configuration wizard: alias, proxy, network isolation, inference engine, GPU mode, git identity |
+| `--setup` | First-time and re-configuration wizard: alias, proxy, trust proxy, network isolation, inference engine, GPU mode, git identity |
 | `--update` | Download and install the latest release from GitHub (refused in a git checkout — use `git pull` there — unless `--update --force`) |
 | `--fix-project` | Normalize line endings in the current project folder for AI editing (run once per project) |
 | `--clean` | Stop and remove all Hub and Spoke containers |
@@ -298,8 +298,9 @@ A rebuild (`./ai-coder --rebuild` followed by `./ai-coder`) is only needed when 
 | Change the KV cache type (`--model`) | No | Engine restarts with the new KV cache type on next launch; the first switch to asymmetric builds llama.cpp locally (one time) |
 | Switch inference engine (`--setup`) | No | Engine restarts on the new server on next launch; the workbench images are engine-independent |
 | Change SGLang memory fraction, FP8 KV cache or thinking mode (`--model`) | No | Engine restarts with the new value on next launch |
-| Change proxy or network isolation (`--setup`) | No | Applied at container start time |
+| Change proxy, trust proxy, or network isolation (`--setup`) | No | Applied at container start time |
 | Change git identity (`--setup`) | **Yes** | Requires an `--rebuild` to bake into the image |
+| Add / remove CA certificates in `user/certificates/` (`.crt`, `.pem`, `.cer`; DER auto-converted to PEM) | **Yes** | Certificates are baked into the image's trust store at build time |
 | Upgrade `BASE_IMAGE` in `ai-coder-core.sh` | **Yes** | The base layer must be pulled and rebuilt |
 | Change the Dockerfile template in `build_standard_image` | **Yes** | Modifies the image build instructions |
 | Change an agent's `configure_workbench` function | No | Config files are written to a host-mounted volume at launch |
@@ -438,6 +439,30 @@ To add a server only for one agent, edit that agent's file instead of `mcp-commo
 echo "@some-org/server | key | cmd | args" >> packages/mcp-opencode.txt
 ./ai-coder --rebuild && ./ai-coder
 ```
+
+### CA Certificates (Corporate Proxy)
+
+If your corporate proxy re-signs TLS traffic with an internal CA, the container needs that CA in its trust store to verify certificates properly. Drop your enterprise CA certificate files (`.crt`, `.pem`, or Windows-exported `.cer`) into `user/certificates/`, then rebuild:
+
+```bash
+cp /path/to/your-enterprise-ca.cer user/certificates/
+./ai-coder --rebuild && ./ai-coder
+```
+
+The certificates are baked into the image's trust store (`/usr/local/share/ca-certificates/` → `update-ca-certificates`) at build time. This allows TLS verification to work correctly through your corporate proxy, rather than disabling it.
+
+When exporting from Windows, either encoding option works: Base-64 (PEM) is used as-is, and DER binary is automatically converted to PEM at build time.
+
+> **Note**: Adding or removing certificates requires a rebuild. The certificates are copied into the Docker build context and installed during the image build process.
+
+### Verify Proxy TLS
+
+The `--setup` wizard asks whether to verify the proxy's TLS certificates (when one is configured). Two modes:
+
+- **Verify** (default, stored as `verify_proxy_tls=yes`): TLS verification stays on inside the containers; the CAs in `user/certificates/` verify the proxy's re-signed certificates. If a certificate error appears, add the missing CA and rebuild.
+- **Insecure** (stored as `verify_proxy_tls=no`): Certificate verification is disabled inside the workbench containers (`NODE_TLS_REJECT_UNAUTHORIZED=0`, git over HTTPS) — use only when no usable CA is available.
+
+The host-side bootstrap downloads (gum/jq) always verify normally or skip verification as needed for their own trust store; this setting only affects the container environment and the agent-instructions egress note.
 
 ## Config Persistence
 

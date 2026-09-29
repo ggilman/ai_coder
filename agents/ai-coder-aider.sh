@@ -16,7 +16,7 @@ build_image() {
     fi
     echo -e "${ICON_GEAR} Building Aider Image..."
     local apt_pkgs; apt_pkgs="$(read_package_list "$PACKAGES_DIR/apt-common.txt") $(read_package_list "$PACKAGES_DIR/apt-aider.txt")"
-    local _pip_proxy; _pip_proxy=$(resolve_http_proxy_url)
+    local _pip_proxy; _pip_proxy=$(resolve_proxy_env_url)
     local _pip_proxy_flags=""
     [ -n "$_pip_proxy" ] && _pip_proxy_flags="--proxy $_pip_proxy --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org"
     build_standard_image "Dockerfile.aider" "$apt_pkgs" "" \

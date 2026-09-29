@@ -327,10 +327,17 @@ render_agent_prompt() {
     [ "$(read_setting mcp_extras)" = "yes" ] && parts+=("$PROMPTS_DIR/tools/$tool-mcp-extras.md")
     local _ws="/$WORKSPACE_DIR" _f
     _ws="${_ws//&/\\&}"
+    # {network_egress} in common.md is resolved at render time from the
+    # current proxy setting, so the egress bullet matches the container that
+    # actually runs (proxy configured or not). Empty when isolation is on —
+    # offline.md already says there is no internet.
+    local _egress=""
+    [ "${NETWORK_INTERNAL:-false}" != "true" ] && declare -f _tls_egress_prompt >/dev/null 2>&1 \
+        && _egress=$(_tls_egress_prompt)
     {
         echo "$AGENT_PROMPT_MARKER"
         for _f in "${parts[@]}"; do
-            [ -f "$_f" ] && sed -e 's/\r$//' -e "s|{workspace}|$_ws|g" "$_f"
+            [ -f "$_f" ] && sed -e 's/\r$//' -e "s|{workspace}|$_ws|g" -e "s|{network_egress}|${_egress//&/\\&}|g" "$_f"
         done
         if [ -n "$project_file" ] && [ -f "$project_file" ]; then
             printf '\n# Project instructions (%s)\n\n' "$(basename "$project_file")"
@@ -345,7 +352,7 @@ render_agent_prompt() {
 _fetch_release_hash() {
     local api_url="https://api.github.com/repos/ggilman/ai_coder/git/refs/heads/release"
     local http_proxy=""
-[ -n "${DOWNLOAD_PROXY:-}" ] && http_proxy=$(resolve_proxy_to_ip "$(echo "$DOWNLOAD_PROXY" | sed "s|^https://|http://|")")
+[ -n "${DOWNLOAD_PROXY:-}" ] && http_proxy=$(resolve_proxy_env_url)
     if command -v curl >/dev/null 2>&1; then
         local curl_args=(-fsSL --connect-timeout 4)
         [ -n "$http_proxy" ] && curl_args+=(--proxy "$http_proxy")
@@ -373,7 +380,7 @@ _fetch_commit_date() {
     local api_url="https://api.github.com/repos/ggilman/ai_coder/commits/${sha}"
     local date_re='"date"[[:space:]]*:[[:space:]]*"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"'
     local http_proxy=""
-    [ -n "${DOWNLOAD_PROXY:-}" ] && http_proxy=$(resolve_proxy_to_ip "$(echo "$DOWNLOAD_PROXY" | sed "s|^https://|http://|")")
+    [ -n "${DOWNLOAD_PROXY:-}" ] && http_proxy=$(resolve_proxy_env_url)
     if command -v curl >/dev/null 2>&1; then
         local curl_args=(-fsSL --connect-timeout 4)
         [ -n "$http_proxy" ] && curl_args+=(--proxy "$http_proxy")

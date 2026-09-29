@@ -260,8 +260,11 @@ hf_kv_probe() {
     _tmp="$(mktemp "${TMPDIR:-/tmp}/ai-coder-hfcfg.XXXXXX")"
     if [ -n "$_dir" ] && [ -f "$_dir/config.json" ]; then
         cat "$_dir/config.json" > "$_tmp"
-    elif ! _asset_curl -sfL --max-time 30 "https://huggingface.co/${_repo}/resolve/${_rev}/config.json" > "$_tmp"; then
-        rm -f "$_tmp"; echo "ERROR fetch failed"; return 1
+    else
+        local _cfg_url="https://huggingface.co/${_repo}/resolve/${_rev}/config.json"
+        if ! _asset_curl -sfL --max-time 30 "$_cfg_url" > "$_tmp"; then
+            rm -f "$_tmp"; echo "ERROR fetch failed"; return 1
+        fi
     fi
     # Via stdin: under MSYS_NO_PATHCONV a native jq.exe can't open /tmp paths.
     _res=$("$JQ_CMD" -r "$_HF_KV_JQ" < "$_tmp" 2>/dev/null | tr -d '\r') || _res=""

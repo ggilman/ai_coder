@@ -6,3 +6,4 @@
 - When you use a tool, emit the actual tool call, then wait for its result before the next step.
 - Do not invent APIs, flags or file contents; check the code or run a command instead.
 - Keep replies short: say what you changed and why.
+{network_egress}
