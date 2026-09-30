@@ -591,7 +591,8 @@ read_pref() {
 # (not per-project), so concurrent ai-coder sessions for unrelated projects can
 # call this on the same file at once. A lock (see acquire_lock) plus a
 # PID-unique temp file prevent one session's read-modify-write from clobbering
-# another's.
+# another's. A final rename that keeps failing (e.g. a Windows-side lock on a
+# /mnt/c path) warns and degrades without writing, so callers never abort.
 write_pref() {
     local file="$1" key="$2" value="$3"
     mkdir -p "$(dirname "$file")"
@@ -625,7 +626,24 @@ write_pref() {
         _base='{}'
     fi
     printf '%s' "$_base" | "$_jq" --arg k "$key" --arg v "$value" "$_filter" > "$_tmp" 2>/dev/null || echo '{}' > "$_tmp"
-    mv "$_tmp" "$file"
+    # On a Windows-backed path (/mnt/c/...), the rename can be refused while a
+    # Windows-side lock holds the file — an antivirus scan, an editor, or a
+    # cross-session window. Retry a few times, then degrade with a message
+    # instead of letting the failure abort the launch.
+    local _mv_tries=0
+    until mv "$_tmp" "$file" 2>/dev/null; do
+        _mv_tries=$((_mv_tries + 1))
+        [ "$_mv_tries" -ge 10 ] && break
+        sleep 0.3
+    done
+    if [ "$_mv_tries" -ge 10 ]; then
+        echo -e "${RED}✘ Cannot write ${file} — the rename was refused (Permission denied).${NC}"
+        echo -e "${DIM}  A Windows process may hold the file open, or the file/folder is read-only or under antivirus protection.${NC}"
+        echo -e "${DIM}  Close other programs that may have it open (other ai-coder sessions, editors) and retry; if it persists, check the file's attributes in Windows.${NC}"
+        rm -f "$_tmp" 2>/dev/null || true
+        release_lock "$_lock_dir"
+        return 0
+    fi
 
     release_lock "$_lock_dir"
 }
