@@ -113,6 +113,24 @@ setup_step_proxy() {
     esac
 }
 
+# Verify the proxy's re-signed certificates (verify_proxy_tls). Only makes
+# sense when a proxy is configured, so skip when one isn't. "yes" keeps
+# normal TLS verification inside the containers — the CAs in user/certificates/
+# are baked into the image's trust store. "no" (insecure) disables
+# verification for git/Node via env vars; curl/wget have no env-var opt-out
+# and take -k either way.
+setup_step_verify_proxy_tls() {
+    [ -n "$(read_setting proxy)" ] || return 0
+    local _cur; _cur=$(read_setting verify_proxy_tls)
+    setup_toggle_pref verify_proxy_tls "Verify proxy TLS" \
+        "Verify the proxy's re-signed certificates using the CAs in user/certificates/?" \
+        "Choose 'yes' if you can export your proxy's CA into user/certificates/ (rebuild after adding it); 'no' disables certificate verification inside the containers (git/Node) — curl/wget need -k either way. Leave blank to keep." \
+        "Verify proxy TLS? [Y/n]:" \
+        "$_cur" "$_cur" \
+        "${ICON_OK} Proxy TLS verification ${GREEN}on${NC}." \
+        "${DIM}  Proxy TLS verification disabled.${NC}"
+}
+
 setup_step_network() {
     local _cur_iso; _cur_iso=$(read_setting isolated)
     setup_toggle_pref isolated "Network isolation" \
@@ -664,6 +682,8 @@ cmd_setup() {
     setup_step_alias
     _ui_abort_if_cancelled
     setup_step_proxy
+    _ui_abort_if_cancelled
+    setup_step_verify_proxy_tls
     _ui_abort_if_cancelled
     setup_step_network
     _ui_abort_if_cancelled

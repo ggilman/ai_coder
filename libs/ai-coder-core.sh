@@ -151,21 +151,20 @@ fi
 DOWNLOAD_PROXY=$(echo "${DOWNLOAD_PROXY}" | sed 's|^https://|http://|')
 
 # Workbench egress env vars, set on every agent container so the tools' own
-# shell commands (curl, git, wget, npm, node) work without per-command flags.
-# Always unsets the inherited proxy vars: this launcher is built for a
-# TLS-intercepting corporate proxy that cannot tunnel HTTPS, so direct egress
-# is what reaches the internet. When a proxy is configured AND verify_proxy_tls is
-# not "yes" (i.e. insecure), also disables certificate verification for curl,
-# git and Node via env vars. wget has no env-var opt-out — it needs
-# -k or --insecure per invocation (the agent prompt says so). Python's
-# urllib/requests still need explicit opt-in (verify=False / unverified SSL
-# context). When trusted, the CAs in user/certificates/ are already baked
-# into the image's trust store, so normal verification works and no extra env
-# vars are needed.
+# shell commands work in fresh shells. Always unsets the inherited proxy vars:
+# this launcher is built for a TLS-intercepting corporate proxy that cannot
+# tunnel HTTPS, so direct egress is what reaches the internet. When a proxy is
+# configured AND verify_proxy_tls is not "yes" (i.e. insecure), disables
+# certificate verification for git (GIT_SSL_NO_VERIFY) and Node
+# (NODE_TLS_REJECT_UNAUTHORIZED) via env vars. curl and wget have no env-var
+# opt-out — they need -k or --insecure per invocation (the agent prompt says
+# so) — and Python's urllib/requests still need explicit opt-in (verify=False
+# / unverified SSL context). When trusted, the CAs in user/certificates/ are
+# already baked into the image's trust store, so normal verification works and
+# no extra env vars are needed.
 _tls_workbench_env() {
     echo "-e HTTP_PROXY= -e HTTPS_PROXY= -e http_proxy= -e https_proxy="
     if [ -n "${DOWNLOAD_PROXY:-}" ] && [ "$(read_setting verify_proxy_tls)" != "yes" ]; then
-        echo "-e CURL_CA_BUNDLE=/dev/null"
         echo "-e GIT_SSL_NO_VERIFY=true"
         echo "-e NODE_TLS_REJECT_UNAUTHORIZED=0"
     fi
@@ -175,14 +174,14 @@ _tls_workbench_env() {
 # prompts/common.md's {network_egress} placeholder). Always describes the
 # workbench env — it is set on every non-isolated container, with or without
 # a proxy. Three cases: proxy + trusted (CAs in user/certificates/ verify the
-# certs), proxy + not-trusted/insecure (verification disabled for curl/git/
-# node via env vars; wget and Python still need explicit opt-in), and no
+# certs), proxy + not-trusted/insecure (verification disabled for git/Node via
+# env vars; curl/wget and Python still need explicit opt-in), and no
 # proxy (plain direct HTTPS). The text states only what the setup actually
 # configures — it does not claim anything about the proxy that cannot be
 # known from the settings.
 _tls_egress_prompt() {
     if [ -n "${DOWNLOAD_PROXY:-}" ] && [ "$(read_setting verify_proxy_tls)" != "yes" ]; then
-        echo "- Network egress: a download proxy is configured and certificate verification is disabled for curl (\`CURL_CA_BUNDLE=/dev/null\`), git (\`GIT_SSL_NO_VERIFY=true\`), and Node (\`NODE_TLS_REJECT_UNAUTHORIZED=0\`) in the workbench environment, which also unsets any inherited proxy vars — so \`curl\`, \`git\`, \`npm\`, and \`node fetch\` work out of the box in fresh shells. \`wget\` has no env-var opt-out: add \`-k\` or \`--insecure\`. Python's \`urllib\`/\`requests\` still need explicit opt-in: pass \`verify=False\` (requests) or an unverified SSL context (\`ssl._create_unverified_context()\` for urllib). If a command fails with a certificate or proxy error, you are likely in a non-interactive shell that did not source the workbench environment; re-run it through \`bash -ic '...'\` or set the vars manually."
+        echo "- Network egress: a download proxy is configured and certificate verification is disabled for git (\`GIT_SSL_NO_VERIFY=true\`) and Node (\`NODE_TLS_REJECT_UNAUTHORIZED=0\`) in the workbench environment, which also unsets any inherited proxy vars — so \`git\`, \`npm\`, and \`node fetch\` work out of the box in fresh shells. \`curl\` and \`wget\` have no env-var opt-out: add \`-k\` or \`--insecure\` per invocation. Python's \`urllib\`/\`requests\` still need explicit opt-in: pass \`verify=False\` (requests) or an unverified SSL context (\`ssl._create_unverified_context()\` for urllib). If a command fails with a certificate or proxy error, you are likely in a non-interactive shell that did not source the workbench environment; re-run it through \`bash -ic '...'\` or set the vars manually."
     elif [ -n "${DOWNLOAD_PROXY:-}" ]; then
         echo "- Network egress: a download proxy is configured and certificate verification is normal — the CAs in user/certificates/ are baked into the image's trust store, and the workbench environment unsets any inherited proxy vars. If a command fails with a certificate error, the CA set is incomplete — add the missing CA to user/certificates/ and rebuild."
     else

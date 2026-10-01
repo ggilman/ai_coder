@@ -473,7 +473,7 @@ cp /path/to/your-enterprise-ca.cer user/certificates/
 ./ai-coder --rebuild && ./ai-coder
 ```
 
-The certificates are baked into the image's trust store (`/usr/local/share/ca-certificates/` → `update-ca-certificates`) at build time. This allows TLS verification to work correctly through your corporate proxy, rather than disabling it.
+The certificates are baked into the image's trust store (`/usr/local/share/ca-certificates/` → `update-ca-certificates`) at build time. This allows TLS verification to work correctly through your corporate proxy, rather than disabling it. The same files also back the host-side proxy pulls (the `crane` registry fallback and its download) via `SSL_CERT_FILE`, so those paths pick up new CAs on the next run without a rebuild.
 
 When exporting from Windows, either encoding option works: Base-64 (PEM) is used as-is, and DER binary is automatically converted to PEM at build time.
 
@@ -484,7 +484,7 @@ When exporting from Windows, either encoding option works: Base-64 (PEM) is used
 The `--setup` wizard asks whether to verify the proxy's TLS certificates (when one is configured). Two modes:
 
 - **Verify** (default, stored as `verify_proxy_tls=yes`): TLS verification stays on inside the containers; the CAs in `user/certificates/` verify the proxy's re-signed certificates. If a certificate error appears, add the missing CA and rebuild.
-- **Insecure** (stored as `verify_proxy_tls=no`): Certificate verification is disabled inside the workbench containers (`NODE_TLS_REJECT_UNAUTHORIZED=0`, git over HTTPS) — use only when no usable CA is available.
+- **Insecure** (stored as `verify_proxy_tls=no`): Certificate verification is disabled inside the workbench containers (`NODE_TLS_REJECT_UNAUTHORIZED=0`, `GIT_SSL_NO_VERIFY=true`) — curl and wget have no env-var opt-out, so they need `-k`/`--insecure` per invocation. Use only when no usable CA is available.
 
 The host-side bootstrap downloads (gum/jq) always verify normally or skip verification as needed for their own trust store; this setting only affects the container environment and the agent-instructions egress note.
 

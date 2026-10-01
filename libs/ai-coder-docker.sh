@@ -185,10 +185,39 @@ check_other_runtime_hub() {
     return 1
 }
 
+# Build the CA bundle the host-side proxy pulls need: the user's corporate
+# proxy CAs (user/certificates/, DER auto-converted to PEM) plus the
+# distro's system roots, as one PEM file. crane (Go) and curl (OpenSSL)
+# honor SSL_CERT_FILE, which replaces the default store — so the bundle
+# carries both sets and neither is lost. Prints the temp bundle path;
+# returns 1 when user/certificates/ holds no usable certificate. The
+# caller owns the file and removes it after use.
+_proxy_ca_bundle() {
+    local _dir="$USER_DIR/certificates"
+    [ -d "$_dir" ] || return 1
+    local _bundle _cert _pem
+    _bundle=$(mktemp) || return 1
+    for _cert in "$_dir"/*.crt "$_dir"/*.pem "$_dir"/*.cer; do
+        [ -f "$_cert" ] || continue
+        if grep -q -- '-----BEGIN CERTIFICATE' "$_cert" 2>/dev/null; then
+            cat "$_cert" >> "$_bundle"
+        elif command -v openssl >/dev/null 2>&1; then
+            _pem=$(openssl x509 -in "$_cert" -inform DER -outform PEM 2>/dev/null) || continue
+            printf '%s\n' "$_pem" >> "$_bundle"
+        fi
+    done
+    [ -f /etc/ssl/certs/ca-certificates.crt ] && cat /etc/ssl/certs/ca-certificates.crt >> "$_bundle"
+    [ -s "$_bundle" ] || { rm -f "$_bundle"; return 1; }
+    printf '%s' "$_bundle"
+}
+
 # Pull <image> through $proxy when a plain docker pull can't reach the
 # registry: Git Bash sets the proxy env vars for Docker Desktop (Windows
 # cert store); WSL2 retries plain pull first (daemon-side proxy settings)
-# then falls back to crane for an explicit proxy-aware registry pull.
+# then falls back to crane for an explicit proxy-aware registry pull,
+# verifying the proxy's re-signed certs against user/certificates/ via
+# SSL_CERT_FILE (the host-side clients use the distro trust store, which
+# lacks the corporate CAs).
 pull_base_image_via_proxy() {
     local image="$1" proxy="$2"
 
@@ -212,6 +241,11 @@ pull_base_image_via_proxy() {
     fi
     echo -e "${YELLOW}  Plain pull failed — attempting crane for proxy-aware pull...${NC}"
 
+    # The host-side TLS clients on this path (crane's Go runtime and curl's
+    # OpenSSL) verify the proxy's re-signed certs against the distro trust
+    # store — feed them the corporate CAs so that verification passes.
+    local _ca_bundle; _ca_bundle=$(_proxy_ca_bundle || true)
+
     local crane_bin crane_tmp=""
     crane_bin=$(command -v crane 2>/dev/null)
     if [ -z "$crane_bin" ]; then
@@ -223,11 +257,13 @@ pull_base_image_via_proxy() {
             crane_bin="$crane_tmp/crane"
         else
             echo -e "${CYAN}  Direct download failed, retrying via proxy...${NC}"
-            if curl --proxy "$proxy" -fsSL --connect-timeout 30 "$crane_url" | tar xz -C "$crane_tmp" crane; then
+            local _dl_env=()
+            [ -n "$_ca_bundle" ] && _dl_env=(SSL_CERT_FILE="$_ca_bundle")
+            if env "${_dl_env[@]}" curl --proxy "$proxy" -fsSL --connect-timeout 30 "$crane_url" | tar xz -C "$crane_tmp" crane; then
                 crane_bin="$crane_tmp/crane"
             else
                 echo -e "${YELLOW}  ✘ crane unavailable — trying a pull with explicit proxy env vars${NC}"
-                rm -rf "$crane_tmp"
+                rm -rf "$crane_tmp"; [ -n "$_ca_bundle" ] && rm -f "$_ca_bundle"
                 HTTPS_PROXY="$proxy" HTTP_PROXY="$proxy" ctr pull "$image" || {
                     echo -e "${RED}  ✘ Base image pull failed${NC}"; return 1
                 }
@@ -237,18 +273,25 @@ pull_base_image_via_proxy() {
     fi
     echo -e "${CYAN}  Pulling $image from registry via proxy (crane)...${NC}"
     local image_tar; image_tar=$(mktemp --suffix=.tar)
-    if HTTPS_PROXY="$proxy" HTTP_PROXY="$proxy" "$crane_bin" pull "$image" "$image_tar"; then
+    local _pull_env=(HTTPS_PROXY="$proxy" HTTP_PROXY="$proxy")
+    [ -n "$_ca_bundle" ] && _pull_env+=(SSL_CERT_FILE="$_ca_bundle")
+    if env "${_pull_env[@]}" "$crane_bin" pull "$image" "$image_tar"; then
         echo -e "${CYAN}  Loading image into $(runtime_display_name)...${NC}"
         if ctr load < "$image_tar"; then
             rm -f "$image_tar"; [ -n "$crane_tmp" ] && rm -rf "$crane_tmp"
+            [ -n "$_ca_bundle" ] && rm -f "$_ca_bundle"
             return 0
         else
             rm -f "$image_tar"; [ -n "$crane_tmp" ] && rm -rf "$crane_tmp"
+            [ -n "$_ca_bundle" ] && rm -f "$_ca_bundle"
             return 1
         fi
     else
         echo -e "${RED}  ✘ crane pull failed${NC}"
+        echo -e "${YELLOW}  The proxy's re-signed certificate isn't trusted by the host —${NC}"
+        echo -e "${YELLOW}  add its CA certificate(s) to ${USER_DIR}/certificates/ and retry.${NC}"
         rm -f "$image_tar"; [ -n "$crane_tmp" ] && rm -rf "$crane_tmp"
+        [ -n "$_ca_bundle" ] && rm -f "$_ca_bundle"
         return 1
     fi
 }

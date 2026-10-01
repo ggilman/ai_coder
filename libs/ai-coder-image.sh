@@ -28,9 +28,9 @@ RUN if [ -n "\${PROXY_URL}" ]; then \
         sed -i 's|http://|https://|g' /etc/apt/sources.list; \
       fi && \
       if [ -d /etc/apt/sources.list.d ]; then \
-        find /etc/apt/sources.list.d -name '*.list' -exec sed -i 's|http://|https://|g' {} +; \
+        find /etc/apt/sources.list.d \( -name '*.list' -o -name '*.sources' \) -exec sed -i 's|http://|https://|g' {} +; \
       fi && \
-      printf 'Acquire::https::Proxy "%s";\nAcquire::https::Verify-Peer "false";\nAcquire::https::Verify-Host "false";\n' "\${apt_proxy}" > /etc/apt/apt.conf.d/01proxy; \
+      printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\nAcquire::https::Verify-Peer "false";\nAcquire::https::Verify-Host "false";\n' "\${apt_proxy}" "\${apt_proxy}" > /etc/apt/apt.conf.d/01proxy; \
     fi
 RUN apt-get update && apt-get install -y wget ca-certificates gnupg apt-transport-https --no-install-recommends && \
     wget -qO- https://packages.microsoft.com/keys/microsoft.asc | \
