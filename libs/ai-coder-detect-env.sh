@@ -2,7 +2,9 @@
 # ==============================================================================
 # AI-CODER-DETECT-ENV.SH | Minimal WSL/Git Bash Platform Detection
 # Sets IS_WSL and IS_GITBASH, and provides resolve_model_storage_dir
-# (WIN_HOME / MODEL_STORAGE_DIR). Self-contained like ai-coder-graphics.sh —
+# (WIN_HOME / MODEL_STORAGE_DIR), run_compat (command-string executor) and
+# touch_compat (no-exec sentinel creation).
+# Self-contained like ai-coder-graphics.sh —
 # no dependency on any other ai-coder global — since this is sourced both by
 # the full launch chain (ai-coder-core.sh) and by standalone entry points that
 # run before or without it (ai-coder-status-common.sh, offline/unbundle.sh).
@@ -16,6 +18,34 @@ IS_WSL=$(grep -qi Microsoft /proc/version 2>/dev/null && echo "true" || echo "fa
 # regardless of what `uname -s` reports (MINGW64_NT-..., MSYS_NT-..., etc.
 # depending on how the shell was launched).
 IS_GITBASH=$([[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && echo "true" || echo "false")
+
+# ------------------------------------------------------------------------------
+# run_compat — execute a command string in a fresh bash.
+#
+# Choke point for commands that recent WSL builds mishandle: that is where
+# platform-specific routing goes, if a command needs it. (Do NOT route
+# programs through `bash <prog>` here — bash reads the ELF as a script and
+# dies with "cannot execute binary file".) File-creation sentinels don't
+# need any program at all — use touch_compat instead.
+# Usage: run_compat "touch \"$USER_DIR/.setup-done\""
+# ------------------------------------------------------------------------------
+run_compat() {
+    bash -c "$1"
+}
+
+# ------------------------------------------------------------------------------
+# touch_compat — guarantee <path> exists, without exec'ing a program.
+#
+# Replacement for `touch <sentinel>`: the consumers only check existence
+# ([ -f ... ]), and recent WSL builds deny some file operations on
+# Windows-mounted drives with "Permission denied", so the file is created
+# by the shell itself — skip when it already exists (even read-only),
+# otherwise a plain redirection creates it, no exec involved.
+# ------------------------------------------------------------------------------
+touch_compat() {
+    local f="$1"
+    [ -f "$f" ] || : > "$f"
+}
 
 # ------------------------------------------------------------------------------
 # resolve_model_storage_dir — set WIN_HOME and MODEL_STORAGE_DIR

@@ -121,7 +121,7 @@ _download_sglang_locked() {
         return 1
     fi
 
-    touch "$part/$SGL_COMPLETE_MARKER"
+    touch_compat "$part/$SGL_COMPLETE_MARKER"
     rm -rf "$dest"
     mv "$part" "$dest"
     echo -e "${GREEN}✔ Model downloaded successfully${NC}"

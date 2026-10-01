@@ -670,6 +670,7 @@ No internet connection is required on the target machine.
 - **Brave Search not working**: Ensure `BRAVE_API_KEY` is exported in your shell before running `./ai-coder`. Get a free key at [brave.com/search/api](https://brave.com/search/api).
 
 - **Shell Compatibility**: The scripts support both **WSL2** and **Git Bash** on Windows.
+- **WSL: `./ai-coder: Permission denied`**: Recent WSL builds no longer grant execute permission to scripts on Windows-mounted drives, so the launcher can't run via its shebang. Preface it with `bash` to run it as an interpreter instead: `bash ~/ai-coder/ai-coder --setup` (same fix for any script, e.g. `bash ./ai-status.sh`). The `ai` alias that `--setup` adds is written with the `bash` prefix on WSL — re-run `--setup` and accept the alias to get it.
 - **Packages changed but image not rebuilt**: Run `./ai-coder --rebuild` then `./ai-coder`.
 - **Claude Code "Error editing file"**: Caused by CRLF line endings in project files on Windows. Fix with:
   ```bash

@@ -65,13 +65,22 @@ setup_step_alias() {
         "$([ "$_alias_exists" = "true" ] && echo "yes" || echo "no")")
     case "$_alias_input" in
         yes)
-            touch "$rc_file"
+            touch_compat "$rc_file"
             sed -i.bak "/alias $ALIAS_NAME=/d" "$rc_file"
-            echo "alias $ALIAS_NAME='\"$(realpath "$0")\"'" >> "$rc_file"
+            # Recent WSL builds no longer grant execute permission to scripts on
+            # Windows-mounted drives (direct exec: "Permission denied"), so
+            # invoke through bash there — it reads the script, no shebang needed.
+            local _alias_target
+            if [ "$IS_WSL" = "true" ]; then
+                _alias_target="bash \"$(realpath "$0")\""
+            else
+                _alias_target="\"$(realpath "$0")\""
+            fi
+            echo "alias $ALIAS_NAME='$_alias_target'" >> "$rc_file"
             echo -e "${ICON_OK} Alias '${ALIAS_NAME}' added to $rc_file. Run: ${CYAN}source $rc_file${NC}"
             ;;
         no)
-            touch "$rc_file"
+            touch_compat "$rc_file"
             sed -i.bak "/alias $ALIAS_NAME=/d" "$rc_file"
             echo -e "${DIM}  Alias removed from $rc_file.${NC}"
             ;;
@@ -622,7 +631,7 @@ setup_step_git_identity() {
     local _final_git_name="${_git_name_input:-$_cur_git_name}"
     if [ -n "$_final_git_email" ] || [ -n "$_final_git_name" ]; then
         if [[ "$_final_git_email" != "$_cur_git_email" || "$_final_git_name" != "$_cur_git_name" ]]; then
-            touch "$USER_DIR/.rebuild-needed"
+            touch_compat "$USER_DIR/.rebuild-needed"
             echo -e "${YELLOW}  Note: Git identity changed. A rebuild (ai --rebuild) is required to bake this into the image.${NC}"
         fi
         write_pref "$SETTINGS_FILE" git_email "$_final_git_email"
@@ -692,6 +701,6 @@ cmd_setup() {
     # explicitly so the file can never be absent after a completed --setup
     # (a missing settings.json would re-trigger the gate in ai-coder).
     write_pref "$SETTINGS_FILE" "settings_version" "$SETTINGS_SCHEMA_VERSION"
-    touch "$USER_DIR/.setup-done"
+    touch_compat "$USER_DIR/.setup-done"
     echo -e "\n${ICON_OK} Setup complete."
 }
