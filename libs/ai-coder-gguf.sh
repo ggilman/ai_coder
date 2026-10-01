@@ -25,7 +25,7 @@ gguf_read_header() {
     fi
 }
 
-# Usage: gguf_kv_geometry <header_file> — parse the metadata and print
+# Usage: gguf_kv_geometry <header_file> [nextn_late] — parse the metadata and print
 #   <arch> <layers> <K> <V> <K_swa> <V_swa> <window> <note> <mtp_layers>
 # K/V are cache elements per token summed over the full-context layers; the
 # _swa columns over the sliding-window layers (which cache at most <window>
@@ -43,7 +43,7 @@ gguf_read_header() {
 # architecture is counted as all full-context — an overestimate, never under.
 gguf_kv_geometry() {
     # od errors (SIGPIPE) once awk stops reading early — expected.
-    { od -An -v -tu1 -w4096 "$1" 2>/dev/null || true; } | LC_ALL=C awk '
+    { od -An -v -tu1 -w4096 "$1" 2>/dev/null || true; } | LC_ALL=C awk -v nextn_late="${2:-0}" '
     function rb() {
         while (bp > bn) {
             if ((getline ln) <= 0) { short = 1; return 0 }
@@ -148,7 +148,10 @@ gguf_kv_geometry() {
         fai = V[p "full_attention_interval"] + 0
         # MTP (next-token prediction) layers sit at the end and are full
         # attention; counted as cached, which errs high if llama.cpp skips them.
-        nextn = V[p "nextn_predict_layers"] + 0
+        # A key written after the tokenizer section is never parsed (see the
+        # early stop above); gguf_probe finds it by byte search and passes it
+        # in as nextn_late.
+        nextn = ((p "nextn_predict_layers") in V) ? V[p "nextn_predict_layers"] + 0 : nextn_late + 0
         # Gemma 3n/4: the last N layers reuse earlier layers KV.
         nkvl = L - (V[p "attention.shared_kv_layers"] + 0)
 
@@ -187,9 +190,44 @@ gguf_probe() {
         if [ "$_res" != "SHORT" ] || [ "$_n" -ge 33554432 ]; then break; fi
         _n=$(( _n * 4 ))
     done
+    # The parse stops at the tokenizer section, but some quantizers (e.g.
+    # ISTA DASLab's GSQ-RCO Qwen3.8 GGUFs) append nextn_predict_layers after
+    # it, so a 0 may just mean "not reached". Byte-search the rest of the
+    # metadata for that one key rather than stream the multi-MB vocab on
+    # every launch. Local files always (a 32 MiB read is quick); remote ones
+    # (--kv-probe) only when the file name says MTP, to spare a 32 MiB
+    # download per tier of every non-MTP family.
+    local _arch _late
+    read -r _arch _ _ _ _ _ _ _ _late <<< "$_res"
+    if [ "${_res%% *}" != "ERROR" ] && [ "${_late:-0}" = "0" ] && \
+       { [ -f "$_src" ] || [[ "${_src,,}" == *mtp* ]]; }; then
+        if [ "$_n" -lt 33554432 ] && ! gguf_read_header "$_src" "$_tmp" 33554432; then
+            _late=""
+        else
+            _late=$(_gguf_find_uint "$_tmp" "${_arch}.nextn_predict_layers") || _late=""
+        fi
+        if [ -n "$_late" ] && [ "$_late" != "0" ]; then
+            _res=$(gguf_kv_geometry "$_tmp" "$_late")
+        fi
+    fi
     rm -f "$_tmp"
     [ "$_res" = "SHORT" ] && _res="ERROR metadata larger than 32 MiB"
     echo "$_res"
+}
+
+# Usage: _gguf_find_uint <header_file> <key> — the value of an integer
+# metadata key found by searching for its bytes, wherever it sits in the
+# header. Checks the GGUF framing around the match (the u64 length prefix
+# equals the key's length, the value type is u32/i32), so the same text
+# inside a string value (e.g. the chat template) isn't mistaken for it.
+_gguf_find_uint() {
+    local _f="$1" _key="$2" _off _len _type _val
+    _off=$(LC_ALL=C grep -obaF -m1 -- "$_key" "$_f" 2>/dev/null | head -1 | cut -d: -f1) || true
+    [ -n "$_off" ] && [ "$_off" -ge 8 ] || return 1
+    _len=$(od -An -tu8 -j $(( _off - 8 )) -N 8 "$_f" | tr -d ' \r\n')
+    [ "$_len" = "${#_key}" ] || return 1
+    read -r _type _val <<< "$(od -An -tu4 -j $(( _off + ${#_key} )) -N 8 "$_f")"
+    case "$_type" in 4|5) echo "$_val" ;; *) return 1 ;; esac
 }
 
 # Usage: gguf_mtp_layers <path> — the built-in MTP draft-head layer count of a
