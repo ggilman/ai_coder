@@ -238,7 +238,7 @@ docker volume rm ai-coder-models
 
 ## Speculative Decoding
 
-When enabled (`--setup`, default **on**), the engine loads a small *draft model* alongside the main model. The draft cheaply proposes several tokens at a time; the main model verifies them in a single pass and keeps the ones it agrees with. Code is highly predictable, so acceptance rates are high — typically **1.5–2× faster generation** with identical output quality (verification guarantees the result matches what the main model would have produced alone).
+When enabled (`--model`, default **on**), the engine loads a small *draft model* alongside the main model. The draft cheaply proposes several tokens at a time; the main model verifies them in a single pass and keeps the ones it agrees with. Code is highly predictable, so acceptance rates are high — typically **1.5–2× faster generation** with identical output quality (verification guarantees the result matches what the main model would have produced alone).
 
 Details:
 - Only applies to model families that define an external draft in their family conf (`MODEL_DRAFT_FILE`/`URL`). Currently: **Qwen3** (Qwen3-0.6B, ~0.6 GB — drafts for every tier since the whole family shares one tokenizer, `MODEL_SPEC_STRATEGY=none`) and **Qwen3.8** (a small companion draft-head file from the same upstream repo, `MODEL_SPEC_STRATEGY=mtp` — this pairing hasn't been verified against a live llama.cpp run; if it errors on startup, switch that family's `MODEL_SPEC_STRATEGY` to `none`). Other families note in their conf why no draft is wired.
@@ -247,7 +247,7 @@ Details:
 - If the draft can't be downloaded, the session degrades gracefully to normal decoding.
 - Toggling the setting takes effect at the next launch via an automatic engine restart.
 
-To judge the benefit on your hardware, run the same task with the setting on and off (`--setup`, then reopen a session) and compare tokens/sec in the engine logs or the feel of long generations.
+To judge the benefit on your hardware, run the same task with the setting on and off (`--model`, then reopen a session) and compare tokens/sec in the engine logs or the feel of long generations.
 
 ## Agent Instructions
 
@@ -318,7 +318,7 @@ A rebuild (`./ai-coder --rebuild` followed by `./ai-coder`) is only needed when 
 | Add a new model family config (`config/families/*.conf`) | No | Read at launch time |
 | Change GPU mode (`--setup`) | No | Passed as flags when the engine container starts |
 | Toggle fast model storage (`--setup`) | No | Engine restarts with the new mount on next launch |
-| Toggle speculative decoding (`--setup`) | No | Engine restarts with/without the draft model on next launch |
+| Toggle speculative decoding (`--model`) | No | Engine restarts with/without the draft model on next launch |
 | Change the KV cache type (`--model`) | No | Engine restarts with the new KV cache type on next launch; the first switch to asymmetric builds llama.cpp locally (one time) |
 | Switch inference engine (`--setup`) | No | Engine restarts on the new server on next launch; the workbench images are engine-independent |
 | Change SGLang memory fraction, FP8 KV cache or thinking mode (`--model`) | No | Engine restarts with the new value on next launch |
@@ -573,7 +573,7 @@ Git checkouts are tracked through git itself: `--version` reports the local `ori
 
 ### Setup (`--setup`)
 
-**`--setup` must be run once before first launch.** It walks through up to fourteen configuration steps — which ones depends on the inference engine you choose, since options one engine doesn't use are not shown. On first run the installer downloads [gum](https://github.com/charmbracelet/gum) — a CLI tool for beautiful interactive prompts — and uses it for the wizard on both WSL and Git Bash. If gum is unavailable it falls back to plain text prompts. Either way the questions and defaults are the same:
+**`--setup` must be run once before first launch.** It walks through up to thirteen configuration steps — which ones depends on the inference engine you choose, since options one engine doesn't use are not shown. On first run the installer downloads [gum](https://github.com/charmbracelet/gum) — a CLI tool for beautiful interactive prompts — and uses it for the wizard on both WSL and Git Bash. If gum is unavailable it falls back to plain text prompts. Either way the questions and defaults are the same:
 
 ```bash
 ./ai-coder --setup
@@ -589,10 +589,9 @@ Git checkouts are tracked through git itself: `--version` reports the local `ori
 8. **Agent instructions** — give each coding tool a short set of working rules from `prompts/` (see [Agent Instructions](#agent-instructions)). On by default.
 9. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Also asks for an idle timeout (default 60 min, `0` = forever) after which the warm hub stops itself to release VRAM; stop it immediately with `--clean`.
 10. **Fast model storage** — cache models in a Docker volume so engine cold starts load from the VM's native disk instead of the slow Windows filesystem bridge. Default on for WSL/Git Bash; see [Model Storage](#model-storage).
-11. **Speculative decoding** *(llama.cpp)* — use a small draft model to speed up generation, typically 1.5–2× on code. Default on; costs ~1 GB VRAM and applies only to families that define a draft (currently Qwen3). See [Speculative Decoding](#speculative-decoding).
-12. **Generation speed tracking** *(llama.cpp)* — off by default. Enables the `--speed` command: a one-shot `llama-bench` pass on your model on a clean GPU that prints tokens-per-second (tg = generation, pp = prompt processing).
-13. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
-14. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
+11. **Generation speed tracking** *(llama.cpp)* — off by default. Enables the `--speed` command: a one-shot `llama-bench` pass on your model on a clean GPU that prints tokens-per-second (tg = generation, pp = prompt processing).
+12. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
+13. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
 
 Settings that change which model tier fits in VRAM are deliberately not wizard steps — `--model` asks them instead (along with the model family, tool, and Open WebUI), and a plain launch verifies they are set:
 
@@ -600,6 +599,7 @@ Settings that change which model tier fits in VRAM are deliberately not wizard s
 - **KV cache** — llama.cpp: family default `q8_0`, [asymmetric](#asymmetric-kv-cache) `q8_0` K / `q4_0` V, or `q4_0`. SGLang: optional FP8 (off by default).
 - **VRAM overhead reserve** *(llama.cpp)* — GB of VRAM held back for CUDA context, compute buffers and other apps on the GPU when sizing the model tier (default 1 GB). Raise it if the engine logs `failed to fit` or slows down from memory spilling to system RAM.
 - **CPU offload threshold** *(llama.cpp)* — run a bigger model with a few layers on CPU when at least this percentage of it fits in VRAM (default 90, range 50–99, `0` disables). At 90% the worst case is roughly half generation speed; only fires for a genuinely bigger model, never for a higher quant of the same one. See [Family Configuration Format](#family-configuration-format).
+- **Speculative decoding** *(llama.cpp)* — use a small draft model to speed up generation, typically 1.5–2× on code. Default on; its ~1–2 GB draft reserve (`MODEL_DRAFT_VRAM_GB`) can mean a smaller tier fits. Only asked for families that define an external draft (currently Qwen3, and Qwen3.8 when its `MODEL_SPEC_STRATEGY=mtp`). See [Speculative Decoding](#speculative-decoding).
 - **SGLang memory fraction** *(SGLang)* — share of each GPU's VRAM SGLang pre-allocates for model + KV cache (default 0.85, range 0.50–0.95). Lower it if the GPU also drives your display.
 
 `--model` also asks one question that doesn't affect sizing but is worth revisiting per model:

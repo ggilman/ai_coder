@@ -189,25 +189,31 @@ check_other_runtime_hub() {
 # proxy CAs (user/certificates/, DER auto-converted to PEM) plus the
 # distro's system roots, as one PEM file. crane (Go) and curl (OpenSSL)
 # honor SSL_CERT_FILE, which replaces the default store — so the bundle
-# carries both sets and neither is lost. Prints the temp bundle path;
-# returns 1 when user/certificates/ holds no usable certificate. The
-# caller owns the file and removes it after use.
+# carries both sets and neither is lost. Every file is followed by a newline
+# so a PEM without a trailing one can't fuse its END line with the next
+# BEGIN. Prints the temp bundle path; returns 1 when user/certificates/
+# holds no usable certificate (system roots alone add nothing over the
+# default store). The caller owns the file and removes it after use.
 _proxy_ca_bundle() {
     local _dir="$USER_DIR/certificates"
     [ -d "$_dir" ] || return 1
-    local _bundle _cert _pem
+    local _bundle _cert _pem _found=false
     _bundle=$(mktemp) || return 1
     for _cert in "$_dir"/*.crt "$_dir"/*.pem "$_dir"/*.cer; do
         [ -f "$_cert" ] || continue
         if grep -q -- '-----BEGIN CERTIFICATE' "$_cert" 2>/dev/null; then
-            cat "$_cert" >> "$_bundle"
+            { cat "$_cert"; echo; } >> "$_bundle"
+            _found=true
         elif command -v openssl >/dev/null 2>&1; then
             _pem=$(openssl x509 -in "$_cert" -inform DER -outform PEM 2>/dev/null) || continue
             printf '%s\n' "$_pem" >> "$_bundle"
+            _found=true
         fi
     done
-    [ -f /etc/ssl/certs/ca-certificates.crt ] && cat /etc/ssl/certs/ca-certificates.crt >> "$_bundle"
-    [ -s "$_bundle" ] || { rm -f "$_bundle"; return 1; }
+    [ "$_found" = true ] || { rm -f "$_bundle"; return 1; }
+    if [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+        { cat /etc/ssl/certs/ca-certificates.crt; echo; } >> "$_bundle"
+    fi
     printf '%s' "$_bundle"
 }
 
@@ -247,7 +253,7 @@ pull_base_image_via_proxy() {
     local _ca_bundle; _ca_bundle=$(_proxy_ca_bundle || true)
 
     local crane_bin crane_tmp=""
-    crane_bin=$(command -v crane 2>/dev/null)
+    crane_bin=$(command -v crane 2>/dev/null || true)
     if [ -z "$crane_bin" ]; then
         local crane_url="https://github.com/google/go-containerregistry/releases/download/v0.20.2/go-containerregistry_Linux_x86_64.tar.gz"
         crane_tmp=$(mktemp -d)
@@ -288,8 +294,8 @@ pull_base_image_via_proxy() {
         fi
     else
         echo -e "${RED}  ✘ crane pull failed${NC}"
-        echo -e "${YELLOW}  The proxy's re-signed certificate isn't trusted by the host —${NC}"
-        echo -e "${YELLOW}  add its CA certificate(s) to ${USER_DIR}/certificates/ and retry.${NC}"
+        echo -e "${YELLOW}  If the error above mentions x509 or a certificate, the proxy's${NC}"
+        echo -e "${YELLOW}  re-signing CA isn't trusted — add it to ${USER_DIR}/certificates/ and retry.${NC}"
         rm -f "$image_tar"; [ -n "$crane_tmp" ] && rm -rf "$crane_tmp"
         [ -n "$_ca_bundle" ] && rm -f "$_ca_bundle"
         return 1

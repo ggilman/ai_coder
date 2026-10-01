@@ -166,6 +166,11 @@ if [[ "${1:-}" == "--model" ]]; then
         _ui_abort_if_cancelled
         setup_step_cpu_offload
         _ui_abort_if_cancelled
+        # Only families with an external draft model use the setting.
+        if family_defines_draft "$(read_pref "$STATE_FILE" family_pref "")"; then
+            setup_step_spec_decode
+            _ui_abort_if_cancelled
+        fi
         setup_step_thinking
     fi
     _ui_abort_if_cancelled

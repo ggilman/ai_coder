@@ -16,7 +16,7 @@
 # when the stored shape changes. migrate_user_prefs carries files forward from
 # their stored version to the current one.
 # ------------------------------------------------------------------------------
-SETTINGS_SCHEMA_VERSION=2
+SETTINGS_SCHEMA_VERSION=3
 STATE_SCHEMA_VERSION=1
 
 # ------------------------------------------------------------------------------
@@ -54,10 +54,10 @@ pref_default() {
         expose_host_port) echo "no" ;;
         git_email)        echo "" ;;
         git_name)         echo "" ;;
-         container_tz)     echo "America/Chicago" ;;
-         model_config_complete) echo "no" ;;
-         verify_proxy_tls) echo "yes" ;;
-         *)                echo "" ;;
+        container_tz)     echo "America/Chicago" ;;
+        model_config_complete) echo "no" ;;
+        verify_proxy_tls) echo "yes" ;;
+        *)                echo "" ;;
     esac
 }
 
@@ -152,4 +152,14 @@ migrate_settings_v1_to_v2() {
         write_pref "$SETTINGS_FILE" kv_mode "q4"
     fi
     pref_drop "$SETTINGS_FILE" kv_q4
+}
+
+# settings v2 -> v3: verify_proxy_tls gained a "yes" default. Before that an
+# absent key read as "" and so as insecure; a proxy user who never answered
+# the question keeps that behaviour rather than silently switching to
+# verification against a user/certificates/ that may hold no CA.
+migrate_settings_v2_to_v3() {
+    [ -n "$(read_pref "$SETTINGS_FILE" proxy "")" ] || return 0
+    [ -z "$(read_pref "$SETTINGS_FILE" verify_proxy_tls "")" ] || return 0
+    write_pref "$SETTINGS_FILE" verify_proxy_tls "no"
 }
