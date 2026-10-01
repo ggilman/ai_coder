@@ -32,8 +32,11 @@ RUN if [ -n "\${PROXY_URL}" ]; then \
       fi && \
       printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\nAcquire::https::Verify-Peer "false";\nAcquire::https::Verify-Host "false";\n' "\${apt_proxy}" "\${apt_proxy}" > /etc/apt/apt.conf.d/01proxy; \
     fi
-RUN apt-get update && apt-get install -y wget ca-certificates gnupg apt-transport-https --no-install-recommends && \
-    wget -qO- https://packages.microsoft.com/keys/microsoft.asc | \
+RUN if [ -n "\${PROXY_URL}" ]; then \
+      wget_proxy="-e use_proxy=yes -e http_proxy=\$(echo \${PROXY_URL} | sed 's|^https://|http://|') -e https_proxy=\$(echo \${PROXY_URL} | sed 's|^https://|http://|')"; \
+    else wget_proxy=""; fi && \
+    apt-get update && apt-get install -y wget ca-certificates gnupg apt-transport-https --no-install-recommends && \
+    wget -qO- --timeout=60 --no-check-certificate \${wget_proxy} https://packages.microsoft.com/keys/microsoft.asc | \
       gpg --dearmor > /usr/share/keyrings/microsoft-archive-keyring.gpg && \
     echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
       > /etc/apt/sources.list.d/microsoft-prod.list && \

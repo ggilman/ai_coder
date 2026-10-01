@@ -234,14 +234,24 @@ _wslc_load() {
 
 # --- [ QUERY HELPERS ] --------------------------------------------------------
 # Docker branches keep the launcher's original docker commands; wslc reads
-# `list -a --format json` ([{Id, Name, Image, State}], State 1 created /
-# 2 running / 3 exited) and inspect JSON through jq.
+# `list -a --format json` (one object per container, fields ID, Names, State
+# with a textual value such as "running") and inspect JSON through jq.
 
 # Usage: _wslc_container_ids <jq-select-expression> [--arg k v ...]
+# wslc's list JSON differs from Docker's: one object per line rather than an
+# array, "Names" (primary name, aliases comma-separated) rather than "Name",
+# "ID" rather than "Id", and a textual "State" rather than a number. Each
+# object is normalized to the shape the selection expression expects —
+# Name (primary), State 1 created / 2 running / 3 exited — before select.
 _wslc_container_ids() {
     local _sel="$1"; shift
     "$CTR_BIN" list -a --format json 2>/dev/null | tr -d '\r' \
-        | "${JQ_CMD:-jq}" -r "$@" ".[] | select($_sel) | .Id" 2>/dev/null
+        | "${JQ_CMD:-jq}" -r "$@" \
+            'if type == "array" then .[] else . end |
+             ((.State // "") | ascii_downcase) as $s |
+             {Name: ((.Names // "") | split(",")[0]),
+              State: (if ($s | startswith("running")) then 2 elif ($s | startswith("exited")) then 3 else 1 end),
+              Id: (.ID // "")} | select('$_sel') | .Id' 2>/dev/null
 }
 
 # Usage: ctr_container_running <name> — true if a container with exactly
@@ -337,7 +347,7 @@ ctr_image_exists() {
 ctr_image_repos() {
     if runtime_is_wslc; then
         "$CTR_BIN" images --format json 2>/dev/null | tr -d '\r' \
-            | "${JQ_CMD:-jq}" -r '.[].Repository | sub("^docker\\.io/(library/)?"; "")' 2>/dev/null
+            | "${JQ_CMD:-jq}" -r 'if type == "array" then .[] else . end | .Repository | sub("^docker\\.io/(library/)?"; "")' 2>/dev/null
     else
         docker images --format '{{.Repository}}' 2>/dev/null
     fi
@@ -348,7 +358,7 @@ ctr_image_refs() {
     if runtime_is_wslc; then
         "$CTR_BIN" images --format json 2>/dev/null | tr -d '\r' \
             | "${JQ_CMD:-jq}" -r --arg r "$1" \
-                '.[] | select(.Repository == $r or .Repository == ("docker.io/" + $r)) | "\($r):\(.Tag)"' 2>/dev/null
+                'if type == "array" then .[] else . end | select(.Repository == $r or .Repository == ("docker.io/" + $r)) | "\($r):\(.Tag)"' 2>/dev/null
     else
         docker images --format '{{.Repository}}:{{.Tag}}' "$1" 2>/dev/null
     fi
@@ -356,9 +366,9 @@ ctr_image_refs() {
 
 # Usage: ctr_build_from_git <git-url> <ref> [docker build options...]
 # Docker builds straight from the "<url>#<ref>" context. wslc only builds
-# from a local directory, so the ref is shallow-cloned to a temp dir first;
-# a relative -f/--file is resolved inside that checkout, as Docker resolves
-# it inside the git context. The clone goes through DOWNLOAD_PROXY when set
+# from a local directory, so the ref is fetched to a temp dir first; a
+# relative -f/--file is resolved inside that checkout, as Docker resolves
+# it inside the git context. The fetch goes through DOWNLOAD_PROXY when set
 # (TLS unverified there, like the other host-side downloads behind the
 # re-signing proxy — see _asset_curl).
 ctr_build_from_git() {
@@ -367,20 +377,48 @@ ctr_build_from_git() {
         docker build "$@" "${_url}#${_ref}"
         return
     fi
-    command -v git >/dev/null 2>&1 || {
-        echo "✘ git is needed to build from ${_url} with WSL Containers." >&2; return 1
-    }
     local _dir _rc=0
     _dir=$(_ctr_mktemp) && rm -f "$_dir" && mkdir -p "$_dir" || return 1
-    local _git=(git -c advice.detachedHead=false)
-    [ -n "${DOWNLOAD_PROXY:-}" ] && _git+=(-c "http.proxy=$DOWNLOAD_PROXY" -c http.sslVerify=false)
-    # Git Bash's git.exe is a Windows program: with MSYS_NO_PATHCONV=1 (set by
-    # the launch chain) a /tmp/... argument reaches it unconverted and lands
-    # under <drive>:\tmp, so it gets the Windows form.
-    local _clone_dir="$_dir"
-    [ "${IS_GITBASH:-false}" = "true" ] && _clone_dir=$(cygpath -m "$_dir")
-    if ! "${_git[@]}" clone --quiet --depth 1 --branch "$_ref" "$_url" "$_clone_dir"; then
-        rm -rf "$_dir"; return 1
+    # wslc's git is linked against a libcurl that only offers the GnuTLS SSL
+    # backend, while the session pins GIT_SSL_BACKEND=schannel, so git's http
+    # transport dies before it can even connect ("Unsupported SSL backend").
+    # Fetch the ref as a GitHub source tarball through curl instead; fall
+    # back to a shallow clone when that route isn't available.
+    local _proxy="" _tar_url="" _tgz="" _fetched=false
+    [ -n "${DOWNLOAD_PROXY:-}" ] && _proxy=$(resolve_proxy_env_url)
+    if [[ "$_url" == https://github.com/* ]]; then
+        _tar_url="${_url%.git}"
+        _tar_url="${_tar_url/github.com/codeload.github.com}/tar.gz/${_ref}"
+    fi
+    if [ -n "$_tar_url" ] && command -v curl >/dev/null 2>&1; then
+        _tgz=$(_ctr_mktemp)
+        local _curl_args=(-fsSL --connect-timeout 30 --speed-limit 1024 --speed-time 120)
+        [ -n "$_proxy" ] && _curl_args+=(-x "$_proxy" -k)
+        if curl "${_curl_args[@]}" -o "$_tgz" "$_tar_url" 2>/dev/null; then
+            tar xzf "$_tgz" -C "$_dir" --strip-components=1 || {
+                rm -rf "$_dir"; [ -n "$_tgz" ] && rm -f "$_tgz"; return 1
+            }
+            _fetched=true
+        fi
+    fi
+    if [ "$_fetched" != true ]; then
+        command -v git >/dev/null 2>&1 || {
+            rm -rf "$_dir"; [ -n "$_tgz" ] && rm -f "$_tgz"
+            echo "✘ git is needed to build from ${_url} with WSL Containers." >&2; return 1
+        }
+        [ -n "$_tar_url" ] && echo -e "${YELLOW:-}  Tarball fetch failed — falling back to git clone...${NC:-}" >&2
+        local _git=(git -c advice.detachedHead=false)
+        [ -n "${DOWNLOAD_PROXY:-}" ] && _git+=(-c "http.proxy=$DOWNLOAD_PROXY" -c http.sslVerify=false)
+        # Git Bash's git.exe is a Windows program: with MSYS_NO_PATHCONV=1 (set by
+        # the launch chain) a /tmp/... argument reaches it unconverted and lands
+        # under <drive>:\tmp, so it gets the Windows form.
+        local _clone_dir="$_dir"
+        [ "${IS_GITBASH:-false}" = "true" ] && _clone_dir=$(cygpath -m "$_dir")
+        # Unset GIT_SSL_BACKEND: the session can pin it to a backend this git
+        # can't use (see above); the compiled-in default works.
+        if ! env -u GIT_SSL_BACKEND "${_git[@]}" clone --quiet --depth 1 --branch "$_ref" "$_url" "$_clone_dir"; then
+            rm -rf "$_dir"; [ -n "$_tgz" ] && rm -f "$_tgz"; return 1
+        fi
     fi
     local _args=() _a
     while [ $# -gt 0 ]; do
@@ -395,6 +433,6 @@ ctr_build_from_git() {
         esac
     done
     "$CTR_BIN" build "${_args[@]}" "$(_ctr_host_file "$_dir")" || _rc=$?
-    rm -rf "$_dir"
+    rm -rf "$_dir"; [ -n "$_tgz" ] && rm -f "$_tgz"
     return "$_rc"
 }
