@@ -133,10 +133,10 @@ _download_sglang_locked() {
 # retry resumes rather than restarts.
 _sglang_snapshot_attempt() {
     local _name="ai-coder-model-download"
-    docker rm -f "$_name" >/dev/null 2>&1 || true
+    ctr rm -f "$_name" >/dev/null 2>&1 || true
     # The repo's original/ and metal/ folders (e.g. gpt-oss) duplicate the
     # weights in formats SGLang doesn't load; GGUFs are llama.cpp's.
-    HF_TOKEN="${HF_TOKEN:-}" docker run --rm --name "$_name" --entrypoint python3 \
+    HF_TOKEN="${HF_TOKEN:-}" ctr run --rm --name "$_name" --entrypoint python3 \
         -e HF_HUB_DISABLE_PROGRESS_BARS=1 "${_proxy_env[@]}" "${_token_env[@]}" \
         -v "$(to_host_path "$MODEL_STORAGE_DIR"):/models" \
         "$SGLANG_IMAGE" -c '
@@ -168,7 +168,8 @@ snapshot_download(repo_id=repo, revision=rev, local_dir=dest,
 # tokenizer and chat template, so the engine never needs the network — which
 # is what keeps the network-isolation setting working.
 # --ipc=host: SGLang's worker processes (and NCCL, with --tp > 1) share
-# tensors through /dev/shm, which Docker's 64MB default would starve.
+# tensors through /dev/shm, which Docker's 64MB default would starve. WSL
+# Containers has no --ipc, so ctr turns it into --shm-size $SGL_SHM_SIZE.
 # --served-model-name matches the model id every agent derives from
 # MODEL_FILE's basename. SGL_EXTRA_ARGS (env, word-split) is an escape
 # hatch for any other launch_server flag.
@@ -215,7 +216,7 @@ _run_sglang_engine() {
 
     echo -e "${ICON_GEAR} Engine: ${GREEN}SGLang${NC} ${DIM}(mem-fraction ${SGL_MEM_FRACTION:-0.85}, KV ${MODEL_KV_TYPE:-auto}${MODEL_SGL_TOOL_PARSER:+, tool parser ${MODEL_SGL_TOOL_PARSER}}${MODEL_PATCH:+, patch ${MODEL_PATCH}})${NC}"
 
-    docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$_hub_net" --gpus "$_gpus_flag" --restart no \
+    ctr run -d --name "$GLOBAL_ENGINE_NAME" --network "$_hub_net" --gpus "$_gpus_flag" --restart no \
         --ipc=host -e HF_HUB_OFFLINE=1 -e TZ="$(read_setting container_tz)" \
         "${_port_args[@]}" "${_cuda_env[@]}" \
         -v "${_models_src}:/models" \

@@ -24,7 +24,9 @@ exec_in_container() {
     # passes (agent binaries, script paths, config files).
     local _wd="/$WORKSPACE_DIR"
     [ "$IS_GITBASH" = "true" ] && _wd="//$WORKSPACE_DIR"
-    local cmd_args=(docker exec -it -w "$_wd" "$@")
+    # $CTR_BIN rather than ctr: winpty runs a binary, not a shell function,
+    # and exec needs no translation on either runtime.
+    local cmd_args=("$CTR_BIN" exec -it -w "$_wd" "$@")
     if [ "$IS_GITBASH" = "true" ]; then
         local _safe_args=() _a
         for _a in "${cmd_args[@]}"; do
@@ -68,7 +70,7 @@ run_workbench() {
     # and a privileged container would undermine the network-isolation option.
     # --stop-timeout 2: the keep-alive entrypoint ignores SIGTERM, so a short
     # grace period avoids a 10s docker stop hang on every exit.
-    docker run -d --name "$WORKBENCH" --network "$wb_network" --stop-timeout 2 \
+    ctr run -d --name "$WORKBENCH" --network "$wb_network" --stop-timeout 2 \
         -e "http_proxy=${_wb_http_proxy}" -e "https_proxy=${_wb_http_proxy}" \
         -e "HTTP_PROXY=${_wb_http_proxy}" -e "HTTPS_PROXY=${_wb_http_proxy}" \
         -e "no_proxy=$no_proxy_hosts" -e "NO_PROXY=$no_proxy_hosts" \
@@ -85,6 +87,8 @@ _resolve_engine_gpu_args() {
     # (see _resolve_sglang_tp_args); only the active engine's is ever set.
     # "single": exposes only GPU 0; also sets CUDA_VISIBLE_DEVICES to guard against
     # Docker Desktop / WSL2 passthrough quirks where --gpus device=0 isn't fully enforced.
+    # WSL Containers only accepts --gpus all (ctr maps it), so there the env
+    # var alone does the restricting.
     # "multi": exposes all GPUs and builds --tensor-split from per-GPU VRAM so llama.cpp
     # distributes compute (not just VRAM) across every card.
     _gpus_flag="all"
@@ -142,14 +146,14 @@ ensure_model_in_volume() {
     done
     eval "$_MODEL_SZ_FN"
 
-    docker volume create "$MODEL_VOLUME_NAME" >/dev/null 2>&1 || true
+    ctr volume create "$MODEL_VOLUME_NAME" >/dev/null 2>&1 || true
 
     # One container call lists current volume contents as "name size" lines:
     # every GGUF, plus every completed snapshot directory (marker present).
     # find (not a flat glob) so models nested under a family subfolder are
     # reported with their subfolder-relative path, matching $f below.
     local vol_listing
-    vol_listing=$(docker run --rm --entrypoint /bin/sh -v "$MODEL_VOLUME_NAME:/vol" "$ENGINE_IMAGE" \
+    vol_listing=$(ctr run --rm --entrypoint /bin/sh -v "$MODEL_VOLUME_NAME:/vol" "$ENGINE_IMAGE" \
         -c "$_MODEL_SZ_FN"'
             find /vol -type f -name "*.gguf" 2>/dev/null | while read -r p; do printf "%s %s\n" "${p#/vol/}" "$(_msz "$p")"; done
             find /vol -type f -name "$1" 2>/dev/null | while read -r m; do d="${m%/*}"; printf "%s %s\n" "${d#/vol/}" "$(_msz "$d")"; done
@@ -176,11 +180,11 @@ ensure_model_in_volume() {
 
     echo -e "${ICON_GEAR} Syncing model(s) to fast storage volume ${DIM}(one-time per model)...${NC}"
     local _sync_name="ai-coder-model-sync"
-    docker rm -f "$_sync_name" >/dev/null 2>&1 || true
+    ctr rm -f "$_sync_name" >/dev/null 2>&1 || true
     # Filenames are passed as positional args ("$@"), not interpolated into
     # the script text, so a filename with spaces/backticks/$() can't inject
     # shell commands into the container's sh -c.
-    docker run -d --name "$_sync_name" --entrypoint /bin/sh \
+    ctr run -d --name "$_sync_name" --entrypoint /bin/sh \
         -v "$MODEL_VOLUME_NAME:/vol" \
         -v "$(to_host_path "$MODEL_STORAGE_DIR"):/src:ro" \
         "$ENGINE_IMAGE" -c '
@@ -194,7 +198,7 @@ ensure_model_in_volume() {
     local human_total; human_total=$(_human_size "$total_sz")
     while container_running "$_sync_name"; do
         local cur
-        cur=$(docker exec "$_sync_name" /bin/sh -c "$_MODEL_SZ_FN"'
+        cur=$(ctr exec "$_sync_name" /bin/sh -c "$_MODEL_SZ_FN"'
             tot=0
             for f; do
                 if [ -e "/vol/$f" ]; then s=$(_msz "/vol/$f")
@@ -209,8 +213,8 @@ ensure_model_in_volume() {
     done
     printf "\r%-60s\r" ""
 
-    local _rc; _rc=$(docker inspect -f '{{.State.ExitCode}}' "$_sync_name" 2>/dev/null | tr -d '\r') || _rc=1
-    docker rm "$_sync_name" >/dev/null 2>&1 || true
+    local _rc; _rc=$(ctr_inspect_field "$_sync_name" exit_code | tr -d '\r') || _rc=1
+    ctr rm "$_sync_name" >/dev/null 2>&1 || true
     if [ "$_rc" != "0" ]; then
         echo -e "${YELLOW}⚠ Model volume sync failed (exit ${_rc}).${NC}"
         return 1
@@ -234,7 +238,7 @@ EOF
     # 4000) so PROXY_PORT is a real single source of truth, not just a label
     # that would silently mismatch the container's actual listen port if ever
     # changed.
-    docker run -d --name "$GLOBAL_PROXY_NAME" --network "$hub_net" -p "127.0.0.1:${PROXY_PORT}:${PROXY_PORT}" --restart on-failure:3 \
+    ctr run -d --name "$GLOBAL_PROXY_NAME" --network "$hub_net" -p "127.0.0.1:${PROXY_PORT}:${PROXY_PORT}" --restart on-failure:3 \
         -e "http_proxy=${DOWNLOAD_PROXY:-}" -e "https_proxy=${DOWNLOAD_PROXY:-}" \
         -e "no_proxy=localhost,127.0.0.1,$GLOBAL_ENGINE_NAME" \
         -v "$(to_host_path "$HOME/.ai-coder/litellm_config.yaml"):/app/config.yaml:ro" \
@@ -352,7 +356,7 @@ _run_llamacpp_engine() {
     # --cache-reuse: agent conversations grow by appending, so reusing KV
     # cache chunks across requests avoids reprocessing the whole prompt each
     # turn — a large time-to-first-token win in agent loops.
-    docker run -d --name "$GLOBAL_ENGINE_NAME" --network "$_hub_net" --gpus "$_gpus_flag" --restart no \
+    ctr run -d --name "$GLOBAL_ENGINE_NAME" --network "$_hub_net" --gpus "$_gpus_flag" --restart no \
         -e TZ="$(read_setting container_tz)" \
         "${_port_args[@]}" "${_cuda_env[@]}" \
         -v "${_models_src}:/models" \
@@ -373,14 +377,14 @@ _run_llamacpp_engine() {
 # cached in state.json per image ID and flag, so it happens once per image.
 _llama_supports_flag() {
     local _img="$1" _flag="$2" _id _key _cached
-    _id=$(docker image inspect -f '{{.Id}}' "$_img" 2>/dev/null | tr -d '\r') || return 1
+    _id=$(ctr_inspect_field "$_img" id | tr -d '\r') || return 1
     _key="llama_flag_${_flag//[^a-zA-Z0-9]/_}"
     _cached=$(read_pref "$STATE_FILE" "$_key" "")
     if [ "${_cached%%|*}" != "$_id" ]; then
         # Via a temp file, not a pipe: grep -q exiting early would fail the
         # docker run side under pipefail.
         local _res=no _tmp="${TMPDIR:-/tmp}/.ai-coder-llama-help.$$"
-        MSYS_NO_PATHCONV=1 docker run --rm --entrypoint /app/llama-server "$_img" --help > "$_tmp" 2>&1 || true
+        MSYS_NO_PATHCONV=1 ctr run --rm --entrypoint /app/llama-server "$_img" --help > "$_tmp" 2>&1 || true
         grep -q -- "$_flag" "$_tmp" && _res=yes
         rm -f "$_tmp"
         _cached="$_id|$_res"
@@ -400,7 +404,7 @@ start_hub_engine() {
     # The asymmetric-KV image is built locally at launch (before the hub
     # lock, see ensure_llama_asym_image) — there's no registry to pull it from.
     if [ "$ENGINE_IMAGE" = "$LLAMA_ASYM_IMAGE" ]; then
-        docker image inspect "$ENGINE_IMAGE" >/dev/null 2>&1 || {
+        ctr_image_exists "$ENGINE_IMAGE" || {
             echo -e "${RED}✘ Engine image ${ENGINE_IMAGE} is missing${NC}"; return 1; }
     else
         pull_image_if_missing "$ENGINE_IMAGE" || return 1
@@ -587,8 +591,8 @@ ensure_workbench_running() {
         # workspace, npm cache, and every tool's config dir are all host-mounted
         # — so recreating a stopped container is safe and cheap (its entrypoint
         # is just a sleep loop).
-        if [ -n "$(docker ps -aq -f name=^/${WORKBENCH}$ 2>/dev/null)" ]; then
-            docker rm "$WORKBENCH" >/dev/null 2>&1 || true
+        if ctr_container_exists "$WORKBENCH"; then
+            ctr rm "$WORKBENCH" >/dev/null 2>&1 || true
         fi
         start_workbench || _rc=1
     fi
@@ -642,14 +646,14 @@ ensure_engine_currently_running() {
     fi
 
     if ! $_engine_running || $_need_engine_restart; then
-        docker rm "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
-        start_hub_engine || { echo -e "${RED}✘ Hub startup failed${NC}"; exit 1; }
+        ctr rm "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
+        start_hub_engine || { echo -e "${RED}✘ Hub startup failed${NC}"; wslc_mount_limit_hint; exit 1; }
     elif [ "${NEEDS_LITELLM_PROXY:-false}" = "true" ] && \
          ! container_running "$GLOBAL_PROXY_NAME"; then
         # Engine is already up but proxy is missing (e.g. switched from a non-proxy
         # agent). Restart both so the proxy gets a clean start alongside the engine.
-        docker rm "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
-        start_hub_engine || { echo -e "${RED}✘ Hub startup failed${NC}"; exit 1; }
+        ctr rm "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" 2>/dev/null || true
+        start_hub_engine || { echo -e "${RED}✘ Hub startup failed${NC}"; wslc_mount_limit_hint; exit 1; }
     fi
 }
 
@@ -658,14 +662,14 @@ ensure_engine_currently_running() {
 # so it uses urllib there. Errors print nothing, which callers treat as down.
 engine_http_get() {
     if engine_is_sglang; then
-        docker exec "$GLOBAL_ENGINE_NAME" python3 -c '
+        ctr exec "$GLOBAL_ENGINE_NAME" python3 -c '
 import sys, urllib.request
 try:
     sys.stdout.write(urllib.request.urlopen(sys.argv[1], timeout=2).read().decode())
 except Exception:
     pass' "$1" 2>/dev/null
     else
-        docker exec "$GLOBAL_ENGINE_NAME" curl -s -m 2 "$1" 2>/dev/null
+        ctr exec "$GLOBAL_ENGINE_NAME" curl -s -m 2 "$1" 2>/dev/null
     fi
 }
 
@@ -727,9 +731,8 @@ wait_for_engine_ready() {
         echo -e " ${RED}TIMEOUT${NC}"
         echo -e "${RED}✘ Engine/Proxy failed to initialize after ~${retry_count} seconds${NC}"
         # Basic diagnostics
-        _cid=$(docker ps -aq -f "name=$GLOBAL_ENGINE_NAME" 2>/dev/null) || true
-        if [ -n "${_cid:-}" ]; then
-            docker logs "$GLOBAL_ENGINE_NAME" 2>&1 | tail -20 | sed 's/^/    /'
+        if ctr_container_exists "$GLOBAL_ENGINE_NAME"; then
+            ctr logs "$GLOBAL_ENGINE_NAME" 2>&1 | tail -20 | sed 's/^/    /'
         fi
         exit 1
     fi
@@ -750,7 +753,7 @@ record_engine_kv_measurement() {
     # Via a temp file, not a pipe: awk exiting early would fail docker logs
     # under pipefail.
     local _tmp="${TMPDIR:-/tmp}/.ai-coder-kvlog.$$" _bytes _est _pool _ctx
-    docker logs "$GLOBAL_ENGINE_NAME" > "$_tmp" 2>&1 || true
+    ctr logs "$GLOBAL_ENGINE_NAME" > "$_tmp" 2>&1 || true
     if engine_is_sglang; then
         read -r _pool _ctx <<< "$(awk '
             match($0, /max_total_num_tokens=[0-9]+/) {

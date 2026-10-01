@@ -9,11 +9,13 @@
 #
 # What it does:
 #   1. Prompts for an install directory for the ai-coder scripts
-#   2. Loads all Docker images from images/*.tar.gz into the local daemon
+#   2. Loads all container images from images/*.tar.gz into the local
+#      runtime (Docker, or WSL Containers with AI_CODER_RUNTIME=wslc)
 #   3. Copies the model file into ~/ai-models/ (shared with ai-coder-core.sh)
 #   4. Copies scripts into the chosen install directory
 #
-# Prerequisites: Docker Desktop must be installed and running.
+# Prerequisites: Docker Desktop installed and running, or WSL Containers
+# (wslc, WSL 2.9.3+) — used automatically when Docker isn't installed.
 # No internet connection is required.
 # ==============================================================================
 set -euo pipefail
@@ -35,6 +37,17 @@ source "$SCRIPTS_DIR/libs/ai-coder-detect-env.sh"
 # resolve_model_storage_dir (ai-coder-detect-env.sh, sourced above) so
 # ai-coder finds the model in the same place it always looks.
 resolve_model_storage_dir
+
+# Container runtime (ctr): AI_CODER_RUNTIME picks it explicitly; otherwise
+# Docker, falling back to WSL Containers when only that is installed. jq
+# isn't needed here — the installed ai-coder has no settings.json yet.
+source "$SCRIPTS_DIR/libs/ai-coder-runtime.sh"
+_unbundle_rt="${AI_CODER_RUNTIME:-}"
+if [ -z "$_unbundle_rt" ]; then
+    _unbundle_rt=docker
+    command -v docker >/dev/null 2>&1 || { wslc_available && _unbundle_rt=wslc; }
+fi
+resolve_container_runtime "$_unbundle_rt"
 
 # --- [ Optional gum UI ] -------------------------------------------------------
 # bundle.sh ships both gum platform builds at scripts/.assets so the prompts
@@ -78,27 +91,39 @@ echo "  Model       : $MODEL_DESC"
 echo "  Model path  : $MODEL_STORAGE_DIR/$MODEL_FILE"
 echo ""
 
-# --- [ Docker check ] ---------------------------------------------------------
-if ! command -v docker >/dev/null 2>&1; then
-    echo "✘  Docker CLI not found in PATH."
-    echo "   Install Docker Desktop and ensure it is running, then retry."
-    exit 1
+# --- [ Container runtime check ] ----------------------------------------------
+if runtime_is_wslc; then
+    if ! wslc_available; then
+        echo "✘  WSL Containers (wslc.exe) not found — update WSL with: wsl --update"
+        exit 1
+    fi
+    if ! ctr info >/dev/null 2>&1; then
+        echo "✘  WSL Containers is not answering — try: wslc list"
+        exit 1
+    fi
+else
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "✘  Docker CLI not found in PATH."
+        echo "   Install Docker Desktop and ensure it is running, then retry."
+        echo "   (Or use WSL Containers: AI_CODER_RUNTIME=wslc ./unbundle.sh)"
+        exit 1
+    fi
+    if ! docker info >/dev/null 2>&1; then
+        echo "✘  Docker daemon is not running."
+        echo "   Start Docker Desktop and retry."
+        exit 1
+    fi
 fi
-if ! docker info >/dev/null 2>&1; then
-    echo "✘  Docker daemon is not running."
-    echo "   Start Docker Desktop and retry."
-    exit 1
-fi
-echo "✔  Docker is running."
+echo "✔  $(runtime_display_name) is running."
 
-# --- [ Load Docker images ] ---------------------------------------------------
+# --- [ Load container images ] ------------------------------------------------
 echo ""
-echo "► Loading Docker images (this may take several minutes)..."
+echo "► Loading container images into $(runtime_display_name) (this may take several minutes)..."
 _img_count=0
 for _tar in "$IMAGES_DIR"/*.tar.gz; do
     [ -f "$_tar" ] || continue
     echo "  Loading $(basename "$_tar")..."
-    docker load < "$_tar"
+    ctr load < "$_tar"
     _img_count=$((_img_count + 1))
 done
 
@@ -260,3 +285,7 @@ else
 fi
 echo ""
 echo "Note: No internet connection is required to run ai-coder."
+if runtime_is_wslc; then
+    echo "Note: the images were loaded into WSL Containers — choose it as the"
+    echo "      container runtime in ./ai-coder --setup."
+fi

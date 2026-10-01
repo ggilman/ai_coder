@@ -500,7 +500,7 @@ cmd_speed() {
     # The official full image ships its apps outside PATH (the entrypoint is an
     # absolute path), so resolve llama-bench from the known install locations
     # before falling back to a plain PATH lookup.
-    docker run --rm --gpus "$_gpus_flag" "${_cuda_env[@]}" \
+    ctr run --rm --gpus "$_gpus_flag" "${_cuda_env[@]}" \
         -v "${_models_src}:/models" \
         -e BENCH_IMAGE="$LLAMA_IMAGE_FULL" \
         --entrypoint /bin/sh \

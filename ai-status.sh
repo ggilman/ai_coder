@@ -56,6 +56,9 @@ source "$SCRIPT_DIR/libs/ai-coder-engine-status.sh"
 main() {
     clear
     trap "rm -f $_ENGINE_TMP $_SLOTS_TMP; exit" INT TERM EXIT
+    # Container runtime (Docker or WSL Containers) — queried once, not per frame.
+    local _runtime_line
+    _runtime_line="🐳  \e[1mRuntime:\e[0m      $(get_runtime_label)"
     while true; do
         printf "\033[H"
 
@@ -158,6 +161,8 @@ main() {
                 engine_status_text="$engine_status_text
 🌐  \e[1mNetwork:\e[0m      \e[32m◎ Standard\e[0m \e[90m(ai-engineering-net)\e[0m"
             fi
+            engine_status_text="$engine_status_text
+${_runtime_line}"
 
             $GUM_CMD style \
                 --border rounded --border-foreground 2 \
@@ -168,7 +173,8 @@ main() {
                 local _status_word
                 printf -v _status_word "%-22s" "LOADING MODEL..."
                 engine_status_text="⚙️  \e[1mENGINE HUB:\e[0m   \e[33m🟡  ${_status_word}\e[0m${E_PAD}
-⏳  Please wait while weights are allocated."
+⏳  Please wait while weights are allocated.
+${_runtime_line}"
                 $GUM_CMD style \
                     --border rounded --border-foreground 3 \
                     --width 74 --padding "0 2" \
@@ -177,7 +183,8 @@ main() {
                 local _status_word
                 printf -v _status_word "%-22s" "OFFLINE / DISCONNECTED"
                 engine_status_text="⚙️  \e[1mENGINE HUB:\e[0m   \e[31m🔴  ${_status_word}\e[0m${E_PAD}
-❌  Verify that the '$ENGINE_NAME' container is running."
+❌  Verify that the '$ENGINE_NAME' container is running \e[90m($(runtime_cli_name) ps)\e[0m.
+${_runtime_line}"
                 $GUM_CMD style \
                     --border rounded --border-foreground 1 \
                     --width 74 --padding "0 2" \

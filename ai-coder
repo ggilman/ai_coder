@@ -76,7 +76,7 @@ HELP
     cmd_logs "${@:2}"
     exit $? ;;
 --clean)
-    check_docker || exit 1
+    check_container_runtime || exit 1
     teardown
     exit 0 ;;
 --fix-project)
@@ -260,7 +260,7 @@ cleanup() {
         echo -e "${CYAN}◈ Stopping workbench [$WORKBENCH]...${NC}"
         remove_containers -t 5 "$WORKBENCH"
     fi
-    remaining_spokes=$(docker ps -q --filter "name=^/${WORKBENCH_PREFIX}-" 2>/dev/null | wc -l)
+    remaining_spokes=$(ctr_list_containers "${WORKBENCH_PREFIX}-" running | wc -l)
     if [ "$remaining_spokes" -eq 0 ]; then
         if [ "$(read_setting keep_hub)" = "yes" ]; then
             echo -e "${CYAN}◈ Hub stays warm (keep-hub enabled) — next session skips the model load.${NC}"
@@ -288,7 +288,13 @@ fi
 
 # --- [ IGNITION ] -------------------------------------------------------------
 
-check_docker || { echo -e "${RED}✘ Docker initialization failed${NC}"; exit 1; }
+check_container_runtime || { echo -e "${RED}✘ $(runtime_display_name) initialization failed${NC}"; exit 1; }
+# Refuse to start a second Hub when the other runtime still runs one (e.g. a
+# one-off AI_CODER_RUNTIME override): both would hold VRAM and port 8080.
+check_other_runtime_hub || exit 1
+# WSL Containers: start a cold launch with a fresh per-session mount budget
+# (see wslc_reset_session_if_idle). No-op under Docker or while anything runs.
+wslc_reset_session_if_idle || true
 # Mark the hub as in-use so any pending idle-stop watcher disarms.
 write_pref "$STATE_FILE" hub_idle_since ""
 # Surface (once) a thermal-guard trip from a previous run before starting again.
@@ -350,9 +356,9 @@ fi
 
 ensure_container_gitconfig
 ensure_network_config
-docker network create "$HUB_NETWORK" 2>/dev/null || true
+ctr network create "$HUB_NETWORK" 2>/dev/null || true
 if [ "${NETWORK_INTERNAL:-false}" = "true" ]; then
-    docker network create --internal "$HUB_ISOLATED_NET" 2>/dev/null || true
+    ctr network create --internal "$HUB_ISOLATED_NET" 2>/dev/null || true
 fi
 
 # GLOBAL_ENGINE_NAME is a machine-wide singleton, so the check-then-restart
@@ -373,7 +379,7 @@ _hub_lock_held=false
 apply_git_identity
 configure_workbench
 
-ensure_workbench_running || { echo -e "${RED}✘ Workbench startup failed${NC}"; exit 1; }
+ensure_workbench_running || { echo -e "${RED}✘ Workbench startup failed${NC}"; wslc_mount_limit_hint; exit 1; }
 _workbench_started=$WORKBENCH_STARTED_BY_US
 
 wait_for_engine_ready

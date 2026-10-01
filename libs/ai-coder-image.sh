@@ -56,7 +56,7 @@ build_standard_image() {
     # Args: <dockerfile-name> <apt-pkgs> <pm-proxy-cmds> <install-cmds>
     local df_name="$1" apt_pkgs="$2" pm_proxy_cmds="$3" install_cmds="$4"
 
-    if [ -n "$(docker images -q "$IMAGE_NAME" 2>/dev/null)" ]; then return 0; fi
+    if ctr_image_exists "$IMAGE_NAME"; then return 0; fi
 
     pull_image_if_missing "$BASE_IMAGE" || return 1
 
@@ -111,10 +111,10 @@ build_standard_image() {
     fi
     _write_standard_dockerfile "$_build_dir" "$df_name" "$apt_pkgs" "$pm_proxy_cmds" "$install_cmds"
 
-    docker build -t "$IMAGE_NAME" "${proxy_args[@]}" "${git_args[@]}" \
+    ctr build -t "$IMAGE_NAME" "${proxy_args[@]}" "${git_args[@]}" \
         -f "$(to_host_path "$_build_dir")/$df_name" \
         "$(to_host_path "$_build_dir")" || {
-        echo -e "${RED}✘ Docker build failed${NC}"; return 1
+        echo -e "${RED}✘ Image build failed ($(runtime_display_name))${NC}"; return 1
     }
 }
 
@@ -129,7 +129,7 @@ build_npm_agent_image() {
     #   $6  extra RUN line appended after npm install (e.g. "RUN gemini --version"), or ""
     local df_name="$1" apt_file="$2" mcp_file="$3" npm_pkg="$4" npm_extra_flags="${5:-}" verify_run="${6:-}"
 
-    if [ -n "$(docker images -q "$IMAGE_NAME" 2>/dev/null)" ]; then
+    if ctr_image_exists "$IMAGE_NAME"; then
         echo -e "${ICON_OK} ${TOOL_NAME} Image: ready."
         return 0
     fi
@@ -211,7 +211,7 @@ _llama_dockerfile_base_images() {
 # would run the mismatched pair on its much slower fallback path.
 ensure_llama_asym_image() {
     [ "$ENGINE_IMAGE" = "$LLAMA_ASYM_IMAGE" ] || return 0
-    docker image inspect "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1 && return 0
+    ctr image inspect "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1 && return 0
 
     # Reads the setting directly: this runs before ensure_network_config sets
     # NETWORK_INTERNAL (so --build-only builds the image too).
@@ -228,7 +228,7 @@ ensure_llama_asym_image() {
     local _lock_dir="$USER_DIR/.llama-build.lock"
     acquire_lock "$_lock_dir" 2 1800 "Another ai-coder session is building the llama.cpp image — waiting for it..."
     LLAMA_BUILD_LOCK_HELD=true
-    if docker image inspect "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1; then
+    if ctr image inspect "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1; then
         release_lock "$_lock_dir"; LLAMA_BUILD_LOCK_HELD=false
         return 0
     fi
@@ -276,21 +276,24 @@ ensure_llama_asym_image() {
     done < <(_llama_dockerfile_base_images "$_ref" "$_http_proxy")
 
     echo -e "${ICON_GEAR} Building llama.cpp ${CYAN}${_ref}${NC} with the asymmetric KV cache kernel (GPU arch ${_archs})..."
-    echo -e "${YELLOW}  One-time build, typically 10-30 minutes. If it runs out of memory, give Docker Desktop more RAM.${NC}"
+    if runtime_is_wslc; then
+        echo -e "${YELLOW}  One-time build, typically 10-30 minutes. If it runs out of memory, raise the session memory in: ${CYAN}wslc settings${NC}"
+    else
+        echo -e "${YELLOW}  One-time build, typically 10-30 minutes. If it runs out of memory, give Docker Desktop more RAM.${NC}"
+    fi
     # Retried once: transient Ubuntu/CUDA mirror hiccups inside the upstream
     # Dockerfile's apt-get step ("Mirror sync in progress?") are common and
     # BuildKit's layer cache means a retry only redoes the failed step, not
     # the whole build.
     local _attempt _build_ok=false
     for _attempt in 1 2; do
-        if docker build \
+        if ctr_build_from_git "https://github.com/ggml-org/llama.cpp.git" "$_ref" \
             -f .devops/cuda.Dockerfile --target server \
             --build-arg "CUDA_DOCKER_ARCH=${_archs} -DGGML_CUDA_FA_QUANTS=${_fa_quants}" \
             --build-arg "APP_VERSION=${_ref}" \
             --label "ai-coder.llama-ref=${_ref}" \
             "${_proxy_args[@]}" \
-            -t "$LLAMA_ASYM_IMAGE" \
-            "https://github.com/ggml-org/llama.cpp.git#${_ref}"; then
+            -t "$LLAMA_ASYM_IMAGE"; then
             _build_ok=true
             break
         fi
@@ -312,7 +315,7 @@ ensure_llama_asym_image() {
 rebuild_workbench_images() {
     # Docker must be up — with the daemon down every docker call below fails
     # silently and the .rebuild-needed flag would be cleared without rebuilding.
-    check_docker || exit 1
+    check_container_runtime || exit 1
     # Collect every image name defined in any agent script (current version).
     # tr -d '\r' guards against CRLF on Windows-mounted filesystems.
     # Also sweep for any leftover images from previous version numbers by
@@ -330,18 +333,18 @@ rebuild_workbench_images() {
     # conventions: *-engineer-* and local-* (old naming from early versions).
     while IFS= read -r _img; do
         [ -n "$_img" ] && _seen_imgs["$_img"]=1
-    done < <(docker images --format '{{.Repository}}' 2>/dev/null | grep -E '(-engineer-|^local-(claude|opencode|gemini|aider))' || true)
+    done < <(ctr_image_repos | grep -E '(-engineer-|^local-(claude|opencode|gemini|aider))' || true)
     for _img in "${!_seen_imgs[@]}"; do
-        if docker image inspect "$_img" >/dev/null 2>&1; then
+        if ctr image inspect "$_img" >/dev/null 2>&1; then
             echo -e "${CYAN}◈ Removing [$_img]...${NC}"
             # Stop and remove any containers using this image before trying rmi.
             while IFS= read -r _cid; do
                 [ -z "$_cid" ] && continue
-                _cname=$(docker inspect --format '{{.Name}}' "$_cid" 2>/dev/null | tr -d '/')
+                _cname=$(ctr_inspect_field "$_cid" name)
                 echo -e "${YELLOW}  Stopping container [${_cname:-$_cid}]...${NC}"
                 remove_containers "$_cid"
-            done < <(docker ps -aq --filter "ancestor=$_img" 2>/dev/null)
-            if docker rmi "$_img" 2>/dev/null; then
+            done < <(ctr_containers_from_image "$_img")
+            if ctr rmi "$_img" 2>/dev/null; then
                 echo -e "${GREEN}✔ Removed${NC}"
                 _removed=$((_removed + 1))
             else
@@ -358,11 +361,11 @@ rebuild_workbench_images() {
     local _asym
     while IFS= read -r _asym; do
         [ -n "$_asym" ] || continue
-        if [ -n "$(docker ps -q --filter "ancestor=$_asym" 2>/dev/null)" ]; then
+        if [ -n "$(ctr_containers_from_image "$_asym" running)" ]; then
             echo -e "${YELLOW}  Keeping [$_asym] — the engine is running on it (stop it with ai --clean first).${NC}"
-        elif docker rmi "$_asym" >/dev/null 2>&1; then
+        elif ctr rmi "$_asym" >/dev/null 2>&1; then
             echo -e "${ICON_OK} Removed [$_asym] — llama.cpp is rebuilt on the next asymmetric-KV launch."
         fi
-    done < <(docker images --format '{{.Repository}}:{{.Tag}}' "${LLAMA_ASYM_IMAGE%:*}" 2>/dev/null)
+    done < <(ctr_image_refs "${LLAMA_ASYM_IMAGE%:*}")
     rm -f "$USER_DIR/.rebuild-needed"
 }

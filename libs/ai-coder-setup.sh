@@ -115,6 +115,57 @@ setup_step_network() {
         "${DIM}  Network isolation disabled.${NC}"
 }
 
+# Container runtime: Docker (default) or WSL Containers (wslc). Windows only,
+# and only offered when wslc is installed (or already selected, so it can be
+# switched back). The two keep separate image stores and volumes, so a switch
+# means one-time image pulls/builds and model-volume sync. On a switch the
+# Hub still running under the old runtime is stopped — two engines would
+# fight over VRAM and the published port. Updates CTR_RUNTIME/CTR_BIN in place.
+setup_step_container_runtime() {
+    { [ "$IS_WSL" = "true" ] || [ "$IS_GITBASH" = "true" ]; } || return 0
+    local _cur_rt; _cur_rt=$(read_setting container_runtime)
+    wslc_available || [ "$_cur_rt" = "wslc" ] || return 0
+    local _rt_input; _rt_input=$(ui_menu "Container runtime" \
+        "Container runtime — what should run the Hub and workbench containers?" \
+        "Docker (default): Docker Desktop. WSL Containers: the wslc runtime built
+into WSL 2.9.3+, no Docker Desktop needed. They keep separate image stores,
+so switching re-pulls/rebuilds images and re-syncs the model volume once.
+Under wslc, published ports are reachable from Windows (browser, apps) but
+not from inside a WSL distro's localhost." \
+        "Runtime [${_cur_rt}]:" \
+        "$_cur_rt" \
+        "docker" "Docker Desktop (default)" \
+        "wslc"   "WSL Containers (wslc)")
+    case "$_rt_input" in
+        docker|wslc)
+            write_pref "$SETTINGS_FILE" container_runtime "$_rt_input"
+            if [ "$_rt_input" != "$_cur_rt" ]; then
+                # Stop the old runtime's Hub — only if that runtime is already
+                # up (never start Docker Desktop just to stop nothing).
+                ( resolve_container_runtime "$_cur_rt"
+                  if runtime_reachable && ctr_container_exists "$GLOBAL_ENGINE_NAME"; then
+                      echo -e "${ICON_GEAR} Stopping the Hub running under $(runtime_display_name)..."
+                      remove_containers "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME"
+                  fi ) || true
+                echo -e "${ICON_OK} Container runtime set to ${GREEN}${_rt_input}${NC} — images are pulled/built on next launch."
+            else
+                printf "%s  Container runtime unchanged (%s)%s\n" "$DIM" "$_cur_rt" "$NC"
+            fi
+            ;;
+        "")
+            printf "%s  Container runtime unchanged (%s)%s\n" "$DIM" "$_cur_rt" "$NC"
+            ;;
+        *)
+            printf "%s⚠ Unknown runtime '%s' — keeping %s%s\n" "$YELLOW" "$_rt_input" "$_cur_rt" "$NC"
+            ;;
+    esac
+    if [ -n "${AI_CODER_RUNTIME_ENV:-}" ]; then
+        echo -e "${YELLOW}  Note: AI_CODER_RUNTIME=${AI_CODER_RUNTIME_ENV} is exported in your environment and overrides this setting.${NC}"
+    fi
+    AI_CODER_RUNTIME="${AI_CODER_RUNTIME_ENV:-}"
+    ensure_runtime_config
+}
+
 # Inference engine behind the Hub. Changing it clears the saved model family
 # (state.json family_pref) so the next launch re-shows the family menu,
 # filtered to what the new engine can run — SGLang only lists families that
@@ -253,7 +304,7 @@ launch builds llama.cpp locally (one time, ~10-30 min)." \
         asym)
             write_pref "$SETTINGS_FILE" kv_mode asym
             echo -e "${ICON_OK} KV cache set to ${GREEN}q8_0 K / q4_0 V${NC} — applied on next engine start."
-            docker image inspect "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1 || \
+            ctr_image_exists "$LLAMA_ASYM_IMAGE" || \
                 echo -e "${YELLOW}  The next launch builds llama.cpp locally first (one time, ~10-30 min).${NC}"
             ;;
         q4)
@@ -453,7 +504,7 @@ setup_step_model_volume() {
 the much slower Windows filesystem bridge — engine cold starts drop from
 minutes to seconds. Costs a one-time copy per model and duplicates the
 active model's disk usage inside the Docker VM.
-Reclaim the space any time with: docker volume rm ai-coder-models" \
+Reclaim the space any time with: $(runtime_cli_name) volume rm ai-coder-models" \
         "Use fast model storage? [y/n, Enter to keep]:" \
         "$_cur_mvol" "$_cur_mvol")
     case "$_mvol_input" in
@@ -464,7 +515,7 @@ Reclaim the space any time with: docker volume rm ai-coder-models" \
         no)
             write_pref "$SETTINGS_FILE" model_volume no
             echo -e "${DIM}  Fast model storage disabled — engine mounts the host model folder directly.${NC}"
-            echo -e "${DIM}  Reclaim volume space with: docker volume rm ai-coder-models${NC}"
+            echo -e "${DIM}  Reclaim volume space with: $(runtime_cli_name) volume rm ai-coder-models${NC}"
             ;;
         *)
             printf "%s  Fast model storage unchanged (%s)%s\n" "$DIM" "$_cur_mvol" "$NC"
@@ -606,6 +657,8 @@ cmd_setup() {
     setup_step_proxy
     _ui_abort_if_cancelled
     setup_step_network
+    _ui_abort_if_cancelled
+    setup_step_container_runtime
     _ui_abort_if_cancelled
     setup_step_engine
     _ui_abort_if_cancelled

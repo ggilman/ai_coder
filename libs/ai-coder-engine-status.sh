@@ -27,7 +27,7 @@ ENGINE_KIND="llamacpp"
 # Sets ENGINE_KIND from the engine container's image ("sglang" or "llamacpp").
 detect_engine_kind() {
     local _img
-    _img=$(docker inspect -f '{{.Config.Image}}' "$ENGINE_NAME" 2>/dev/null | tr -d '\r') || _img=""
+    _img=$(ctr_inspect_field "$ENGINE_NAME" image | tr -d '\r') || _img=""
     case "$_img" in
         *sglang*) ENGINE_KIND="sglang" ;;
         *)        ENGINE_KIND="llamacpp" ;;
@@ -38,7 +38,7 @@ detect_engine_kind() {
 # body (SGLang: "HTTP <code>" on its own line first, via python3).
 _engine_get() {
     if [ "$ENGINE_KIND" = "sglang" ]; then
-        docker exec "$ENGINE_NAME" python3 -c '
+        ctr exec "$ENGINE_NAME" python3 -c '
 import sys, urllib.request
 try:
     r = urllib.request.urlopen(sys.argv[1], timeout=float(sys.argv[2]))
@@ -46,12 +46,12 @@ try:
 except Exception:
     pass' "$1" "$2" 2>/dev/null
     else
-        docker exec "$ENGINE_NAME" curl -s --max-time "$2" "$1" 2>/dev/null
+        ctr exec "$ENGINE_NAME" curl -s --max-time "$2" "$1" 2>/dev/null
     fi
 }
 
 # set -o pipefail (active globally in both callers, unconditionally, and never
-# toggled elsewhere) causes docker exec redirects to drop output. Disable
+# toggled elsewhere) causes exec redirects to drop output. Disable
 # pipefail locally for this call only, then restore it.
 # For SGLang the result is normalized to llama.cpp's shapes, so the
 # dashboards' checks work unchanged: {"status":"ok"} once /health answers
@@ -63,7 +63,7 @@ get_engine_health() {
     if [ "$ENGINE_KIND" = "sglang" ]; then
         if _engine_get "http://localhost:${ENGINE_PORT}/health" "$HEALTH_TIMEOUT" | grep -q '^HTTP 200'; then
             echo '{"status":"ok"}' > "$_ENGINE_TMP"
-        elif [ -n "$(docker ps -q -f "name=^/${ENGINE_NAME}\$" 2>/dev/null)" ]; then
+        elif ctr_container_running "$ENGINE_NAME"; then
             echo '{"status":"loading"}' > "$_ENGINE_TMP"
         else
             : > "$_ENGINE_TMP"

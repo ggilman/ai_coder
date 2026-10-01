@@ -38,7 +38,7 @@ echo -e "║        AI-CODER OFFLINE BUNDLE v1.0          ║"
 echo -e "╚══════════════════════════════════════════════╝${NC}"
 echo -e "${DIM}Output: ${BUNDLE_DIR}${NC}\n"
 
-check_docker || exit 1
+check_container_runtime || exit 1
 
 # Bundles are llama.cpp-only: they package GGUF models and the llama.cpp
 # images. The installed copy starts on the default engine (llama.cpp), so a
@@ -246,12 +246,12 @@ ensure_image_saved() {
         echo -e "  ${DIM}[cached]${NC} ${tag}.tar.gz"
         return 0
     fi
-    if ! docker image inspect "$image" >/dev/null 2>&1; then
+    if ! ctr image inspect "$image" >/dev/null 2>&1; then
         echo -e "  ${ICON_GEAR} Pulling ${CYAN}${image}${NC}..."
-        docker pull "$image" || { echo -e "  ${RED}✘ Pull failed: ${image}${NC}"; return 1; }
+        ctr pull "$image" || { echo -e "  ${RED}✘ Pull failed: ${image}${NC}"; return 1; }
     fi
     echo -e "  ${ICON_GEAR} Saving ${CYAN}${image}${NC}..."
-    docker save "$image" | gzip > "$tar_path"
+    ctr save "$image" | gzip > "$tar_path"
     echo -e "  ${ICON_OK} Saved → ${tag}.tar.gz"
 }
 
@@ -261,7 +261,7 @@ ensure_image_saved "$LLAMA_IMAGE"      "llama-cpp-server"
 ensure_image_saved "$LLAMA_IMAGE_FULL" "llama-cpp-full"
 # The locally built asymmetric-KV llama.cpp image can't be pulled, only
 # carried over — include it when this machine has built it.
-if docker image inspect "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1; then
+if ctr image inspect "$LLAMA_ASYM_IMAGE" >/dev/null 2>&1; then
     ensure_image_saved "$LLAMA_ASYM_IMAGE" "llama-cpp-server-asym"
 fi
 ensure_image_saved "$LITELLM_IMAGE"    "litellm-proxy"
@@ -293,7 +293,7 @@ for _agent_script in "$PROJECT_ROOT/agents"/ai-coder-*.sh; do
     LOCAL_STACK_DIR="$BUNDLE_WORK_DIR/$IMAGE_NAME"
     mkdir -p "$LOCAL_STACK_DIR"
 
-    if docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
+    if ctr image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
         echo -e "    ${DIM}[already in Docker cache]${NC}"
     else
         echo -e "    Building image..."

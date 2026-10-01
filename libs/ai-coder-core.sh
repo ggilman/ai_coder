@@ -12,7 +12,7 @@ SETTINGS_FILE="$USER_DIR/settings.json"
 STATE_FILE="$USER_DIR/state.json"
 PACKAGES_DIR="$INSTALL_DIR/packages"
 PROMPTS_DIR="$INSTALL_DIR/prompts"
-DOCKER_BIN="${DOCKER_BIN:-}"   # default resolved on demand by _resolve_docker_bin (ai-coder-model.sh)
+DOCKER_BIN="${DOCKER_BIN:-}"   # Docker Desktop launcher, resolved on demand by _resolve_docker_bin (ai-coder-docker.sh)
 GLOBAL_ENGINE_NAME="ai-hub-engine"
 GLOBAL_PROXY_NAME="ai-hub-proxy"
 GLOBAL_WEBUI_NAME="ai-hub-webui"
@@ -63,6 +63,11 @@ SGLANG_IMAGE="${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.20-runtime}"
 ENGINE_BACKEND="${ENGINE_BACKEND:-}"
 ENGINE_BACKEND_ENV="$ENGINE_BACKEND"   # the exported value, kept for --setup messaging
 ENGINE_IMAGE=""
+# Container runtime: "docker" (Docker Desktop / Linux Docker) or "wslc" (WSL
+# Containers). Empty here = use the saved container_runtime setting; resolved
+# (with CTR_BIN) by ensure_runtime_config below.
+AI_CODER_RUNTIME="${AI_CODER_RUNTIME:-}"
+AI_CODER_RUNTIME_ENV="$AI_CODER_RUNTIME"   # the exported value, kept for --setup messaging
 # (Stored-proxy read moved below, after env.sh/jq.sh are sourced and jq is
 # resolved - the user settings are now JSON, not a flat grep-able file.)
 DOWNLOAD_PROXY="${DOWNLOAD_PROXY:-}"
@@ -92,6 +97,8 @@ source "$SCRIPT_DIR/ai-coder-detect-env.sh"
 # Fast model storage default: on Windows hosts (WSL/Git Bash) the engine's
 # bind mount of the model folder goes through Docker Desktop's slow 9p bridge,
 # so caching the model in a native Docker volume is a big load-time win.
+# WSL Containers mounts over virtiofs (~1 GB/s), but its ext4 volumes are
+# still faster, so the same default applies there.
 # On native Linux, bind mounts are already fast — default off.
 MODEL_VOLUME_DEFAULT="no"
 { [ "$IS_WSL" = "true" ] || [ "$IS_GITBASH" = "true" ]; } && MODEL_VOLUME_DEFAULT="yes"
@@ -111,9 +118,10 @@ fi
 # it — none of them are meant to be sourced standalone.
 source "$SCRIPT_DIR/ai-coder-env.sh"        # path/shell utils, pref I/O, MCP JSON, update check
 source "$SCRIPT_DIR/ai-coder-jq.sh"        # jq binary bootstrap & resolution
+source "$SCRIPT_DIR/ai-coder-runtime.sh"   # container runtime (docker/wslc): ctr + query helpers
 source "$SCRIPT_DIR/ai-coder-migrate.sh"   # settings JSON schema versioning + one-time migration
 source "$SCRIPT_DIR/ai-coder-settings.sh"   # git identity + launch-time preference resolution
-source "$SCRIPT_DIR/ai-coder-docker.sh"     # docker preflight, image pulls
+source "$SCRIPT_DIR/ai-coder-docker.sh"     # container runtime preflight, image pulls
 source "$SCRIPT_DIR/ai-coder-model.sh"      # VRAM budgeting, model tier selection, --family/--speed
 source "$SCRIPT_DIR/ai-coder-download.sh"   # model/draft download, build-time npm/pip proxy helpers
 source "$SCRIPT_DIR/ai-coder-gguf.sh"       # GGUF metadata reader, per-tier KV geometry, --kv-probe
@@ -129,6 +137,7 @@ source "$SCRIPT_DIR/ai-coder-sglang.sh"     # SGLang engine: HF snapshot downloa
 ensure_jq
 resolve_jq_cmd || true
 migrate_user_prefs
+ensure_runtime_config
 ensure_engine_config
 if [ -z "$DOWNLOAD_PROXY" ] && [ -f "$SETTINGS_FILE" ]; then
     DOWNLOAD_PROXY=$(read_setting proxy)
@@ -282,7 +291,7 @@ schedule_hub_idle_stop() {
     local idle_min="$1"
     local stamp; stamp=$(date +%s)
     write_pref "$STATE_FILE" hub_idle_since "$stamp"
-    nohup bash "$SCRIPT_DIR/ai-coder-watch.sh" idle "$idle_min" "$stamp" "$STATE_FILE" \
+    AI_CODER_RUNTIME="$CTR_RUNTIME" nohup bash "$SCRIPT_DIR/ai-coder-watch.sh" idle "$idle_min" "$stamp" "$STATE_FILE" \
         "$WORKBENCH_PREFIX" "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME" \
         >/dev/null 2>&1 &
     disown 2>/dev/null || true
@@ -298,7 +307,7 @@ start_gpu_guard() {
     local max_c="${MODEL_GPU_MAX_TEMP_C:-90}"
     case "$max_c" in ''|*[!0-9]*|0) return 0 ;; esac
     command -v "$SMI" >/dev/null 2>&1 || return 0
-    nohup bash "$SCRIPT_DIR/ai-coder-watch.sh" gpu-guard "$max_c" "$SMI" "$STATE_FILE" \
+    AI_CODER_RUNTIME="$CTR_RUNTIME" nohup bash "$SCRIPT_DIR/ai-coder-watch.sh" gpu-guard "$max_c" "$SMI" "$STATE_FILE" \
         "$GLOBAL_ENGINE_NAME" >/dev/null 2>&1 &
     disown 2>/dev/null || true
 }
@@ -368,7 +377,7 @@ run_open_webui_container() {
     # reachable from the LAN. The container-side :8080 below is Open WebUI's
     # own internal port (its image default, unrelated to $ENGINE_PORT — they
     # just happen to share the same number).
-    docker run -d --name "$_name" --network "$_wb_network" \
+    ctr run -d --name "$_name" --network "$_wb_network" \
         -p "127.0.0.1:${OPEN_WEBUI_HOST_PORT}:8080" \
         -e "OPENAI_API_BASE_URL=${ENGINE_URL}/v1" \
         -e "OPENAI_API_BASE_URLS=${ENGINE_URL}/v1" \
@@ -395,7 +404,7 @@ start_webui_sidecar() {
         echo -e "${ICON_OK} Open WebUI already running at ${CYAN}http://localhost:${OPEN_WEBUI_HOST_PORT}${NC}"
         return 0
     fi
-    docker rm "$GLOBAL_WEBUI_NAME" 2>/dev/null || true
+    ctr rm "$GLOBAL_WEBUI_NAME" 2>/dev/null || true
     echo -e "${ICON_GEAR} Starting Open WebUI..."
     if run_open_webui_container "$GLOBAL_WEBUI_NAME" quiet; then
         echo -e "${ICON_OK} Open WebUI available at ${CYAN}http://localhost:${OPEN_WEBUI_HOST_PORT}${NC}"
@@ -406,13 +415,13 @@ start_webui_sidecar() {
 }
 
 # Usage: remove_containers [-t <secs>] <name|id>... — stop (gracefully, with
-# docker's default or the given timeout) then remove; missing ones are fine.
+# the runtime's default or the given timeout) then remove; missing ones are fine.
 remove_containers() {
     local _stop_args=()
     if [ "${1:-}" = "-t" ]; then _stop_args=(-t "$2"); shift 2; fi
     [ "$#" -gt 0 ] || return 0
-    docker stop "${_stop_args[@]}" "$@" >/dev/null 2>&1 || true
-    docker rm "$@" >/dev/null 2>&1 || true
+    ctr stop "${_stop_args[@]}" "$@" >/dev/null 2>&1 || true
+    ctr rm "$@" >/dev/null 2>&1 || true
 }
 
 stop_webui_sidecar() {
@@ -428,9 +437,11 @@ stop_hub() {
 teardown() {
     echo -e "${CYAN}Tearing down Hub & Project Spokes...${NC}"
     local _spokes
-    mapfile -t _spokes < <(docker ps -aq --filter "name=^/${WORKBENCH_PREFIX}-" 2>/dev/null || true)
+    mapfile -t _spokes < <(ctr_list_containers "${WORKBENCH_PREFIX}-" all || true)
     remove_containers "$GLOBAL_ENGINE_NAME" "$GLOBAL_PROXY_NAME" "$GLOBAL_WEBUI_NAME" "${_spokes[@]}"
-    docker network rm "$HUB_NETWORK" "$HUB_ISOLATED_NET" 2>/dev/null || true
+    ctr network rm "$HUB_NETWORK" "$HUB_ISOLATED_NET" 2>/dev/null || true
+    # WSL Containers: also reset the session's host-folder mount budget.
+    wslc_reset_session_if_idle || true
 }
 
 # Map the surviving launch flags to the globals the ignition path reads

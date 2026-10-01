@@ -3,9 +3,11 @@
 # AI-CODER-WATCH.SH | Detached Hub Watchers
 # Executed (not sourced) in the background by schedule_hub_idle_stop and
 # start_gpu_guard in ai-coder-core.sh, via nohup, so it outlives the launching
-# session. Everything it needs arrives as arguments; jq is resolved here
-# through ai-coder-jq.sh because the launcher's JQ_CMD may be a shell function
-# (the Git Bash path wrapper) that a new process doesn't inherit.
+# session. Everything it needs arrives as arguments, apart from the container
+# runtime, which the launcher passes as AI_CODER_RUNTIME in the environment;
+# jq is resolved here through ai-coder-jq.sh because the launcher's JQ_CMD may
+# be a shell function (the Git Bash path wrapper) that a new process doesn't
+# inherit.
 #
 # Usage:
 #   ai-coder-watch.sh idle <minutes> <stamp> <state-file> <spoke-prefix> <container>...
@@ -18,8 +20,11 @@
 # ==============================================================================
 set -uo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/ai-coder-detect-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/ai-coder-jq.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/ai-coder-runtime.sh"
 resolve_jq_cmd || JQ_CMD="jq"
+resolve_container_runtime "${AI_CODER_RUNTIME:-docker}"
 
 # Usage: _state_update <state-file> <jq-args>... — rewrite state.json through jq.
 _state_update() {
@@ -33,23 +38,23 @@ watch_idle() {
     local _cur
     _cur=$("$JQ_CMD" -r '(.hub_idle_since // empty)' "$_state" 2>/dev/null | tr -d '\r')
     [ "$_cur" = "$_stamp" ] || return 0
-    [ -n "$(docker ps -q --filter "name=^/${_prefix}-" 2>/dev/null)" ] && return 0
-    docker stop "$@" >/dev/null 2>&1
-    docker rm   "$@" >/dev/null 2>&1
+    [ -n "$(ctr_list_containers "${_prefix}-" running)" ] && return 0
+    ctr stop "$@" >/dev/null 2>&1
+    ctr rm   "$@" >/dev/null 2>&1
     _state_update "$_state" 'del(.hub_idle_since)'
 }
 
 watch_gpu_guard() {
     local _max="$1" _smi="$2" _state="$3" _engine="$4"
     local _strikes=0 _hot _t
-    while docker ps -q -f "name=^/${_engine}\$" 2>/dev/null | grep -q .; do
+    while ctr_container_running "$_engine"; do
         _hot=""
         for _t in $("$_smi" --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | tr -d '\r'); do
             case "$_t" in ''|*[!0-9]*) ;; *) [ "$_t" -ge "$_max" ] && _hot="$_t" ;; esac
         done
         if [ -n "$_hot" ]; then _strikes=$(( _strikes + 1 )); else _strikes=0; fi
         if [ "$_strikes" -ge 3 ]; then
-            docker stop "$_engine" >/dev/null 2>&1
+            ctr stop "$_engine" >/dev/null 2>&1
             _state_update "$_state" --arg v "$(date '+%Y-%m-%d %H:%M') GPU held ${_hot}C (limit ${_max}C)" \
                 '.engine_guard_trip = $v'
             return 0

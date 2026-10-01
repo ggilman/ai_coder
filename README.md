@@ -9,6 +9,8 @@ The environment uses a **Hub & Spoke** model:
 - **Hub**: Centralized infrastructure providing AI capabilities, including `ai-hub-engine` (local model execution via `llama.cpp` or, optionally, SGLang — see [Inference Engine](#inference-engine-llamacpp-or-sglang)) and `ai-hub-proxy` (unified API via `litellm`).
 - **Spoke**: Individual workbench containers (`coder-<tool>-<project-id>`) where your development and coding tasks occur.
 
+All of these run on Docker Desktop by default, or on WSL Containers (`wslc`, built into WSL 2.9.3+) — see [Container Runtime](#container-runtime-docker-or-wsl-containers).
+
 ## Scripts
 
 | File | Purpose |
@@ -35,6 +37,7 @@ The environment uses a **Hub & Spoke** model:
 | `agents/ai-coder-goose.sh` | Goose overrides (sourced automatically when Goose is selected) |
 | `agents/ai-coder-hub.sh` | Hub-only mode — starts the engine without a coding tool; press any key to stop |
 | `agents/ai-coder-webui.sh` | Open WebUI mode — starts the engine + Open WebUI chat interface at `localhost:3000` |
+| `libs/ai-coder-runtime.sh` | Container runtime layer — `ctr` and query helpers that run every container command on Docker or WSL Containers (sourced by core, the dashboards, the watchers and `offline/unbundle.sh`) |
 | `libs/ai-coder-sglang.sh` | SGLang engine support — Hugging Face snapshot download, tensor-parallel sizing, engine launch args (sourced by core) |
 | `libs/ai-coder-commands.sh` | One-shot CLI commands: `--fix-project`, `--update`, `--version`, `--doctor`, `--logs` (sourced by `ai-coder`) |
 | `libs/ai-coder-menus.sh` | Interactive family and tool selection menus (sourced by `ai-coder`) |
@@ -170,11 +173,32 @@ The *asymmetric* KV cache option in `--model` keeps keys at `q8_0` and stores va
 
 llama.cpp only compiles CUDA Flash Attention kernels for the K/V pairs listed in its `GGML_CUDA_FA_QUANTS` build option. The default list is `q4_0-q4_0;q8_0-q8_0;f16-f16;bf16-bf16`, so on the stock `server-cuda` image a mismatched pair falls back to a much slower path. Choosing asymmetric therefore builds a local image, `ai-coder/llama.cpp:server-cuda-asym-<version>`, the first time it's needed:
 
-- It runs llama.cpp's own `.devops/cuda.Dockerfile` straight from GitHub (no local checkout), adds `q8_0-q4_0` to the kernel list, and compiles only for the GPU architectures `nvidia-smi` reports.
-- The build is one-time and usually takes 10–30 minutes. It runs before the Hub starts; a second session launched meanwhile waits for it. nvcc needs a lot of memory, so if the build is killed for running out of memory, give Docker Desktop more RAM.
+- It runs llama.cpp's own `.devops/cuda.Dockerfile` straight from GitHub (no local checkout; under WSL Containers, which can't build from a git URL, a temporary shallow clone), adds `q8_0-q4_0` to the kernel list, and compiles only for the GPU architectures `nvidia-smi` reports.
+- The build is one-time and usually takes 10–30 minutes. It runs before the Hub starts; a second session launched meanwhile waits for it. nvcc needs a lot of memory, so if the build is killed for running out of memory, give Docker Desktop more RAM (WSL Containers: raise the session memory in `wslc settings`).
 - It builds the same pinned llama.cpp release the stock images use (`LLAMA_CPP_VERSION` in `libs/ai-coder-core.sh`, overridable by exporting it), so every KV mode runs identical llama.cpp. Bumping the version pulls new stock images and builds a new asym image on the next launch; `--rebuild` removes the asym image (every version's tag) to force a rebuild. `--doctor` shows which llama.cpp release the image was built from.
 - It needs internet access, so it won't build with network isolation on. An image built earlier (or loaded from an offline bundle, which includes it when present) still works.
 - The q8_0/q8_0 and q4_0/q4_0 options keep using the stock image.
+
+## Container Runtime (Docker or WSL Containers)
+
+Every container — the Hub engine, LiteLLM proxy, Open WebUI, the workbenches, the model-sync/download helpers and the image builds — runs on one of two runtimes, chosen in `--setup` (the *Container runtime* step, saved as `container_runtime` in `user/settings.json`). The step only appears on Windows (WSL or Git Bash) when `wslc.exe` is installed.
+
+| | **Docker** (default) | **WSL Containers** (`wslc`) |
+| --- | --- | --- |
+| Needs | Docker Desktop | WSL 2.9.3+ (`wsl --update`); no Docker Desktop |
+| GPU | `--gpus all`, or `device=0` in single-GPU mode | `--gpus all` only — single-GPU mode relies on `CUDA_VISIBLE_DEVICES=0` |
+| Image store, volumes | Docker's | Its own — the first launch after switching pulls/builds the images and re-syncs the `ai-coder-models` volume once |
+| Published ports (`localhost:8080`, Open WebUI on `:3000`) | Reachable from Windows and WSL | Reachable from Windows; **not** from inside a NAT-mode WSL distro's `localhost` |
+| LiteLLM proxy restart policy | `on-failure:3` | None (wslc has no restart policies) |
+| SGLang shared memory | `--ipc=host` | `--shm-size $SGL_SHM_SIZE` (default `16G`; raise it if `--tp > 1` fails in NCCL setup) |
+| Build memory | Docker Desktop's RAM setting | `wslc settings` |
+| Bind-mounted host folders | Unlimited | 15 distinct folders per session lifetime (removing containers doesn't free them). Each cold launch restarts the idle session (~3s; images and volumes are kept) to reset the count; with a warm Hub kept running across many projects/tools, run `--clean` if a start fails with "Too many volumes have been mounted" |
+
+Notes:
+- **Switching runtime** in `--setup` stops the Hub still running under the old runtime, since two engines would compete for VRAM and port 8080. A launch also refuses to start while the *other* runtime runs `ai-hub-engine` (e.g. after a one-off override), naming the command that stops it.
+- **Override for one run**: `AI_CODER_RUNTIME=wslc ./ai-coder` (or `=docker`). The dashboards, the idle/thermal watchers and `offline/unbundle.sh` follow the same setting.
+- **Offline bundles**: `unbundle.sh` loads into Docker, or into WSL Containers when Docker isn't installed or `AI_CODER_RUNTIME=wslc` is set.
+- Code never calls `docker` directly: every command goes through `ctr` / the `ctr_*` helpers in `libs/ai-coder-runtime.sh`, which translate the few places wslc's CLI differs from Docker's.
 
 ## Multi-GPU Support
 
@@ -549,7 +573,7 @@ Git checkouts are tracked through git itself: `--version` reports the local `ori
 
 ### Setup (`--setup`)
 
-**`--setup` must be run once before first launch.** It walks through up to thirteen configuration steps — which ones depends on the inference engine you choose, since options one engine doesn't use are not shown. On first run the installer downloads [gum](https://github.com/charmbracelet/gum) — a CLI tool for beautiful interactive prompts — and uses it for the wizard on both WSL and Git Bash. If gum is unavailable it falls back to plain text prompts. Either way the questions and defaults are the same:
+**`--setup` must be run once before first launch.** It walks through up to fourteen configuration steps — which ones depends on the inference engine you choose, since options one engine doesn't use are not shown. On first run the installer downloads [gum](https://github.com/charmbracelet/gum) — a CLI tool for beautiful interactive prompts — and uses it for the wizard on both WSL and Git Bash. If gum is unavailable it falls back to plain text prompts. Either way the questions and defaults are the same:
 
 ```bash
 ./ai-coder --setup
@@ -558,16 +582,17 @@ Git checkouts are tracked through git itself: `--version` reports the local `ori
 1. **Shell alias** — optionally adds an `ai` shortcut to your rc file. Skip if you prefer to manage your PATH yourself. Any previously added alias is removed if you decline.
 2. **Proxy** — enter an HTTP proxy URL, or leave blank for none.
 3. **Network isolation** — optionally block all internet access from containers.
-4. **Inference engine** — llama.cpp (default) or SGLang. See [Inference Engine](#inference-engine-llamacpp-or-sglang).
-5. **GPU mode** — only shown when 2+ GPUs are detected; choose multi (all GPUs) or single.
-6. **MCP extras** — register the optional MCP servers (memory, thinking, conan, context7, brave-search, github, fetch, time) with each agent. Off by default: fewer registered tools means faster prompts and better tool selection on small local models.
-7. **Agent instructions** — give each coding tool a short set of working rules from `prompts/` (see [Agent Instructions](#agent-instructions)). On by default.
-8. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Also asks for an idle timeout (default 60 min, `0` = forever) after which the warm hub stops itself to release VRAM; stop it immediately with `--clean`.
-9. **Fast model storage** — cache models in a Docker volume so engine cold starts load from the VM's native disk instead of the slow Windows filesystem bridge. Default on for WSL/Git Bash; see [Model Storage](#model-storage).
-10. **Speculative decoding** *(llama.cpp)* — use a small draft model to speed up generation, typically 1.5–2× on code. Default on; costs ~1 GB VRAM and applies only to families that define a draft (currently Qwen3). See [Speculative Decoding](#speculative-decoding).
-11. **Generation speed tracking** *(llama.cpp)* — off by default. Enables the `--speed` command: a one-shot `llama-bench` pass on your model on a clean GPU that prints tokens-per-second (tg = generation, pp = prompt processing).
-12. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
-13. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
+4. **Container runtime** — Docker (default) or WSL Containers; only shown on Windows when `wslc` is installed. See [Container Runtime](#container-runtime-docker-or-wsl-containers).
+5. **Inference engine** — llama.cpp (default) or SGLang. See [Inference Engine](#inference-engine-llamacpp-or-sglang).
+6. **GPU mode** — only shown when 2+ GPUs are detected; choose multi (all GPUs) or single.
+7. **MCP extras** — register the optional MCP servers (memory, thinking, conan, context7, brave-search, github, fetch, time) with each agent. Off by default: fewer registered tools means faster prompts and better tool selection on small local models.
+8. **Agent instructions** — give each coding tool a short set of working rules from `prompts/` (see [Agent Instructions](#agent-instructions)). On by default.
+9. **Keep hub warm** — leave the engine loaded after the last session exits so the next launch skips the model load. Also asks for an idle timeout (default 60 min, `0` = forever) after which the warm hub stops itself to release VRAM; stop it immediately with `--clean`.
+10. **Fast model storage** — cache models in a Docker volume so engine cold starts load from the VM's native disk instead of the slow Windows filesystem bridge. Default on for WSL/Git Bash; see [Model Storage](#model-storage).
+11. **Speculative decoding** *(llama.cpp)* — use a small draft model to speed up generation, typically 1.5–2× on code. Default on; costs ~1 GB VRAM and applies only to families that define a draft (currently Qwen3). See [Speculative Decoding](#speculative-decoding).
+12. **Generation speed tracking** *(llama.cpp)* — off by default. Enables the `--speed` command: a one-shot `llama-bench` pass on your model on a clean GPU that prints tokens-per-second (tg = generation, pp = prompt processing).
+13. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
+14. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
 
 Settings that change which model tier fits in VRAM are deliberately not wizard steps — `--model` asks them instead (along with the model family, tool, and Open WebUI), and a plain launch verifies they are set:
 
@@ -630,7 +655,7 @@ cd /path/to/bundle
 ```
 
 It will:
-1. Load all Docker image archives into the local daemon
+1. Load all container image archives into Docker — or into WSL Containers when Docker isn't installed or `AI_CODER_RUNTIME=wslc` is set (then pick WSL Containers in `--setup`)
 2. Copy the GGUF model to `~/ai-models/`
 3. Install project scripts to a directory of your choice (default `~/ai-coder`)
 

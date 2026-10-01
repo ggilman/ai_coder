@@ -81,6 +81,9 @@ draw_footer() {
 
 main() {
     clear
+    # Container runtime (Docker or WSL Containers) — queried once, not per frame.
+    local runtime_text
+    runtime_text=$(get_runtime_label)
     while true; do
         printf "\033[H"
         draw_header
@@ -145,6 +148,7 @@ main() {
                 box_line "🚀 ${BOLD}ENGINE HUB: ${RED}● Offline${NC}"
             fi
         fi
+        box_line "🐳  Runtime: ${runtime_text}"
 
         draw_footer
         printf "\033[J"

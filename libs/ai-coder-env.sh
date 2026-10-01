@@ -13,7 +13,9 @@
 to_host_path() {
     local abs_path; abs_path=$(realpath "$1")
     if [ "$IS_WSL" = "true" ]; then
-        echo "$abs_path"
+        # Docker Desktop's WSL integration takes distro paths as-is; wslc.exe
+        # is a Windows binary and needs the Windows form.
+        if runtime_is_wslc; then wslpath -m "$abs_path"; else echo "$abs_path"; fi
     elif [ "$IS_GITBASH" = "true" ]; then
         cygpath -m "$abs_path"
     else
@@ -560,10 +562,10 @@ retry_with_backoff() {
 }
 
 # True when a container with this exact name is currently running (not merely
-# present-but-stopped). Wraps the `docker ps -q -f name=^/<name>$` idiom used
-# throughout the launch/status/lifecycle code so call sites read as intent.
+# present-but-stopped). Kept as the launch/status/lifecycle code's name for
+# ctr_container_running (ai-coder-runtime.sh) so call sites read as intent.
 container_running() {
-    [ -n "$(docker ps -q -f "name=^/${1}$" 2>/dev/null)" ]
+    ctr_container_running "$1"
 }
 
 # Read a key from a JSON preference file. Returns the value, or $default when

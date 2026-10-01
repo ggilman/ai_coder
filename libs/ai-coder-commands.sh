@@ -296,11 +296,21 @@ cmd_doctor() {
     fi
 
     # --- leftover workbench containers ----------------------------------------
-    # Doesn't call check_docker (which would launch Docker Desktop just to run
-    # a health check) — skips this section instead when Docker isn't already up.
-    echo -e "${ICON_GEAR} Docker state..."
-    if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-        local _stopped; _stopped=$(docker ps -aq --filter "status=exited" --filter "name=^/${WORKBENCH_PREFIX}-" 2>/dev/null)
+    # Doesn't call check_container_runtime (which would launch Docker Desktop
+    # just to run a health check) — skips this section instead when the
+    # runtime isn't already up.
+    echo -e "${ICON_GEAR} Container runtime: ${CYAN}$(runtime_display_name)${NC}"
+    if runtime_is_wslc && ! wslc_available; then
+        echo -e "  ${RED}✘${NC} wslc.exe not found — update WSL (${CYAN}wsl --update${NC}) or pick Docker in --setup"
+        issues=$((issues + 1))
+    fi
+    _other_runtime_hub_running && {
+        echo -e "  ${YELLOW}⚠${NC} $(_other_runtime_name) still runs ${GLOBAL_ENGINE_NAME} — it holds VRAM and port ${ENGINE_PORT}"
+        echo -e "    ${DIM}Stop it with: $(_other_runtime_cli) stop ${GLOBAL_ENGINE_NAME}${NC}"
+        issues=$((issues + 1))
+    }
+    if runtime_reachable; then
+        local _stopped; _stopped=$(ctr_list_containers "${WORKBENCH_PREFIX}-" exited)
         if [ -n "$_stopped" ]; then
             local _count; _count=$(echo "$_stopped" | grep -c .)
             echo -e "  ${YELLOW}⚠${NC} ${_count} stopped workbench container(s) left over"
@@ -310,7 +320,7 @@ cmd_doctor() {
             echo -e "  ${DIM}no leftover workbench containers${NC}"
         fi
     else
-        echo -e "  ${DIM}Docker not running — skipped${NC}"
+        echo -e "  ${DIM}$(runtime_display_name) not running — leftover-container check skipped${NC}"
     fi
 
     # --- legacy flat config files (pre-JSON) ------------------------------------
@@ -343,10 +353,10 @@ cmd_doctor() {
         else
             echo -e "  ${DIM}saved model family is compatible${NC}"
         fi
-    elif [ "$(read_setting kv_mode)" = "asym" ] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    elif [ "$(read_setting kv_mode)" = "asym" ] && runtime_reachable; then
         # Asymmetric KV cache runs on a locally built llama.cpp image.
         local _asym_ref
-        if _asym_ref=$(docker image inspect --format '{{ index .Config.Labels "ai-coder.llama-ref" }}' "$LLAMA_ASYM_IMAGE" 2>/dev/null); then
+        if _asym_ref=$(ctr_inspect_field "$LLAMA_ASYM_IMAGE" label:ai-coder.llama-ref); then
             echo -e "  ${DIM}asymmetric KV image ${LLAMA_ASYM_IMAGE} present (llama.cpp ${_asym_ref:-unknown})${NC}"
         else
             echo -e "  ${DIM}asymmetric KV image not built yet — the next launch builds it (~10-30 min)${NC}"
@@ -414,25 +424,45 @@ cmd_logs() {
             ;;
     esac
 
-    check_docker || exit 1
+    check_container_runtime || exit 1
 
-    if [ -z "$(docker ps -aq -f "name=$GLOBAL_ENGINE_NAME" 2>/dev/null)" ]; then
+    if ! ctr_container_exists "$GLOBAL_ENGINE_NAME"; then
         echo -e "${RED}✘ Engine not started${NC}"
         echo -e "${YELLOW}  Launch a session first, then run: ${CYAN}$(basename "$0") --logs${NC}"
         return 1
     fi
 
     local containers=("$GLOBAL_ENGINE_NAME")
-    if [ "$show_proxy" = "true" ] && [ -n "$(docker ps -aq -f "name=$GLOBAL_PROXY_NAME" 2>/dev/null)" ]; then
+    if [ "$show_proxy" = "true" ] && ctr_container_exists "$GLOBAL_PROXY_NAME"; then
         containers+=("$GLOBAL_PROXY_NAME")
     fi
-    if [ "$show_webui" = "true" ] && [ -n "$(docker ps -aq -f "name=$GLOBAL_WEBUI_NAME" 2>/dev/null)" ]; then
+    if [ "$show_webui" = "true" ] && ctr_container_exists "$GLOBAL_WEBUI_NAME"; then
         containers+=("$GLOBAL_WEBUI_NAME")
     fi
 
+    if [ "${#containers[@]}" -eq 1 ]; then
+        if [ "$follow" = "true" ]; then
+            ctr logs -f "$GLOBAL_ENGINE_NAME"
+        else
+            ctr logs --tail "$tail" "$GLOBAL_ENGINE_NAME"
+        fi
+        return
+    fi
+    # `logs` takes a single container: follow each in the background with
+    # its lines tagged by container name, or print each tail under a header.
+    local _c
     if [ "$follow" = "true" ]; then
-        docker logs -f "${containers[@]}"
+        local _pids=()
+        for _c in "${containers[@]}"; do
+            ( ctr logs -f "$_c" 2>&1 | sed -u "s/^/[$_c] /" ) &
+            _pids+=("$!")
+        done
+        trap 'kill "${_pids[@]}" 2>/dev/null' INT TERM
+        wait
     else
-        docker logs --tail "$tail" "${containers[@]}"
+        for _c in "${containers[@]}"; do
+            echo -e "${CYAN}── ${_c} ──${NC}"
+            ctr logs --tail "$tail" "$_c" 2>&1
+        done
     fi
 }

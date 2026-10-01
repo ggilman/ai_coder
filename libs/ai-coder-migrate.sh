@@ -34,6 +34,7 @@ pref_default() {
     case "$1" in
         proxy)            echo "" ;;
         engine)           echo "llamacpp" ;;
+        container_runtime) echo "docker" ;;
         sgl_mem_fraction) echo "0.85" ;;
         sgl_kv_fp8)       echo "no" ;;
         isolated)         echo "no" ;;

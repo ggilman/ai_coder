@@ -22,6 +22,27 @@ source "$(dirname "${BASH_SOURCE[0]}")/ai-coder-detect-env.sh"
 # (PATH > .assets) WITHOUT downloading - the dashboards run standalone and are
 # read-only, so a missing jq degrades to "no".
 source "$(dirname "${BASH_SOURCE[0]}")/ai-coder-jq.sh"
+# Container runtime (docker or wslc) for the engine probes: AI_CODER_RUNTIME
+# env > the saved container_runtime setting > docker.
+source "$(dirname "${BASH_SOURCE[0]}")/ai-coder-runtime.sh"
+resolve_jq_cmd &>/dev/null || true
+resolve_container_runtime_standalone "$(dirname "${BASH_SOURCE[0]}")/../user/settings.json"
+
+# One-line description of the container runtime for the dashboards, e.g.
+#   "WSL Containers · wslc 2.9.4.0"
+#   "Docker · Docker Desktop 4.48.0 (207573)"
+#   "Docker · daemon not running"
+# Queries the CLI, so callers compute it once at startup rather than per frame.
+get_runtime_label() {
+    local _v
+    if runtime_is_wslc; then
+        _v=$("$CTR_BIN" version 2>/dev/null | tr -d '\r' | head -1) || _v=""
+        echo "WSL Containers · ${_v:-wslc not found}"
+    else
+        _v=$(docker version --format '{{.Server.Platform.Name}}' 2>/dev/null | tr -d '\r') || _v=""
+        echo "Docker · ${_v:-daemon not running}"
+    fi
+}
 readonly SMI="$([[ "$IS_GITBASH" == "true" ]] && echo "nvidia-smi.exe" || echo "nvidia-smi")"
 
 # --- [ ENGINE PROBE CONSTANTS ] -----------------------------------------------
@@ -161,7 +182,7 @@ get_engine_footprint() {
 # Written via a temp file rather than $(docker logs) — see _ENGINE_TMP above.
 get_engine_speed() {
     local _tmp="/tmp/ai_status_speed_$$"
-    docker logs --tail 300 "$ENGINE_NAME" > "$_tmp" 2>&1 || true
+    ctr logs --tail 300 "$ENGINE_NAME" > "$_tmp" 2>&1 || true
     awk '
         function num(s) { sub(/^[^0-9]*/, "", s); return s + 0 }
         /prompt eval time =/ {

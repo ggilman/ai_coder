@@ -32,6 +32,18 @@ ensure_engine_config() {
     esac
 }
 
+# Resolve the container runtime: "docker" (default) or "wslc" (WSL
+# Containers, Windows only). An exported AI_CODER_RUNTIME wins over the saved
+# container_runtime setting. Sets CTR_RUNTIME/CTR_BIN via
+# resolve_container_runtime (ai-coder-runtime.sh). Called once by
+# ai-coder-core.sh before ensure_engine_config, so every container command
+# after the prefs migration runs against the selected runtime.
+ensure_runtime_config() {
+    local _rt="${AI_CODER_RUNTIME:-}"
+    [ -n "$_rt" ] || _rt=$(read_setting container_runtime)
+    resolve_container_runtime "$_rt"
+}
+
 # True when the Hub runs SGLang rather than llama.cpp.
 engine_is_sglang() {
     [ "${ENGINE_BACKEND:-llamacpp}" = "sglang" ]

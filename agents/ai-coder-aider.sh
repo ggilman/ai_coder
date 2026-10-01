@@ -10,7 +10,7 @@ TOOL_NAME="Aider"
 RESUME_FLAG="--restore-chat-history"
 
 build_image() {
-    if [ -n "$(docker images -q "$IMAGE_NAME" 2>/dev/null)" ]; then
+    if ctr_image_exists "$IMAGE_NAME"; then
         echo -e "${ICON_OK} Aider Image: ready."
         return 0
     fi

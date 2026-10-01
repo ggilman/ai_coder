@@ -1,9 +1,11 @@
 #!/bin/bash
 # ==============================================================================
-# AI-CODER-DOCKER.SH | Docker Preflight & Image Pulls
-# check_docker (CLI reachable, daemon up — starting Docker Desktop on Windows
-# when it isn't) and the proxy-aware image pulls (pull_image_if_missing,
-# pull_base_image_via_proxy). Sourced by ai-coder-core.sh — not run standalone.
+# AI-CODER-DOCKER.SH | Container Runtime Preflight & Image Pulls
+# check_container_runtime (Docker: CLI reachable, daemon up — starting Docker
+# Desktop on Windows when it isn't; wslc: binary present, session service
+# answering), the cross-runtime Hub guard (check_other_runtime_hub) and the
+# proxy-aware image pulls (pull_image_if_missing, pull_base_image_via_proxy).
+# Sourced by ai-coder-core.sh — not run standalone.
 # ==============================================================================
 
 # Resolve DOCKER_BIN (unless preset) to the Docker Desktop launcher, only
@@ -112,6 +114,77 @@ check_docker() {
     fi
 }
 
+# Preflight for the selected runtime (ai-coder-runtime.sh). Docker keeps the
+# Docker Desktop start-and-wait flow; WSL Containers has no daemon to start —
+# the session VM boots on the first command, so it is polled briefly.
+check_container_runtime() {
+    runtime_is_wslc || { check_docker; return; }
+    if ! wslc_available; then
+        echo -e "${RED}✘ WSL Containers (wslc.exe) not found.${NC}"
+        echo -e "${YELLOW}  It ships with WSL 2.9.3 or newer — update with: ${CYAN}wsl --update${NC}"
+        echo -e "${YELLOW}  Or switch back to Docker with: ${CYAN}$(basename "$0") --setup${NC}"
+        return 1
+    fi
+    ctr info >/dev/null 2>&1 && return 0
+    echo -ne "${CYAN}◈ Waiting for the WSL Containers session...${NC} "
+    local _waited=0
+    until ctr info >/dev/null 2>&1; do
+        if [ "$_waited" -ge 60 ]; then
+            echo -e " ${RED}TIMEOUT${NC}"
+            echo -e "${RED}✘ wslc did not answer after 60s — try: ${CYAN}wslc list${NC}"
+            return 1
+        fi
+        echo -ne "◈"
+        sleep 2
+        _waited=$((_waited + 2))
+    done
+    echo -e " ${GREEN}ONLINE${NC}"
+}
+
+# True when the selected runtime already answers, without starting it (no
+# Docker Desktop launch) — for read-only checks like --doctor.
+runtime_reachable() {
+    if runtime_is_wslc; then
+        wslc_available && ctr info >/dev/null 2>&1
+    else
+        command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1
+    fi
+}
+
+_other_runtime_name() {
+    runtime_is_wslc && echo "Docker" || echo "WSL Containers (wslc)"
+}
+
+_other_runtime_cli() {
+    runtime_is_wslc && echo "docker" || echo "wslc"
+}
+
+# True when the runtime NOT selected runs the Hub engine. Cheap and
+# side-effect free: Docker is only asked when its daemon already answers, and
+# wslc only when a session already exists (`wslc list` would otherwise boot
+# the session VM on every Docker launch).
+_other_runtime_hub_running() {
+    { [ "$IS_WSL" = "true" ] || [ "$IS_GITBASH" = "true" ]; } || return 1
+    if runtime_is_wslc; then
+        command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 || return 1
+        ( resolve_container_runtime docker; ctr_container_running "$GLOBAL_ENGINE_NAME" )
+    else
+        local _wslc; _wslc=$(_find_wslc_bin) || return 1
+        [ "$("$_wslc" system session list 2>/dev/null | tr -d '\r' | grep -c '[0-9]')" -gt 0 ] || return 1
+        ( resolve_container_runtime wslc; ctr_container_running "$GLOBAL_ENGINE_NAME" )
+    fi
+}
+
+# Launch guard: stop when the other runtime still runs a Hub engine — e.g.
+# after a one-off AI_CODER_RUNTIME override — since both would compete for
+# VRAM and the published port.
+check_other_runtime_hub() {
+    _other_runtime_hub_running || return 0
+    echo -e "${RED}✘ $(_other_runtime_name) is still running the Hub (${GLOBAL_ENGINE_NAME}).${NC}"
+    echo -e "${YELLOW}  Two engines would compete for VRAM. Stop it first: ${CYAN}$(_other_runtime_cli) stop ${GLOBAL_ENGINE_NAME}${NC}"
+    return 1
+}
+
 # Pull <image> through $proxy when a plain docker pull can't reach the
 # registry: Git Bash sets the proxy env vars for Docker Desktop (Windows
 # cert store); WSL2 retries plain pull first (daemon-side proxy settings)
@@ -122,8 +195,8 @@ pull_base_image_via_proxy() {
     # Git Bash: Docker Desktop is a native Windows app using the Windows cert store.
     # It handles proxy natively — just set env vars and docker pull works directly.
     if [ "$IS_GITBASH" = "true" ]; then
-        echo -e "${CYAN}  Pulling $image via Docker Desktop (Windows proxy)...${NC}"
-        HTTPS_PROXY="$proxy" HTTP_PROXY="$proxy" docker pull "$image" || {
+        echo -e "${CYAN}  Pulling $image via $(runtime_display_name) (Windows proxy)...${NC}"
+        HTTPS_PROXY="$proxy" HTTP_PROXY="$proxy" ctr pull "$image" || {
             echo -e "${RED}  ✘ Base image pull failed${NC}"; return 1
         }
         return 0
@@ -133,8 +206,8 @@ pull_base_image_via_proxy() {
     # its own proxy settings configured via the Docker Desktop GUI — independent
     # of WSL env vars. Try plain docker pull first; it often works even when the
     # proxy is unreachable from the WSL shell itself.
-    echo -e "${CYAN}  Pulling $image via Docker Desktop (WSL2)...${NC}"
-    if docker pull "$image" 2>/dev/null; then
+    echo -e "${CYAN}  Pulling $image via $(runtime_display_name) (WSL2)...${NC}"
+    if ctr pull "$image" 2>/dev/null; then
         return 0
     fi
     echo -e "${YELLOW}  Plain pull failed — attempting crane for proxy-aware pull...${NC}"
@@ -153,9 +226,9 @@ pull_base_image_via_proxy() {
             if curl --proxy "$proxy" -fsSL --connect-timeout 30 "$crane_url" | tar xz -C "$crane_tmp" crane; then
                 crane_bin="$crane_tmp/crane"
             else
-                echo -e "${YELLOW}  ✘ crane unavailable — trying docker pull with explicit proxy env vars${NC}"
+                echo -e "${YELLOW}  ✘ crane unavailable — trying a pull with explicit proxy env vars${NC}"
                 rm -rf "$crane_tmp"
-                HTTPS_PROXY="$proxy" HTTP_PROXY="$proxy" docker pull "$image" || {
+                HTTPS_PROXY="$proxy" HTTP_PROXY="$proxy" ctr pull "$image" || {
                     echo -e "${RED}  ✘ Base image pull failed${NC}"; return 1
                 }
                 return 0
@@ -165,8 +238,8 @@ pull_base_image_via_proxy() {
     echo -e "${CYAN}  Pulling $image from registry via proxy (crane)...${NC}"
     local image_tar; image_tar=$(mktemp --suffix=.tar)
     if HTTPS_PROXY="$proxy" HTTP_PROXY="$proxy" "$crane_bin" pull "$image" "$image_tar"; then
-        echo -e "${CYAN}  Loading image into Docker...${NC}"
-        if docker load < "$image_tar"; then
+        echo -e "${CYAN}  Loading image into $(runtime_display_name)...${NC}"
+        if ctr load < "$image_tar"; then
             rm -f "$image_tar"; [ -n "$crane_tmp" ] && rm -rf "$crane_tmp"
             return 0
         else
@@ -186,7 +259,7 @@ pull_base_image_via_proxy() {
 # pull already fetched, so a retry only fetches the rest.
 pull_image_if_missing() {
     local img="$1"
-    docker image inspect "$img" >/dev/null 2>&1 && return 0
+    ctr_image_exists "$img" && return 0
     echo -e "${CYAN}  Pulling $img ...${NC}"
     retry_with_backoff "${AI_CODER_DOWNLOAD_RETRIES:-3}" "Image pull" _pull_image_once "$img" || {
         echo -e "${RED}✘ Failed to pull $img${NC}"; return 1
@@ -197,6 +270,6 @@ _pull_image_once() {
     if [ -n "${DOWNLOAD_PROXY:-}" ]; then
         pull_base_image_via_proxy "$1" "$DOWNLOAD_PROXY"
     else
-        docker pull "$1"
+        ctr pull "$1"
     fi
 }
