@@ -115,7 +115,7 @@ _migrate_domain() {
 #     lives, and it self-disarms once settings.json exists.
 # ------------------------------------------------------------------------------
 migrate_user_prefs() {
-    #_migrate_domain "settings" "$SETTINGS_FILE" "settings_version" "$SETTINGS_SCHEMA_VERSION"
+    _migrate_domain "settings" "$SETTINGS_FILE" "settings_version" "$SETTINGS_SCHEMA_VERSION"
     _migrate_domain "state"    "$STATE_FILE"    "state_version"    "$STATE_SCHEMA_VERSION"
 
     if [ ! -f "$SETTINGS_FILE" ] && [ -f "$USER_DIR/.setup-done" ]; then
