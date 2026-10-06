@@ -23,6 +23,51 @@ to_host_path() {
     fi
 }
 
+# Convert a path in any common form to the form the host shell sees it:
+# Windows drive paths (C:\... / C:/...) become /mnt/<drive>/... on WSL or
+# /<drive>/... on Git Bash, and the /mnt/<drive>/... and /<drive>/... forms
+# are cross-normalized so a value saved under either shell works on the
+# other. Other absolute paths pass through unchanged. Returns 1 on
+# relative paths or drive-letter paths on plain POSIX (no drive mapping).
+to_native_path() {
+    local p="$1"
+    if [[ "$p" =~ ^([A-Za-z]):[\\/](.*)$ ]]; then
+        local drive="${BASH_REMATCH[1],}" rest="${BASH_REMATCH[2]}"
+        rest="${rest//\\//}"
+        if [ "$IS_WSL" = "true" ]; then
+            echo "/mnt/$drive/$rest"
+        elif [ "$IS_GITBASH" = "true" ]; then
+            echo "/$drive/$rest"
+        else
+            echo "  ${RED}✘ Drive paths (e.g. C:\...) don't exist on plain Linux${NC}" >&2
+            return 1
+        fi
+        return 0
+    fi
+    if [[ "$p" =~ ^/mnt/([a-z])(/.*)?$ ]]; then
+        if [ "$IS_GITBASH" = "true" ]; then
+            echo "/${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+        else
+            echo "$p"
+        fi
+        return 0
+    fi
+    if [[ "$p" =~ ^/([a-z])(/.*)?$ ]]; then
+        if [ "$IS_WSL" = "true" ]; then
+            echo "/mnt/${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+        else
+            echo "$p"
+        fi
+        return 0
+    fi
+    if [[ "$p" != /* ]]; then
+        echo "  ${RED}✘ Additional mount point must be an absolute path (got: $p)${NC}" >&2
+        return 1
+    fi
+    echo "$p"
+    return 0
+}
+
 # Make <dir> usable for config writes: create it if missing, and reclaim
 # ownership (sudo chown) if a Docker root process left it root-owned.
 ensure_host_dir_writable() {

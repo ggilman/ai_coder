@@ -218,6 +218,33 @@ GITCFG
     fi
 }
 
+# Resolve the optional additional mount point (extra_mount) into
+# EXTRA_MOUNT_DEST (the container-side path, in the form the host shell
+# sees it) and EXTRA_MOUNT_HOST (the Docker -v source form). Called at
+# startup; both stay empty when the setting is blank, so run_workbench
+# adds no extra mount. A value that can't be normalized (relative path,
+# drive path on plain Linux) or that doesn't exist on the host keeps the
+# mount disabled — a missing mount source would make Docker create it as
+# a root-owned directory.
+ensure_extra_mount_config() {
+    EXTRA_MOUNT_DEST=""
+    EXTRA_MOUNT_HOST=""
+    local raw; raw=$(read_setting extra_mount)
+    [ -n "$raw" ] || return 0
+    local dest
+    if ! dest=$(to_native_path "$raw"); then
+        echo -e "${YELLOW}⚠ Additional mount point '${raw}' is not a valid host path — mount disabled this launch.${NC}"
+        return 0
+    fi
+    if [ ! -e "$dest" ]; then
+        echo -e "${YELLOW}⚠ Additional mount point ${dest} doesn't exist on the host — mount disabled (Docker would create it as a root-owned dir).${NC}"
+        return 0
+    fi
+    EXTRA_MOUNT_DEST="$dest"
+    EXTRA_MOUNT_HOST="$(to_host_path "$dest")"
+    return 0
+}
+
 # Write identity into the local repo's .git/config (host-side).
 # The workspace volume mount means the container sees this immediately.
 # Skips gracefully if not inside a git repo or if already configured.

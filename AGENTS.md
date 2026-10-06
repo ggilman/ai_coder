@@ -6,7 +6,7 @@ Bash CLI that launches AI coding tools (Claude, OpenCode, Aider, Gemini) inside 
 ## Key conventions
 - All scripts run `set -euo pipefail` — use `|| true` / `|| return` where failure is tolerated
 - Config follows `VAR="${VAR:-default}"` pattern — exported env vars always win over defaults
-- Windows paths: `to_host_path()` converts for `-v` mounts (WSL passthrough, Git Bash `cygpath -m`)
+- Windows paths: `to_host_path()` converts for `-v` mount sources (WSL passthrough, Git Bash `cygpath -m`); `to_native_path()` converts user-entered paths to the host shell's view for container-side mount destinations
 - The `cleanup()` trap in `ai-coder` is the single exit path — don't add bypass exits
 
 ## Script loading order

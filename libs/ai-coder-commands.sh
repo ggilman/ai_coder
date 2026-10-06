@@ -378,6 +378,41 @@ cmd_doctor() {
         done
     fi
 
+    # --- git worktree mount coverage ----------------------------------------
+    # A git worktree's .git file points at a gitdir that git also resolves
+    # inside the container; if that path sits outside the workspace mount
+    # and isn't covered by the additional mount point, git fails in the
+    # container. Best-effort: only fires when the cwd is a worktree.
+    echo -e "${ICON_GEAR} Git worktree mount coverage..."
+    if [ -f .git ] && [ ! -d .git ]; then
+        local _gitdir; _gitdir=$(sed -n 's/^gitdir: *//p' .git)
+        local _raw_extra; _raw_extra=$(read_setting extra_mount)
+        local _extra_dest=""
+        if [ -n "$_raw_extra" ]; then
+            _extra_dest=$(to_native_path "$_raw_extra") || _extra_dest=""
+        fi
+        if [ -n "$_gitdir" ]; then
+            local _covered=false
+            if [[ "$_gitdir" == "$(pwd)"/* || "$_gitdir" == "$(pwd)" ]]; then
+                _covered=true
+            elif [ -n "$_extra_dest" ] && \
+                 [[ "$_gitdir" == "$_extra_dest"/* || "$_gitdir" == "$_extra_dest" ]]; then
+                _covered=true
+            fi
+            if [ "$_covered" = "true" ]; then
+                echo -e "  ${DIM}worktree gitdir ${_gitdir} is inside a mounted path${NC}"
+            else
+                echo -e "  ${YELLOW}⚠${NC} git worktree gitdir ${DIM}${_gitdir}${NC} is not mounted — git will fail inside the container"
+                echo -e "    ${DIM}Set it with: $(basename "$0") --setup (additional mount point)${NC}"
+                issues=$((issues + 1))
+            fi
+        else
+            echo -e "  ${DIM}.git file has no gitdir line — nothing to check${NC}"
+        fi
+    else
+        echo -e "  ${DIM}not a git worktree — nothing to check${NC}"
+    fi
+
     echo ""
     if [ "$issues" -eq 0 ]; then
         echo -e "${ICON_OK} Nothing to clean up."

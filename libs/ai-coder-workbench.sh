@@ -70,12 +70,21 @@ run_workbench() {
     # and a privileged container would undermine the network-isolation option.
     # --stop-timeout 2: the keep-alive entrypoint ignores SIGTERM, so a short
     # grace period avoids a 10s docker stop hang on every exit.
+    # Optional additional mount point (--setup): a host folder mounted at the
+    # same path the host shell sees it, so git worktrees whose .git file
+    # points at a gitdir outside the workspace resolve inside the container.
+    local _extra_mount_args=()
+    if [ -n "${EXTRA_MOUNT_DEST:-}" ]; then
+        _extra_mount_args=(-v "$EXTRA_MOUNT_HOST:$EXTRA_MOUNT_DEST")
+        echo -e "${ICON_GEAR} Additional mount point: ${GREEN}${EXTRA_MOUNT_DEST}${NC}"
+    fi
     ctr run -d --name "$WORKBENCH" --network "$wb_network" --stop-timeout 2 \
         -e "http_proxy=${_wb_http_proxy}" -e "https_proxy=${_wb_http_proxy}" \
         -e "HTTP_PROXY=${_wb_http_proxy}" -e "HTTPS_PROXY=${_wb_http_proxy}" \
         -e "no_proxy=$no_proxy_hosts" -e "NO_PROXY=$no_proxy_hosts" \
         -v "$(to_host_path "$(pwd)"):/$WORKSPACE_DIR" \
         -v "$(to_host_path "$HOME/.gitconfig-container"):/root/.gitconfig:ro" \
+        "${_extra_mount_args[@]}" \
         --workdir "$_wb_workdir" \
         "${extra_flags[@]}" \
         "$IMAGE_NAME" /bin/bash -c "$entrypoint" > /dev/null

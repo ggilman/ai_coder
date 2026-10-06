@@ -198,6 +198,7 @@ Notes:
 - **Switching runtime** in `--setup` stops the Hub still running under the old runtime, since two engines would compete for VRAM and port 8080. A launch also refuses to start while the *other* runtime runs `ai-hub-engine` (e.g. after a one-off override), naming the command that stops it.
 - **Override for one run**: `AI_CODER_RUNTIME=wslc ./ai-coder` (or `=docker`). The dashboards, the idle/thermal watchers and `offline/unbundle.sh` follow the same setting.
 - **Offline bundles**: `unbundle.sh` loads into Docker, or into WSL Containers when Docker isn't installed or `AI_CODER_RUNTIME=wslc` is set.
+- **Additional mount point** counts as one of wslc's 15 host folders per session (Docker: unlimited), on top of the workspace, gitconfig, npm cache, tool-config and model mounts.
 - Code never calls `docker` directly: every command goes through `ctr` / the `ctr_*` helpers in `libs/ai-coder-runtime.sh`, which translate the few places wslc's CLI differs from Docker's.
 
 ## Multi-GPU Support
@@ -318,6 +319,7 @@ A rebuild (`./ai-coder --rebuild` followed by `./ai-coder`) is only needed when 
 | Add a new model family config (`config/families/*.conf`) | No | Read at launch time |
 | Change GPU mode (`--setup`) | No | Passed as flags when the engine container starts |
 | Toggle fast model storage (`--setup`) | No | Engine restarts with the new mount on next launch |
+| Set/clear additional mount point (`--setup`) | No | Mount is added/removed when the workbench starts on next launch |
 | Toggle speculative decoding (`--setup`) | No | Engine restarts with/without the draft model on next launch |
 | Change the KV cache type (`--model`) | No | Engine restarts with the new KV cache type on next launch; the first switch to asymmetric builds llama.cpp locally (one time) |
 | Switch inference engine (`--setup`) | No | Engine restarts on the new server on next launch; the workbench images are engine-independent |
@@ -573,7 +575,7 @@ Git checkouts are tracked through git itself: `--version` reports the local `ori
 
 ### Setup (`--setup`)
 
-**`--setup` must be run once before first launch.** It walks through up to fourteen configuration steps — which ones depends on the inference engine you choose, since options one engine doesn't use are not shown. On first run the installer downloads [gum](https://github.com/charmbracelet/gum) — a CLI tool for beautiful interactive prompts — and uses it for the wizard on both WSL and Git Bash. If gum is unavailable it falls back to plain text prompts. Either way the questions and defaults are the same:
+**`--setup` must be run once before first launch.** It walks through up to fifteen configuration steps — which ones depends on the inference engine you choose, since options one engine doesn't use are not shown. On first run the installer downloads [gum](https://github.com/charmbracelet/gum) — a CLI tool for beautiful interactive prompts — and uses it for the wizard on both WSL and Git Bash. If gum is unavailable it falls back to plain text prompts. Either way the questions and defaults are the same:
 
 ```bash
 ./ai-coder --setup
@@ -592,7 +594,8 @@ Git checkouts are tracked through git itself: `--version` reports the local `ori
 11. **Speculative decoding** *(llama.cpp)* — use a small draft model to speed up generation, typically 1.5–2× on code. Default on; costs ~1 GB VRAM and applies only to families that define a draft (currently Qwen3). See [Speculative Decoding](#speculative-decoding).
 12. **Generation speed tracking** *(llama.cpp)* — off by default. Enables the `--speed` command: a one-shot `llama-bench` pass on your model on a clean GPU that prints tokens-per-second (tg = generation, pp = prompt processing).
 13. **Host port exposure** — optionally publish the engine on `localhost:8080` so external apps can connect directly. Enabling this also unlocks the [Open WebUI sidecar](#2-unified-ai-coding-interface-ai-coder) question on the next launch.
-14. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
+14. **Additional mount point** — optionally mount one extra host folder into every workbench at the same path the host uses it. Needed when a git worktree's `.git` file points outside the project folder — git resolves that path inside the container too. Accepts Windows (`C:\...`) or native (`/mnt/c/...`, `/c/...`) form; the value is normalized so it works under both WSL and Git Bash. Blank = no extra mount.
+15. **Git identity** — name and email used for commits made inside the container. Falls back to your host global git config if already set.
 
 Settings that change which model tier fits in VRAM are deliberately not wizard steps — `--model` asks them instead (along with the model family, tool, and Open WebUI), and a plain launch verifies they are set:
 
