@@ -659,6 +659,43 @@ setup_step_extra_mount() {
     esac
 }
 
+# Common root (common_root): one host folder that contains everything — the
+# project (worktree) AND the git repo(s) under it (e.g. C:\Developer when the
+# repo lives at C:\Developer\deps\... and worktrees at C:\Developer\xxx\xxx).
+# When set, that folder is mounted instead of the project folder, the tool
+# still starts in the project folder, and --doctor rewrites worktree gitdirs
+# to a relative path that resolves identically under WSL, Git Bash, and
+# Windows — one mount covers both, and switching shells never needs
+# re-conversion. Accepts Windows (C:\...) or native (/mnt/c/... or /c/...)
+# form; to_native_path normalizes it so the stored value works under both.
+setup_step_common_root() {
+    local _cur; _cur=$(read_setting common_root)
+    local _input; _input=$(ui_input "Common root" \
+        "Common root:" \
+        "One host folder that contains everything — the project folder and the git repo(s) under it (e.g. C:\Developer). When set, that folder is mounted and the tool still starts in your project folder; --doctor then rewrites worktree gitdirs to relative paths that work in any shell. Enter a Windows path (C:\...) or a native path (/mnt/c/... or /c/...). Leave blank to keep, '-' to clear." \
+        "Host path:" \
+        "${_cur:-none}" \
+        "$_cur")
+    case "$_input" in
+        "")
+            echo -e "${DIM}  Common root unchanged.${NC}"
+            ;;
+        -)
+            write_pref "$SETTINGS_FILE" common_root ""
+            echo -e "${DIM}  Common root cleared.${NC}"
+            ;;
+        *)
+            local _norm
+            if _norm=$(to_native_path "$_input"); then
+                write_pref "$SETTINGS_FILE" common_root "$_norm"
+                printf "%s  Common root saved: %s%s%s\n" "${ICON_OK}" "${CYAN}" "$_norm" "${NC}"
+            else
+                echo -e "${YELLOW}⚠ Not saved — that path isn't valid on this system; keeping the current setting.${NC}"
+            fi
+            ;;
+    esac
+}
+
 setup_step_git_identity() {
     local _cur_git_email; _cur_git_email=$(read_setting git_email)
     local _cur_git_name;  _cur_git_name=$(read_setting git_name)
@@ -746,6 +783,8 @@ cmd_setup() {
     setup_step_expose_port
     _ui_abort_if_cancelled
     setup_step_container_tz
+    _ui_abort_if_cancelled
+    setup_step_common_root
     _ui_abort_if_cancelled
     setup_step_extra_mount
     _ui_abort_if_cancelled

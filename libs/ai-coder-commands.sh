@@ -1,9 +1,10 @@
 #!/bin/bash
 # ==============================================================================
 # AI-CODER-COMMANDS.SH | One-Shot CLI Commands
-# Non-interactive commands dispatched by the ai-coder case block:
+# Commands dispatched by the ai-coder case block:
 # --fix-project, --update, --version, --doctor, --logs. They print and exit —
-# no prompts — so they need no ui.sh helpers, only the palette, pref I/O and
+# --doctor prompts once, before rewriting a worktree's .git file; the rest are
+# unattended, so they need no ui.sh helpers, only the palette, pref I/O and
 # release-hash helpers already sourced earlier in the chain (core.sh).
 # ==============================================================================
 
@@ -221,6 +222,90 @@ cmd_version() {
     fi
 }
 
+# _bind_mount_to_native <path> — map a path under /mnt/wsl/docker-desktop-
+# bind-mounts/ to the standard /mnt/<drive>/... form using /proc/self/mountinfo.
+# fixpath (at startup) only converts when the mount point is the path itself;
+# this also maps a path nested under a broader mount point, so the cwd stays
+# canonical even when that startup cd didn't apply. Prints the path unchanged
+# when it isn't a bind-mount path or no mount entry can map it.
+_bind_mount_to_native() {
+    local p="$1"
+    if [[ "$p" != /mnt/wsl/docker-desktop-bind-mounts/* ]]; then
+        printf '%s' "$p"
+        return 0
+    fi
+    [ -r /proc/self/mountinfo ] || { printf '%s' "$p"; return 0; }
+    local best_mp="" best_len=0 root="" drive="" line mp
+    while IFS= read -r line; do
+        mp=$(awk '{print $5}' <<< "$line")
+        [ -n "$mp" ] || continue
+        [[ "$p" == "$mp"* ]] || continue
+        drive=$(awk '{for (i=1;i<=NF;i++) if ($i=="-") {print $(i+2); exit}}' <<< "$line" | cut -c1 | tr '[:upper:]' '[:lower:]')
+        [[ "$drive" =~ [a-z] ]] || continue
+        if [ "${#mp}" -gt "$best_len" ]; then
+            best_mp="$mp"
+            best_len=${#mp}
+            root=$(awk '{print $4}' <<< "$line")
+        fi
+    done < /proc/self/mountinfo
+    if [ -z "$best_mp" ]; then
+        printf '%s' "$p"
+        return 0
+    fi
+    local native="/mnt/${drive}${root}"
+    native="${native//\\040/ }"
+    local suffix="${p#"$best_mp"}"
+    suffix="${suffix#/}"
+    [ -n "$suffix" ] && native="${native}/${suffix}"
+    printf '%s' "$native"
+    return 0
+}
+
+# _canonical_host_path <path> — an absolute host path in the current shell's
+# native form: bind-mount paths map to /mnt/<drive>/... (above), and
+# to_native_path cross-normalizes drive-letter and /mnt/<drive> forms so a
+# path saved under either shell compares identically. Falls back to the given
+# path unchanged when normalization doesn't apply.
+_canonical_host_path() {
+    local p c
+    p=$(_bind_mount_to_native "$1")
+    c=$(to_native_path "$p" 2>/dev/null) || c="$p"
+    printf '%s' "$c"
+    return 0
+}
+
+# _relpath_from_pwd <abs-path> — print <abs-path> relative to the cwd
+# (e.g. "../../deps/internal/.git/worktrees/wt" or "a/b"); empty when equal.
+_relpath_from_pwd() {
+    local a b
+    # Canonicalize both sides to the same path convention before comparing
+    # components: a bind-mount cwd and a gitdir resolved under the other
+    # shell's form share no prefix, and the result degenerates to a run of
+    # ../ plus the whole target path.
+    a=$(_canonical_host_path "$(realpath "$PWD")")
+    b=$(_canonical_host_path "$(realpath "$1")")
+    a="${a%/}"; b="${b%/}"
+    local -a A=() B=()
+    IFS=/ read -r -a A <<< "${a#/}"
+    IFS=/ read -r -a B <<< "${b#/}"
+    local i=0
+    while [ "$i" -lt "${#A[@]}" ] && [ "$i" -lt "${#B[@]}" ] && [ "${A[$i]}" = "${B[$i]}" ]; do
+        i=$((i + 1))
+    done
+    local rel="" j
+    for ((j = i; j < ${#A[@]}; j++)); do rel="../$rel"; done
+    for ((j = i; j < ${#B[@]}; j++)); do
+        if [ -z "$rel" ]; then
+            rel="${B[$j]}"
+        elif [[ "$rel" == */ ]]; then
+            rel="$rel${B[$j]}"
+        else
+            rel="$rel/${B[$j]}"
+        fi
+    done
+    printf '%s' "$rel"
+}
+
 # ------------------------------------------------------------------------------
 # cmd_doctor — sweep orphaned state left behind by killed sessions, and flag a
 # couple of easy-to-miss misconfigurations. Safe to run any time; each check
@@ -378,32 +463,90 @@ cmd_doctor() {
         done
     fi
 
-    # --- git worktree mount coverage ----------------------------------------
-    # A git worktree's .git file points at a gitdir that git also resolves
-    # inside the container; if that path sits outside the workspace mount
-    # and isn't covered by the additional mount point, git fails in the
-    # container. Best-effort: only fires when the cwd is a worktree.
-    echo -e "${ICON_GEAR} Git worktree mount coverage..."
+    # --- git worktree gitdir form and mount coverage -------------------------
+    # A worktree's .git file stores the admin dir path, which git also resolves
+    # inside the container. Absolute forms are shell-specific — Windows
+    # (C:/... or C:\...), WSL (/mnt/c/...), Git Bash (/c/...) — and the Windows
+    # form is unresolvable under Linux (git treats "C:" as a relative
+    # directory), as is a gitdir in the other shell's native form; rewriting to
+    # one shell's native form breaks the others. The .git file is resolved
+    # relative to the worktree root (its own directory), so a relative gitdir is
+    # cwd-independent and identical under WSL, Git Bash, and Windows alike.
+    # doctor offers to rewrite the .git file to that relative form (asking
+    # first) so a single file works on the host in every shell and switching
+    # shells needs no re-conversion.
+    # Inside the container the relative path resolves only when the admin dir is
+    # inside the mounted workspace (the common-root mount when set, otherwise
+    # the cwd mount); if it is not, the container can't reach it, so point
+    # common_root at a folder containing both the worktree and the git dir.
+    # The admin gitdir file is left untouched — git's worktree commands expect
+    # its absolute form, and no single relative form is safe from every cwd.
+    # Best-effort: only fires when the cwd is a worktree.
+    echo -e "${ICON_GEAR} Git worktree gitdir form and mount coverage..."
     if [ -f .git ] && [ ! -d .git ]; then
-        local _gitdir; _gitdir=$(sed -n 's/^gitdir: *//p' .git)
-        local _raw_extra; _raw_extra=$(read_setting extra_mount)
-        local _extra_dest=""
-        if [ -n "$_raw_extra" ]; then
-            _extra_dest=$(to_native_path "$_raw_extra") || _extra_dest=""
-        fi
+        local _gitdir; _gitdir=$(sed -n 's/^gitdir: *//p' .git | tr -d '\r')
         if [ -n "$_gitdir" ]; then
-            local _covered=false
-            if [[ "$_gitdir" == "$(pwd)"/* || "$_gitdir" == "$(pwd)" ]]; then
-                _covered=true
-            elif [ -n "$_extra_dest" ] && \
-                 [[ "$_gitdir" == "$_extra_dest"/* || "$_gitdir" == "$_extra_dest" ]]; then
-                _covered=true
-            fi
-            if [ "$_covered" = "true" ]; then
-                echo -e "  ${DIM}worktree gitdir ${_gitdir} is inside a mounted path${NC}"
+            # Resolve the admin dir to a host-native absolute path — from the
+            # file's own absolute form, or relative to the worktree root if
+            # the file already holds a relative path.
+            local _native=""
+            if [[ "$_gitdir" == /* || "$_gitdir" == [A-Za-z]:* || "$_gitdir" == [A-Za-z]//* ]]; then
+                _native=$(to_native_path "$_gitdir" 2>/dev/null) || _native=""
             else
-                echo -e "  ${YELLOW}⚠${NC} git worktree gitdir ${DIM}${_gitdir}${NC} is not mounted — git will fail inside the container"
-                echo -e "    ${DIM}Set it with: $(basename "$0") --setup (additional mount point)${NC}"
+                [ -d "$(pwd)/$_gitdir" ] && _native=$(realpath "$(pwd)/$_gitdir")
+            fi
+            if [ -n "$_native" ]; then
+                # Canonicalize so a bind-mount cwd (realpath keeps the
+                # /mnt/wsl/docker-desktop-bind-mounts form) compares like the
+                # rest of the path resolution here.
+                _native=$(_canonical_host_path "$_native")
+                local _rel; _rel=$(_relpath_from_pwd "$_native")
+                if [ -n "$_rel" ] && [ "$_gitdir" != "$_rel" ]; then
+                    # The rewrite changes the user's .git file, so ask before it.
+                    ui_init
+                    local _confirm
+                    _confirm=$(ui_yesno "doctor" "Rewrite worktree gitdir to relative form" \
+                        "The .git file holds the gitdir in ${DIM}$_gitdir${NC} form, which resolves in only one shell's native form. A relative gitdir resolves under WSL, Git Bash, and Windows alike. Rewrite it to ${CYAN}$_rel${NC}?" \
+                        "Rewrite? " "$_gitdir" "no")
+                    if [ "$_confirm" = "yes" ]; then
+                        printf 'gitdir: %s\n' "$_rel" > .git
+                        echo -e "  ${GREEN}✔${NC} rewrote worktree gitdir from ${DIM}$_gitdir${NC} to ${CYAN}$_rel${NC}"
+                        issues=$((issues + 1))
+                    else
+                        echo -e "  ${YELLOW}⚠${NC} left gitdir as ${DIM}$_gitdir${NC} — rewrite declined; run ${CYAN}$(basename "$0") --doctor${NC} again and answer yes to rewrite it"
+                        issues=$((issues + 1))
+                    fi
+                elif [ -n "$_rel" ]; then
+                    echo -e "  ${GREEN}✔${NC} worktree gitdir is already relative ${DIM}($_rel)${NC}"
+                fi
+                if [ ! -f "$_native/gitdir" ]; then
+                    echo -e "  ${YELLOW}⚠${NC} admin file ${DIM}${_native}/gitdir${NC} is missing — run ${CYAN}git worktree repair${NC} from the worktree"
+                    issues=$((issues + 1))
+                fi
+                # Container coverage: the relative path resolves inside the
+                # container only when the admin dir is inside the mounted
+                # workspace (the common-root mount when set, otherwise the cwd
+                # mount). The additional mount point does not help a relative
+                # path, because the worktree and the git dir sit under different
+                # container-side prefixes there. COMMON_ROOT_DEST is set only by
+                # the launch flow, which --doctor exits before — resolve it from
+                # the saved setting here instead, the same way a launch would.
+                ensure_common_root_config
+                local _ws_root
+                if [ -n "${COMMON_ROOT_DEST:-}" ]; then
+                    _ws_root=$(_canonical_host_path "$COMMON_ROOT_DEST")
+                else
+                    _ws_root=$(_canonical_host_path "$(realpath "$PWD")")
+                fi
+                if [[ "$_native" == "$_ws_root" || "$_native" == "$_ws_root"/* ]]; then
+                    echo -e "  ${DIM}worktree gitdir is inside the mounted workspace — it resolves in the container${NC}"
+                else
+                    echo -e "  ${YELLOW}⚠${NC} worktree gitdir ${DIM}$_gitdir${NC} is outside the mounted workspace — the relative path won't resolve inside the container"
+                    echo -e "    ${DIM}Point common_root at a folder containing both the worktree and this git dir${NC}"
+                    issues=$((issues + 1))
+                fi
+            else
+                echo -e "  ${YELLOW}⚠${NC} could not resolve gitdir ${DIM}$_gitdir${NC} to a real directory — run ${CYAN}git worktree repair${NC} from the worktree"
                 issues=$((issues + 1))
             fi
         else

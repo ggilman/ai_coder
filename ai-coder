@@ -356,6 +356,7 @@ fi
 
 ensure_container_gitconfig
 ensure_extra_mount_config
+ensure_common_root_config
 ensure_network_config
 ctr network create "$HUB_NETWORK" 2>/dev/null || true
 if [ "${NETWORK_INTERNAL:-false}" = "true" ]; then

@@ -22,8 +22,8 @@ exec_in_container() {
     # conversion (treated as a UNC prefix); Linux normalises //foo → /foo. It
     # must cover the workdir AND every container-path argument the caller
     # passes (agent binaries, script paths, config files).
-    local _wd="/$WORKSPACE_DIR"
-    [ "$IS_GITBASH" = "true" ] && _wd="//$WORKSPACE_DIR"
+    local _wd="$WORKBENCH_WORKDIR"
+    [ "$IS_GITBASH" = "true" ] && _wd="//$WORKSPACE_DIR${COMMON_ROOT_SUBPATH:+/$COMMON_ROOT_SUBPATH}"
     # $CTR_BIN rather than ctr: winpty runs a binary, not a shell function,
     # and exec needs no translation on either runtime.
     local cmd_args=("$CTR_BIN" exec -it -w "$_wd" "$@")
@@ -64,12 +64,24 @@ run_workbench() {
     # On Git Bash, MSYS may still convert /$WORKSPACE_DIR to a Windows path for
     # --workdir even with MSYS_NO_PATHCONV=1. The // prefix suppresses conversion
     # and Linux containers normalise //foo → /foo.
-    local _wb_workdir="/$WORKSPACE_DIR"
-    [ "$IS_GITBASH" = "true" ] && _wb_workdir="//$WORKSPACE_DIR"
+    local _wb_workdir="$WORKBENCH_WORKDIR"
+    [ "$IS_GITBASH" = "true" ] && _wb_workdir="//$WORKSPACE_DIR${COMMON_ROOT_SUBPATH:+/$COMMON_ROOT_SUBPATH}"
     # No --privileged: agents only need the workspace mount and network access,
     # and a privileged container would undermine the network-isolation option.
     # --stop-timeout 2: the keep-alive entrypoint ignores SIGTERM, so a short
     # grace period avoids a 10s docker stop hang on every exit.
+    # Optional common-root mount (--setup): a single host folder that contains
+    # both the project (cwd) and the git repo(s) under it — mounted instead of
+    # the project folder so one mount covers both; the tool still starts in the
+    # project's subpath. --doctor rewrites worktree gitdirs to relative paths
+    # that resolve inside that one mount under any shell.
+    local _ws_src
+    if [ -n "${COMMON_ROOT_DEST:-}" ]; then
+        _ws_src="$COMMON_ROOT_HOST"
+        echo -e "${ICON_GEAR} Common root mount: ${GREEN}${COMMON_ROOT_DEST}${NC}"
+    else
+        _ws_src="$(to_host_path "$(pwd)")"
+    fi
     # Optional additional mount point (--setup): a host folder mounted at the
     # same path the host shell sees it, so git worktrees whose .git file
     # points at a gitdir outside the workspace resolve inside the container.
@@ -82,7 +94,7 @@ run_workbench() {
         -e "http_proxy=${_wb_http_proxy}" -e "https_proxy=${_wb_http_proxy}" \
         -e "HTTP_PROXY=${_wb_http_proxy}" -e "HTTPS_PROXY=${_wb_http_proxy}" \
         -e "no_proxy=$no_proxy_hosts" -e "NO_PROXY=$no_proxy_hosts" \
-        -v "$(to_host_path "$(pwd)"):/$WORKSPACE_DIR" \
+        -v "$_ws_src":/$WORKSPACE_DIR \
         -v "$(to_host_path "$HOME/.gitconfig-container"):/root/.gitconfig:ro" \
         "${_extra_mount_args[@]}" \
         --workdir "$_wb_workdir" \
@@ -586,20 +598,34 @@ ensure_workbench_running() {
     local _lock_dir="${TMPDIR:-/tmp}/.ai-coder-wb-lock-${WORKBENCH}"
     acquire_lock "$_lock_dir" 0.2 150
 
-    local _rc=0
+    local _rc=0 _need_start=false
     if container_running "$WORKBENCH"; then
-        :
+        # Reuse the running workbench only when its working directory matches
+        # this launch's WORKBENCH_WORKDIR. A container left running from an
+        # earlier session (e.g. started before common_root was configured, or
+        # from a different cwd) was bound to a different folder, so exec'ing
+        # into the new workdir chdirs into a path that doesn't exist inside it.
+        # A freshly created container can't be the problem here: docker run
+        # would have failed on a missing workdir. Recreating is safe — nothing
+        # of value lives in the container's own writable layer (the workspace,
+        # npm cache, and every tool's config dir are all host-mounted).
+        local _cur_wd _want_wd
+        _cur_wd=$(ctr_inspect_field "$WORKBENCH" workdir 2>/dev/null | tr -d '\r') || _cur_wd=""
+        _want_wd="${WORKBENCH_WORKDIR#/}"; _cur_wd="${_cur_wd#/}"
+        if [ -n "$_cur_wd" ] && [ "$_cur_wd" != "$_want_wd" ]; then
+            _need_start=true
+            echo -e "${ICON_GEAR} Workbench workdir changed (${DIM}${_cur_wd}${NC} → ${DIM}${_want_wd}${NC}) — recreating container"
+        fi
     else
+        _need_start=true
+    fi
+
+    if $_need_start; then
         WORKBENCH_STARTED_BY_US=true
-        # Always recreate rather than `docker start` a stopped container: every
-        # bind mount/env var the workbench needs comes from start_workbench's
-        # docker run flags, and a stopped container only has whatever flags were
-        # current when it was first created. A stale container from before an
-        # agent script added a new mount would silently launch without it.
-        # Nothing of value lives in the container's own writable layer — the
-        # workspace, npm cache, and every tool's config dir are all host-mounted
-        # — so recreating a stopped container is safe and cheap (its entrypoint
-        # is just a sleep loop).
+        # Always recreate rather than `docker start` a stopped/mismatched container:
+        # every bind mount/env var the workbench needs comes from start_workbench's
+        # docker run flags, and a stale container only has whatever flags were
+        # current when it was first created.
         if ctr_container_exists "$WORKBENCH"; then
             ctr rm "$WORKBENCH" >/dev/null 2>&1 || true
         fi

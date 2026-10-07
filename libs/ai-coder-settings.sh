@@ -245,6 +245,53 @@ ensure_extra_mount_config() {
     return 0
 }
 
+# Resolve the optional common-root mount (common_root). common_root names a
+# single host folder that contains everything: the project (worktree) AND the
+# git repo(s) under it — e.g. C:\Developer when the repo lives at
+# C:\Developer\deps\... and worktrees at C:\Developer\xxx\xxx. When set and
+# the cwd is inside it, the workbench mounts that folder (instead of the cwd)
+# and still starts the tool in the cwd's subpath, so one mount covers both.
+# --doctor then rewrites worktree gitdirs to a relative path, which resolves
+# identically under WSL, Git Bash, and Windows — no re-conversion when
+# switching shells.
+# Empty or invalid (not an ancestor of the cwd, or missing on the host) keeps
+# the current behavior: mount the project folder (cwd).
+# Sets COMMON_ROOT_DEST (native form, container-side), COMMON_ROOT_HOST
+# (-v mount source form), and COMMON_ROOT_SUBPATH (cwd relative to the root;
+# empty when the cwd IS the root). WORKBENCH_WORKDIR is the tool's working
+# dir inside the container; WORKSPACE_DIR is overridden to the root's basename.
+ensure_common_root_config() {
+    COMMON_ROOT_DEST=""
+    COMMON_ROOT_HOST=""
+    COMMON_ROOT_SUBPATH=""
+    WORKBENCH_WORKDIR="/$WORKSPACE_DIR"
+    local raw
+    raw=$(read_setting common_root)
+    [ -n "$raw" ] || return 0
+    local dest
+    if ! dest=$(to_native_path "$raw"); then
+        echo -e "${YELLOW}⚠ Common root '${raw}' is not a valid host path — mounting the project folder instead.${NC}"
+        return 0
+    fi
+    dest="${dest%/}"
+    local cwd_abs
+    cwd_abs=$(realpath "$PWD")
+    if [ "$cwd_abs" != "$dest" ] && [[ "$cwd_abs" != "$dest"/* ]]; then
+        echo -e "${YELLOW}⚠ Common root ${dest} is not an ancestor of ${cwd_abs} — mounting the project folder instead.${NC}"
+        return 0
+    fi
+    if [ ! -d "$dest" ]; then
+        echo -e "${YELLOW}⚠ Common root ${dest} doesn't exist on the host — mounting the project folder instead.${NC}"
+        return 0
+    fi
+    COMMON_ROOT_DEST="$dest"
+    COMMON_ROOT_HOST="$(to_host_path "$dest")"
+    [ "$cwd_abs" = "$dest" ] || COMMON_ROOT_SUBPATH="${cwd_abs#"$dest"/}"
+    WORKSPACE_DIR="$(basename "$dest" | tr ' ' '_')"
+    WORKBENCH_WORKDIR="/$WORKSPACE_DIR${COMMON_ROOT_SUBPATH:+/$COMMON_ROOT_SUBPATH}"
+    return 0
+}
+
 # Write identity into the local repo's .git/config (host-side).
 # The workspace volume mount means the container sees this immediately.
 # Skips gracefully if not inside a git repo or if already configured.

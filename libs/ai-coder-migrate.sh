@@ -49,7 +49,8 @@ pref_default() {
         keep_hub)         echo "no" ;;
         keep_hub_timeout) echo "60" ;;
         model_volume)     echo "${MODEL_VOLUME_DEFAULT:-no}" ;;
-        extra_mount)      echo "" ;;
+        extra_mount) echo "" ;;
+        common_root) echo "" ;;
         spec_decode)      echo "yes" ;;
         speed_tracking)   echo "no" ;;
         expose_host_port) echo "no" ;;

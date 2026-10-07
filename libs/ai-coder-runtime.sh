@@ -307,7 +307,8 @@ ctr_containers_from_image() {
 }
 
 # Usage: ctr_inspect_field <object> <field>
-# Container fields: image (the image it runs), exit_code, name (no leading /).
+# Container fields: image (the image it runs), exit_code, name (no leading /),
+#                  workdir (Config.WorkingDir).
 # Image fields:     id, label:<key> (empty when unset).
 # Returns non-zero when the object doesn't exist.
 ctr_inspect_field() {
@@ -319,6 +320,7 @@ ctr_inspect_field() {
             exit_code) _expr='.[0].State.ExitCode' ;;
             name)      _expr='.[0].Name' ;;
             id)        _expr='.[0].Id' ;;
+            workdir)   _expr='.[0].Config.WorkingDir' ;;
             label:*)   _expr='(.[0].Config.Labels // .[0].Labels // {})[$k] // empty' ;;
             *)         return 2 ;;
         esac
@@ -330,6 +332,7 @@ ctr_inspect_field() {
             exit_code) docker inspect -f '{{.State.ExitCode}}' "$_obj" 2>/dev/null ;;
             name)      docker inspect --format '{{.Name}}' "$_obj" 2>/dev/null | tr -d '/' ;;
             id)        docker image inspect -f '{{.Id}}' "$_obj" 2>/dev/null ;;
+            workdir)   docker inspect -f '{{.Config.WorkingDir}}' "$_obj" 2>/dev/null ;;
             label:*)   docker image inspect --format "{{ index .Config.Labels \"${_field#label:}\" }}" "$_obj" 2>/dev/null ;;
             *)         return 2 ;;
         esac

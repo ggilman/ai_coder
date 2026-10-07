@@ -60,7 +60,7 @@ to_native_path() {
         fi
         return 0
     fi
-    if [[ "$p" != /* ]]; then
+    if [[ "$p" != "/*" ]]; then
         echo "  ${RED}✘ Additional mount point must be an absolute path (got: $p)${NC}" >&2
         return 1
     fi
