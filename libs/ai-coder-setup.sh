@@ -4,7 +4,8 @@
 # The --setup wizard: setup_toggle_pref plus one setup_step_* per question,
 # called in sequence from cmd_setup. The model-sizing steps — setup_step_ctx,
 # setup_step_kv / setup_step_sgl_kv, setup_step_vram_overhead,
-# setup_step_cpu_offload and setup_step_sgl_mem_fraction — are called from
+# setup_step_cpu_offload, setup_step_spec_decode (its draft's VRAM reserve
+# changes which tier fits) and setup_step_sgl_mem_fraction — are called from
 # the --model flow in ai-coder instead (model-affecting choices are
 # re-prompted there rather than living in the wizard). Steps that only apply to one inference engine are skipped by
 # cmd_setup for the other (see setup_step_engine).
@@ -70,13 +71,16 @@ setup_step_alias() {
             # Recent WSL builds no longer grant execute permission to scripts on
             # Windows-mounted drives (direct exec: "Permission denied"), so
             # invoke through bash there — it reads the script, no shebang needed.
-            local _alias_target
+            # The path goes through printf %q so any quote or space in it
+            # survives both the alias definition and its later expansion.
+            local _alias_target _alias_path
+            _alias_path=$(printf '%q' "$(realpath "$0")")
             if [ "$IS_WSL" = "true" ]; then
-                _alias_target="bash \"$(realpath "$0")\""
+                _alias_target="bash $_alias_path"
             else
-                _alias_target="\"$(realpath "$0")\""
+                _alias_target="$_alias_path"
             fi
-            echo "alias $ALIAS_NAME='$_alias_target'" >> "$rc_file"
+            printf 'alias %s=%q\n' "$ALIAS_NAME" "$_alias_target" >> "$rc_file"
             echo -e "${ICON_OK} Alias '${ALIAS_NAME}' added to $rc_file. Run: ${CYAN}source $rc_file${NC}"
             ;;
         no)
@@ -555,11 +559,9 @@ setup_step_spec_decode() {
     setup_toggle_pref spec_decode "Speculative decoding" \
         "Speculative decoding — speed up generation with a small draft model?" \
         "A tiny draft model proposes tokens the main model verifies in one pass —
-typically 1.5-2x faster code generation. Costs ~1-2GB extra VRAM.
-Applies only to model families that define an external draft (currently
-Qwen3 and Qwen3.8). Qwen3.6 MTP always uses its own built-in MTP draft
-heads baked into the main model regardless of this setting —
-there's no toggle for those." \
+typically 1.5-2x faster code generation. Costs ~1-2GB extra VRAM, which
+can mean a smaller main model tier fits. Only asked for model families
+that define an external draft model." \
         "Use speculative decoding? [Y/n]:" \
         "$_cur_spec" "$_cur_spec" \
         "${ICON_OK} Speculative decoding ${GREEN}enabled${NC} — draft downloads on next launch." \
@@ -775,8 +777,6 @@ cmd_setup() {
     # llama.cpp-only steps (setup_step_engine has already updated
     # ENGINE_BACKEND, so these follow the engine just chosen).
     if ! engine_is_sglang; then
-        setup_step_spec_decode
-        _ui_abort_if_cancelled
         setup_step_speed_tracking
     fi
     _ui_abort_if_cancelled

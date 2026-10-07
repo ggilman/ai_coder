@@ -234,24 +234,29 @@ _wslc_load() {
 
 # --- [ QUERY HELPERS ] --------------------------------------------------------
 # Docker branches keep the launcher's original docker commands; wslc reads
-# `list -a --format json` (one object per container, fields ID, Names, State
-# with a textual value such as "running") and inspect JSON through jq.
+# `list -a --format json` and inspect JSON through jq.
 
 # Usage: _wslc_container_ids <jq-select-expression> [--arg k v ...]
-# wslc's list JSON differs from Docker's: one object per line rather than an
-# array, "Names" (primary name, aliases comma-separated) rather than "Name",
-# "ID" rather than "Id", and a textual "State" rather than a number. Each
-# object is normalized to the shape the selection expression expects —
-# Name (primary), State 1 created / 2 running / 3 exited — before select.
+# wslc builds disagree on the list JSON shape. wslc 2.9.4 prints an array of
+# {Id, Name, State} with a numeric State (1 created / 2 running / 3 exited);
+# other builds print one object per line with "ID", "Names" (primary name,
+# aliases comma-separated) and a textual State such as "running". Each
+# object is normalized to {Id, Name, numeric State} before select, so the
+# selection expressions work on either. Any other textual state (paused,
+# restarting, ...) maps to 1: no caller selects it.
 _wslc_container_ids() {
     local _sel="$1"; shift
     "$CTR_BIN" list -a --format json 2>/dev/null | tr -d '\r' \
         | "${JQ_CMD:-jq}" -r "$@" \
             'if type == "array" then .[] else . end |
-             ((.State // "") | ascii_downcase) as $s |
-             {Name: ((.Names // "") | split(",")[0]),
-              State: (if ($s | startswith("running")) then 2 elif ($s | startswith("exited")) then 3 else 1 end),
-              Id: (.ID // "")} | select('$_sel') | .Id' 2>/dev/null
+             {Name: (.Name // ((.Names // "") | split(",")[0])),
+              State: (.State as $st |
+                      if ($st | type) == "number" then $st
+                      else (($st // "") | ascii_downcase) as $s |
+                           if ($s | startswith("running")) then 2
+                           elif ($s | startswith("exited")) then 3 else 1 end
+                      end),
+              Id: (.Id // .ID // "")} | select('"$_sel"') | .Id' 2>/dev/null
 }
 
 # Usage: ctr_container_running <name> — true if a container with exactly
@@ -397,10 +402,13 @@ ctr_build_from_git() {
         _tgz=$(_ctr_mktemp)
         local _curl_args=(-fsSL --connect-timeout 30 --speed-limit 1024 --speed-time 120)
         [ -n "$_proxy" ] && _curl_args+=(-x "$_proxy" -k)
-        if curl "${_curl_args[@]}" -o "$_tgz" "$_tar_url" 2>/dev/null; then
+        local _curl_rc=0
+        curl "${_curl_args[@]}" -o "$_tgz" "$_tar_url" || _curl_rc=$?
+        if [ "$_curl_rc" -eq 0 ]; then
             tar xzf "$_tgz" -C "$_dir" --strip-components=1 || {
-                rm -rf "$_dir"; [ -n "$_tgz" ] && rm -f "$_tgz"; return 1
+                rm -rf "$_dir" "$_tgz"; return 1
             }
+            rm -f "$_tgz"; _tgz=""
             _fetched=true
         fi
     fi
@@ -409,7 +417,7 @@ ctr_build_from_git() {
             rm -rf "$_dir"; [ -n "$_tgz" ] && rm -f "$_tgz"
             echo "✘ git is needed to build from ${_url} with WSL Containers." >&2; return 1
         }
-        [ -n "$_tar_url" ] && echo -e "${YELLOW:-}  Tarball fetch failed — falling back to git clone...${NC:-}" >&2
+        [ -n "$_tar_url" ] && echo -e "${YELLOW:-}  Tarball fetch failed (curl exit ${_curl_rc:-?}) — falling back to git clone...${NC:-}" >&2
         local _git=(git -c advice.detachedHead=false)
         [ -n "${DOWNLOAD_PROXY:-}" ] && _git+=(-c "http.proxy=$DOWNLOAD_PROXY" -c http.sslVerify=false)
         # Git Bash's git.exe is a Windows program: with MSYS_NO_PATHCONV=1 (set by

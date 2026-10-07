@@ -246,6 +246,17 @@ spec_decode_enabled() {
     [ "$(read_setting spec_decode)" = "yes" ] && [ -n "${MODEL_DRAFT_FILE:-}" ]
 }
 
+# True when a family conf defines an external draft model. Sourced in a
+# subshell so it works before the launch sources the selected family (the
+# --model flow asks about speculative decoding only for such families).
+# Usage: family_defines_draft <family-key>
+family_defines_draft() {
+    local _conf="$FAMILIES_DIR/${1:-}.conf"
+    [ -f "$_conf" ] || return 1
+    # shellcheck source=/dev/null
+    ( source "$_conf" && [ -n "${MODEL_DRAFT_FILE:-}" ] )
+}
+
 # Format a byte count as a human-readable size.
 # numfmt is not available in Git Bash — use awk for portability.
 _human_size() {
